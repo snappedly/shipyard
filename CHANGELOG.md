@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1
+
+### Patch Changes
+
+- b434341: Clarify `shipyard init` authentication next steps, including subscription login and API-key fallbacks for Codex and Claude Code.
+
 ## 0.3.0
 
 ### Minor Changes
