@@ -45,9 +45,11 @@ repository check:
 
 1. If pending changesets exist, the workflow creates or updates the
    **Version Packages** pull request and runs CI for its exact head commit.
-2. After CI passes, the workflow merges that version pull request and
-   dispatches a release run for the resulting `main` commit. No manual review
-   or merge of the generated version pull request is required.
+2. After CI passes, the workflow publishes a passing `ci` commit status for
+   that exact head commit, enables auto-merge, waits for the version pull
+   request to merge, and dispatches a release run for the resulting `main`
+   commit. No manual review or merge of the generated version pull request is
+   required.
 3. The release run identifies the unpublished version and creates the exact
    tarball and checksum that the publish job will consume.
 4. The publish job verifies the exact candidate and artifact, then publishes

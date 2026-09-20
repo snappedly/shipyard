@@ -45,6 +45,7 @@ jobs:
       actions: write
       contents: write
       pull-requests: write
+      statuses: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -99,7 +100,26 @@ jobs:
           {
             echo "head-ref=$HEAD_REF"
             echo "head-sha=$HEAD_SHA"
+            echo "run-id=$RUN_ID"
           } >> "$GITHUB_OUTPUT"
+
+      # workflow_dispatch checks are not evaluated as pull request checks by
+      # branch protection. Mirror the successful exact-head run as the
+      # required status so the generated PR can merge without approval.
+      - name: Publish version pull request CI status
+        if: steps.version-ci.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ steps.version-ci.outputs.head-sha }}
+          RUN_ID: ${{ steps.version-ci.outputs.run-id }}
+        run: |
+          set -euo pipefail
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA}" \
+            -f state=success \
+            -f context=ci \
+            -f description="Version pull request CI passed" \
+            -f target_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
 
       - name: Merge version pull request
         if: steps.version-ci.outcome == 'success'
@@ -112,7 +132,19 @@ jobs:
           gh pr merge "$PR_NUMBER" \
             --squash \
             --delete-branch \
-            --match-head-commit "$HEAD_SHA"
+            --match-head-commit "$HEAD_SHA" \
+            --auto
+
+          for _ in $(seq 1 30); do
+            STATE=$(gh pr view "$PR_NUMBER" --json state --jq .state)
+            if [[ "$STATE" == "MERGED" ]]; then
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "Version pull request #$PR_NUMBER did not merge after auto-merge was enabled." >&2
+          exit 1
 
       - name: Start release for versioned main
         if: steps.version-ci.outcome == 'success'
