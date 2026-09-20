@@ -117,19 +117,6 @@ describe("InitService scaffold", () => {
     expect(envExample).toContain("Metadata");
   });
 
-  it("generates .env.example without GH_TOKEN when issue tracker is beads", async () => {
-    const dir = await makeDir();
-    await runScaffold(dir, {
-      issueTracker: getIssueTracker("beads"),
-    });
-
-    const envExample = await readFile(
-      join(dir, ".shipyard", ".env.example"),
-      "utf-8",
-    );
-    expect(envExample).not.toContain("GH_TOKEN=");
-  });
-
   it("does not scaffold config.json for blank template", async () => {
     const dir = await makeDir();
     await runScaffold(dir);
@@ -530,10 +517,6 @@ describe("InitService scaffold", () => {
   });
 
   describe("getNextStepsLines", () => {
-    const ghIssues = getIssueTracker("github-issues")!;
-    const customManager = getIssueTracker("custom")!;
-    // Non-custom issue tracker keeps the template-driven next steps; the
-    // custom branch is exercised separately below.
     const next = (
       template: string,
       mainFilename: string,
@@ -542,7 +525,6 @@ describe("InitService scaffold", () => {
       getNextStepsLines(
         template,
         mainFilename,
-        ghIssues,
         claudeCodeAgent,
         packageManager,
       );
@@ -682,7 +664,6 @@ describe("InitService scaffold", () => {
       const joined = getNextStepsLines(
         "blank",
         "main.mts",
-        ghIssues,
         codexAgent,
         "npm",
       ).join("\n");
@@ -696,7 +677,6 @@ describe("InitService scaffold", () => {
       const lines = getNextStepsLines(
         "blank",
         "main.mts",
-        ghIssues,
         codexAgent,
         "npm",
         "chatgpt",
@@ -712,7 +692,6 @@ describe("InitService scaffold", () => {
       const codexLines = getNextStepsLines(
         "blank",
         "main.mts",
-        ghIssues,
         codexAgent,
         "npm",
       ).join("\n");
@@ -731,34 +710,6 @@ describe("InitService scaffold", () => {
       const lines = next("simple-loop", "main.mts");
       const joined = lines.join("\n");
       expect(joined).not.toContain("zod");
-    });
-
-    it("custom issue tracker points at the setup doc and the agent's setup command, regardless of template", () => {
-      const lines = getNextStepsLines(
-        "simple-loop",
-        "main.mts",
-        customManager,
-        claudeCodeAgent,
-        "npm",
-      );
-      const joined = lines.join("\n");
-      expect(joined).toContain("SETUP_ISSUE_TRACKER.md");
-      expect(joined).toContain(claudeCodeAgent.setupCommand);
-      // The template-driven steps must not leak into the custom branch.
-      expect(joined).not.toContain("npm run shipyard");
-    });
-
-    it("custom issue tracker warns the setup command runs on the host", () => {
-      const lines = getNextStepsLines(
-        "blank",
-        "main.mts",
-        customManager,
-        codexAgent,
-        "npm",
-      );
-      const joined = lines.join("\n");
-      expect(joined.toLowerCase()).toContain("host");
-      expect(joined).toContain(codexAgent.setupCommand);
     });
   });
 
@@ -1265,10 +1216,12 @@ describe("InitService scaffold", () => {
   // --- Issue tracker ---
 
   describe("Issue tracker registry", () => {
-    it("listIssueTrackers returns github-issues and beads", () => {
-      const managers = listIssueTrackers();
-      expect(managers.some((m) => m.name === "github-issues")).toBe(true);
-      expect(managers.some((m) => m.name === "beads")).toBe(true);
+    it("only exposes GitHub Issues", () => {
+      expect(listIssueTrackers().map((tracker) => tracker.name)).toEqual([
+        "github-issues",
+      ]);
+      expect(getIssueTracker("beads")).toBeUndefined();
+      expect(getIssueTracker("custom")).toBeUndefined();
     });
 
     it("getIssueTracker returns github-issues entry with expected templateArgs", () => {
@@ -1291,85 +1244,9 @@ describe("InitService scaffold", () => {
       expect(manager!.templateArgs.ISSUE_TRACKER_TOOLS).toContain("gh");
     });
 
-    it("getIssueTracker returns beads entry with expected templateArgs", () => {
-      const manager = getIssueTracker("beads");
-      expect(manager).toBeDefined();
-      expect(manager!.label).toBe("Beads");
-      expect(manager!.templateArgs.LIST_TASKS_COMMAND).toBe("bd ready --json");
-      expect(manager!.templateArgs.VIEW_TASK_COMMAND).toContain("bd show");
-      expect(manager!.templateArgs.CLOSE_TASK_COMMAND).toContain("bd close");
-      expect(manager!.templateArgs.CLOSE_TASK_COMMAND).toContain("--reason=");
-      expect(manager!.templateArgs.ISSUE_TRACKER_TOOLS).toContain("beads");
-      expect(manager!.templateArgs.ISSUE_TRACKER_TOOLS).toContain("libicu72");
-      expect(manager!.templateArgs.ISSUE_TRACKER_TOOLS).toContain(
-        "corepack enable",
-      );
-      expect(manager!.templateArgs.ISSUE_TRACKER_TOOLS).not.toContain("gh");
-      expect(manager!.templateArgs.ISSUE_TRACKER_TOOLS).not.toContain(
-        "x86_64-linux-gnu",
-      );
-      expect(manager!.templateArgs.ISSUE_TRACKER_TOOLS).toContain(
-        "dpkg-architecture -qDEB_HOST_MULTIARCH",
-      );
-    });
-
-    it("getIssueTracker returns custom entry with broken-until-configured templateArgs", () => {
-      const manager = getIssueTracker("custom");
-      expect(manager).toBeDefined();
-      expect(manager!.label).toBe("Custom");
-      // Only the list command is a real shell expression — it hard-fails the
-      // run (exit 1) and points at the setup doc.
-      expect(manager!.templateArgs.LIST_TASKS_COMMAND).toContain("exit 1");
-      expect(manager!.templateArgs.LIST_TASKS_COMMAND).toContain(
-        "SETUP_ISSUE_TRACKER.md",
-      );
-      expect(manager!.templateArgs.LIST_TASKS_COMMAND).toContain(">&2");
-      // View/close are inline text markers, not runnable commands.
-      expect(manager!.templateArgs.VIEW_TASK_COMMAND).toContain("view command");
-      expect(manager!.templateArgs.VIEW_TASK_COMMAND).toContain(
-        "SETUP_ISSUE_TRACKER.md",
-      );
-      expect(manager!.templateArgs.CLOSE_TASK_COMMAND).toContain(
-        "close command",
-      );
-      expect(manager!.templateArgs.CLOSE_TASK_COMMAND).toContain(
-        "SETUP_ISSUE_TRACKER.md",
-      );
-      // Dockerfile install block is a TODO comment pointing at the doc.
-      expect(manager!.templateArgs.ISSUE_TRACKER_TOOLS).toContain("TODO");
-      expect(manager!.templateArgs.ISSUE_TRACKER_TOOLS).toContain(
-        "SETUP_ISSUE_TRACKER.md",
-      );
-      expect(manager!.envExample).toContain("TODO");
-      expect(manager!.envExample).toContain("SETUP_ISSUE_TRACKER.md");
-    });
-
-    it("listIssueTrackers includes custom", () => {
-      const managers = listIssueTrackers();
-      expect(managers.some((m) => m.name === "custom")).toBe(true);
-    });
-
     it("getIssueTracker returns undefined for unknown manager", () => {
       expect(getIssueTracker("nonexistent")).toBeUndefined();
     });
-  });
-
-  describe("Agent setupCommand", () => {
-    it.each([
-      {
-        name: "claude-code",
-        command: `claude "$(cat .shipyard/SETUP_ISSUE_TRACKER.md)"`,
-      },
-      {
-        name: "codex",
-        command: `codex "$(cat .shipyard/SETUP_ISSUE_TRACKER.md)"`,
-      },
-    ])(
-      "$name has the expected interactive setupCommand",
-      ({ name, command }) => {
-        expect(getAgent(name)!.setupCommand).toBe(command);
-      },
-    );
   });
 
   describe("Issue tracker scaffold", () => {
@@ -1390,39 +1267,6 @@ describe("InitService scaffold", () => {
       expect(prompt).toContain("gh issue close");
       expect(prompt).not.toContain("{{LIST_TASKS_COMMAND}}");
       expect(prompt).not.toContain("{{CLOSE_TASK_COMMAND}}");
-    });
-
-    it("simple-loop with beads produces prompt with bd commands", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, {
-        templateName: "simple-loop",
-        issueTracker: getIssueTracker("beads"),
-      });
-
-      const prompt = await readFile(
-        join(dir, ".shipyard", "prompt.md"),
-        "utf-8",
-      );
-      expect(prompt).toContain("bd ready --json");
-      expect(prompt).toContain("bd close");
-      expect(prompt).not.toContain("gh issue list");
-      expect(prompt).not.toContain("gh issue close");
-      expect(prompt).not.toContain("{{LIST_TASKS_COMMAND}}");
-      expect(prompt).not.toContain("{{CLOSE_TASK_COMMAND}}");
-    });
-
-    it("simple-loop with beads skips --label Shipyard (no label to strip)", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, {
-        templateName: "simple-loop",
-        issueTracker: getIssueTracker("beads"),
-      });
-
-      const prompt = await readFile(
-        join(dir, ".shipyard", "prompt.md"),
-        "utf-8",
-      );
-      expect(prompt).not.toContain("--label Shipyard");
     });
 
     it("simple-loop with github-issues retains --label Shipyard when createLabel is true", async () => {
@@ -1495,109 +1339,6 @@ describe("InitService scaffold", () => {
       expect(prompt).toContain("Do not run your own unfiltered query");
     });
 
-    // --- custom issue tracker ---
-
-    const customManager = getIssueTracker("custom");
-
-    it("custom scaffolds .shipyard/SETUP_ISSUE_TRACKER.md", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, {
-        templateName: "simple-loop",
-        issueTracker: customManager,
-      });
-
-      const setup = await readFile(
-        join(dir, ".shipyard", "SETUP_ISSUE_TRACKER.md"),
-        "utf-8",
-      );
-      // Goal + interview + the three commands the agent must produce.
-      expect(setup).toContain("list");
-      expect(setup).toContain("view");
-      expect(setup).toContain("close");
-      // It must explicitly tell the agent to remove the exit 1 sentinel.
-      expect(setup).toContain("exit 1");
-      // The markers the agent will actually find in the scaffolded files.
-      expect(setup).toContain(customManager!.templateArgs.VIEW_TASK_COMMAND);
-      expect(setup).toContain(customManager!.templateArgs.CLOSE_TASK_COMMAND);
-    });
-
-    it("custom SETUP doc references Docker's build-image command", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, {
-        templateName: "simple-loop",
-        issueTracker: customManager,
-        sandboxProvider: getSandboxProvider("docker"),
-      });
-
-      const setup = await readFile(
-        join(dir, ".shipyard", "SETUP_ISSUE_TRACKER.md"),
-        "utf-8",
-      );
-      expect(setup).toContain("shipyard docker build-image");
-    });
-
-    it("non-custom issue trackers do not scaffold SETUP_ISSUE_TRACKER.md", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, {
-        templateName: "simple-loop",
-        issueTracker: getIssueTracker("github-issues"),
-      });
-
-      const { access } = await import("node:fs/promises");
-      await expect(
-        access(join(dir, ".shipyard", "SETUP_ISSUE_TRACKER.md")),
-      ).rejects.toThrow();
-    });
-
-    it("custom Dockerfile leaves a TODO install block instead of a real CLI", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, {
-        templateName: "simple-loop",
-        issueTracker: customManager,
-      });
-
-      const dockerfile = await readFile(
-        join(dir, ".shipyard", "Dockerfile"),
-        "utf-8",
-      );
-      expect(dockerfile).toContain("TODO");
-      expect(dockerfile).toContain("SETUP_ISSUE_TRACKER.md");
-      expect(dockerfile).not.toContain("{{ISSUE_TRACKER_TOOLS}}");
-      // No real issue-tracker CLI baked in yet.
-      expect(dockerfile).not.toContain("GitHub CLI");
-    });
-
-    it("custom simple-loop prompt hard-fails the list command with a pointer to the doc", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, {
-        templateName: "simple-loop",
-        issueTracker: customManager,
-      });
-
-      const prompt = await readFile(
-        join(dir, ".shipyard", "prompt.md"),
-        "utf-8",
-      );
-      expect(prompt).toContain("exit 1");
-      expect(prompt).toContain("SETUP_ISSUE_TRACKER.md");
-      expect(prompt).not.toContain("{{LIST_TASKS_COMMAND}}");
-    });
-
-    it("custom .env.example carries a TODO for tracker env vars", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, {
-        templateName: "simple-loop",
-        issueTracker: customManager,
-      });
-
-      const envExample = await readFile(
-        join(dir, ".shipyard", ".env.example"),
-        "utf-8",
-      );
-      expect(envExample).toContain("TODO");
-      expect(envExample).toContain("SETUP_ISSUE_TRACKER.md");
-    });
-
     // --- sequential-reviewer ---
 
     it("sequential-reviewer with github-issues produces implement-prompt with gh issue commands", async () => {
@@ -1615,25 +1356,6 @@ describe("InitService scaffold", () => {
       expect(prompt).toContain("labels");
       expect(prompt).toContain("comments");
       expect(prompt).toContain("gh issue close");
-      expect(prompt).not.toContain("{{LIST_TASKS_COMMAND}}");
-      expect(prompt).not.toContain("{{CLOSE_TASK_COMMAND}}");
-    });
-
-    it("sequential-reviewer with beads produces implement-prompt with bd commands", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, {
-        templateName: "sequential-reviewer",
-        issueTracker: getIssueTracker("beads"),
-      });
-
-      const prompt = await readFile(
-        join(dir, ".shipyard", "implement-prompt.md"),
-        "utf-8",
-      );
-      expect(prompt).toContain("bd ready --json");
-      expect(prompt).toContain("bd close");
-      expect(prompt).not.toContain("gh issue list");
-      expect(prompt).not.toContain("gh issue close");
       expect(prompt).not.toContain("{{LIST_TASKS_COMMAND}}");
       expect(prompt).not.toContain("{{CLOSE_TASK_COMMAND}}");
     });
@@ -1666,22 +1388,6 @@ describe("InitService scaffold", () => {
       expect(prompt).not.toContain("{{LIST_TASKS_COMMAND}}");
     });
 
-    it("blank with beads produces prompt with bd ready example", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, {
-        templateName: "blank",
-        issueTracker: getIssueTracker("beads"),
-      });
-
-      const prompt = await readFile(
-        join(dir, ".shipyard", "prompt.md"),
-        "utf-8",
-      );
-      expect(prompt).toContain("bd ready --json");
-      expect(prompt).not.toContain("gh issue");
-      expect(prompt).not.toContain("{{LIST_TASKS_COMMAND}}");
-    });
-
     // --- parallel-planner ---
 
     it("parallel-planner with github-issues produces plan-prompt with gh issue commands", async () => {
@@ -1698,22 +1404,6 @@ describe("InitService scaffold", () => {
       expect(planPrompt).toContain("gh issue list");
       expect(planPrompt).toContain("labels");
       expect(planPrompt).toContain("comments");
-      expect(planPrompt).not.toContain("{{LIST_TASKS_COMMAND}}");
-    });
-
-    it("parallel-planner with beads produces plan-prompt with bd commands", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, {
-        templateName: "parallel-planner",
-        issueTracker: getIssueTracker("beads"),
-      });
-
-      const planPrompt = await readFile(
-        join(dir, ".shipyard", "plan-prompt.md"),
-        "utf-8",
-      );
-      expect(planPrompt).toContain("bd ready --json");
-      expect(planPrompt).not.toContain("gh issue");
       expect(planPrompt).not.toContain("{{LIST_TASKS_COMMAND}}");
     });
 
@@ -1775,22 +1465,6 @@ describe("InitService scaffold", () => {
       expect(prompt).not.toContain("{{VIEW_TASK_COMMAND}}");
     });
 
-    it("parallel-planner with beads produces implement-prompt with bd show", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, {
-        templateName: "parallel-planner",
-        issueTracker: getIssueTracker("beads"),
-      });
-
-      const prompt = await readFile(
-        join(dir, ".shipyard", "implement-prompt.md"),
-        "utf-8",
-      );
-      expect(prompt).toContain("bd show");
-      expect(prompt).not.toContain("gh issue");
-      expect(prompt).not.toContain("{{VIEW_TASK_COMMAND}}");
-    });
-
     it("parallel-planner with github-issues produces merge-prompt with gh issue close", async () => {
       const dir = await makeDir();
       await runScaffold(dir, {
@@ -1803,22 +1477,6 @@ describe("InitService scaffold", () => {
         "utf-8",
       );
       expect(prompt).toContain("gh issue close");
-      expect(prompt).not.toContain("{{CLOSE_TASK_COMMAND}}");
-    });
-
-    it("parallel-planner with beads produces merge-prompt with bd close", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, {
-        templateName: "parallel-planner",
-        issueTracker: getIssueTracker("beads"),
-      });
-
-      const prompt = await readFile(
-        join(dir, ".shipyard", "merge-prompt.md"),
-        "utf-8",
-      );
-      expect(prompt).toContain("bd close");
-      expect(prompt).not.toContain("gh issue");
       expect(prompt).not.toContain("{{CLOSE_TASK_COMMAND}}");
     });
 
@@ -1863,22 +1521,6 @@ describe("InitService scaffold", () => {
       expect(planPrompt).toContain("gh issue list");
       expect(planPrompt).toContain("labels");
       expect(planPrompt).toContain("comments");
-      expect(planPrompt).not.toContain("{{LIST_TASKS_COMMAND}}");
-    });
-
-    it("parallel-planner-with-review with beads produces plan-prompt with bd commands", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, {
-        templateName: "parallel-planner-with-review",
-        issueTracker: getIssueTracker("beads"),
-      });
-
-      const planPrompt = await readFile(
-        join(dir, ".shipyard", "plan-prompt.md"),
-        "utf-8",
-      );
-      expect(planPrompt).toContain("bd ready --json");
-      expect(planPrompt).not.toContain("gh issue");
       expect(planPrompt).not.toContain("{{LIST_TASKS_COMMAND}}");
     });
 
@@ -1954,22 +1596,6 @@ describe("InitService scaffold", () => {
       expect(prompt).not.toContain("{{VIEW_TASK_COMMAND}}");
     });
 
-    it("parallel-planner-with-review with beads produces implement-prompt with bd show", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, {
-        templateName: "parallel-planner-with-review",
-        issueTracker: getIssueTracker("beads"),
-      });
-
-      const prompt = await readFile(
-        join(dir, ".shipyard", "implement-prompt.md"),
-        "utf-8",
-      );
-      expect(prompt).toContain("bd show");
-      expect(prompt).not.toContain("gh issue");
-      expect(prompt).not.toContain("{{VIEW_TASK_COMMAND}}");
-    });
-
     it("parallel-planner-with-review with github-issues produces merge-prompt with gh issue close", async () => {
       const dir = await makeDir();
       await runScaffold(dir, {
@@ -1982,22 +1608,6 @@ describe("InitService scaffold", () => {
         "utf-8",
       );
       expect(prompt).toContain("gh issue close");
-      expect(prompt).not.toContain("{{CLOSE_TASK_COMMAND}}");
-    });
-
-    it("parallel-planner-with-review with beads produces merge-prompt with bd close", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, {
-        templateName: "parallel-planner-with-review",
-        issueTracker: getIssueTracker("beads"),
-      });
-
-      const prompt = await readFile(
-        join(dir, ".shipyard", "merge-prompt.md"),
-        "utf-8",
-      );
-      expect(prompt).toContain("bd close");
-      expect(prompt).not.toContain("gh issue");
       expect(prompt).not.toContain("{{CLOSE_TASK_COMMAND}}");
     });
 
@@ -2029,25 +1639,6 @@ describe("InitService scaffold", () => {
       expect(dockerfile).toContain("GitHub CLI");
       expect(dockerfile).toContain("gh");
       expect(dockerfile).not.toContain("{{ISSUE_TRACKER_TOOLS}}");
-    });
-
-    it("scaffold with beads produces Dockerfile with beads install (no GitHub CLI)", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, {
-        issueTracker: getIssueTracker("beads"),
-      });
-
-      const dockerfile = await readFile(
-        join(dir, ".shipyard", "Dockerfile"),
-        "utf-8",
-      );
-      expect(dockerfile).toContain("beads");
-      expect(dockerfile).toContain("libicu72");
-      expect(dockerfile).toContain("corepack enable");
-      expect(dockerfile).not.toContain("GitHub CLI");
-      expect(dockerfile).not.toContain("{{ISSUE_TRACKER_TOOLS}}");
-      expect(dockerfile).not.toContain("x86_64-linux-gnu");
-      expect(dockerfile).toContain("dpkg-architecture -qDEB_HOST_MULTIARCH");
     });
   });
 

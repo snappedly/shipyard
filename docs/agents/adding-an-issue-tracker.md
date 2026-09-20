@@ -1,6 +1,6 @@
 # Adding an issue tracker
 
-This document is for contributors adding support for a new **issue tracker** (e.g. GitHub Issues, Beads, Jira, GitLab) to `shipyard init`. It covers:
+This document is for contributors adding support for a new **issue tracker** (e.g. GitHub Issues, Jira, GitLab) to `shipyard init`. It covers:
 
 1. [Evaluating a new issue tracker](#evaluating-a-new-issue-tracker) — the questionnaire used to decide whether an issue tracker can be supported.
 2. [The `IssueTrackerEntry` shape](#the-issuetrackerentry-shape) — what you fill in.
@@ -33,7 +33,7 @@ Before implementing, confirm the issue tracker satisfies the must-haves below. I
 
 ### Strongly preferred
 
-- **Structured (JSON) output for list.** Lets the prompt parse rather than scrape. GitHub's `gh issue list --json …` and Beads' `bd ready --json` both meet this.
+- **Structured (JSON) output for list.** Lets the prompt parse rather than scrape. GitHub's `gh issue list --json …` meets this.
 - **Filter/label support on list.** Some way to scope to "tasks ready for the agent" rather than the whole backlog.
 
 ### Not sufficient on its own
@@ -46,7 +46,7 @@ Before implementing, confirm the issue tracker satisfies the must-haves below. I
 For `shipyard init` to offer the issue tracker:
 
 - A Dockerfile snippet that installs the CLI as root (before any `USER` switch in the agent provider's Dockerfile).
-- A token env var to surface in `.env.example`, or an empty string if no auth is required (Beads is the local-only example).
+- A token env var to surface in `.env.example`, or an empty string if no auth is required.
 - Concrete `LIST_TASKS_COMMAND`, `VIEW_TASK_COMMAND`, `CLOSE_TASK_COMMAND` strings. Use `<ID>` as the placeholder for a task ID in the view/close commands — the generated prompts substitute it.
 
 ## The `IssueTrackerEntry` shape
@@ -69,7 +69,7 @@ interface IssueTrackerEntry {
 
 Field by field:
 
-- `name` — short identifier (e.g. `"github-issues"`, `"beads"`). Used as the CLI choice value.
+- `name` — short identifier (e.g. `"github-issues"`, `"gitlab"`). Used as the CLI choice value.
 - `label` — human-readable label shown in the `init` picker.
 - `templateArgs.LIST_TASKS_COMMAND` — shell command that prints open tasks. Prefer JSON output.
 - `templateArgs.VIEW_TASK_COMMAND` — shell command that prints one task by ID. Use `<ID>` as the literal placeholder.
@@ -79,7 +79,7 @@ Field by field:
 
 ## Scaffold integration
 
-Add an entry to `ISSUE_TRACKER_REGISTRY` in [`src/InitService.ts`](../../src/InitService.ts), alongside `github-issues` and `beads`:
+Add an entry to `ISSUE_TRACKER_REGISTRY` in [`src/InitService.ts`](../../src/InitService.ts), alongside `github-issues`:
 
 ```ts
 {
@@ -96,7 +96,7 @@ GITLAB_TOKEN=`,
 }
 ```
 
-And a Dockerfile-snippet constant alongside `GITHUB_CLI_TOOLS` and `BEADS_TOOLS`. Keep it to a single `RUN` block where reasonable; clean apt lists; do not switch user.
+And a Dockerfile-snippet constant alongside `GITHUB_CLI_TOOLS`. Keep it to a single `RUN` block where reasonable; clean apt lists; do not switch user.
 
 ## Implementation checklist
 
