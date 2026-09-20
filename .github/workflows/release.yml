@@ -203,6 +203,44 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  record-release-ci-status:
+    name: Record release candidate CI status
+    if: always() && needs.select-mode.result == 'success' && needs.select-mode.outputs.mode == 'publish'
+    needs:
+      - select-mode
+      - build-package
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      statuses: write
+    steps:
+      # The version pull request is merged with GITHUB_TOKEN, so its push
+      # event does not start ci.yml. Record the exact-candidate result as the
+      # required commit status so the merged release commit has the same
+      # visible CI signal as a normal main push.
+      - name: Publish exact candidate CI status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ github.sha }}
+          BUILD_RESULT: ${{ needs.build-package.result }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [[ "$BUILD_RESULT" == "success" ]]; then
+            STATE=success
+            DESCRIPTION="Release candidate CI passed"
+          else
+            STATE=failure
+            DESCRIPTION="Release candidate CI failed"
+          fi
+
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/statuses/${CANDIDATE_SHA}" \
+            -f state="$STATE" \
+            -f context=ci \
+            -f description="$DESCRIPTION" \
+            -f target_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
+
   publish:
     name: Publish npm package
     if: needs.select-mode.outputs.mode == 'publish'
