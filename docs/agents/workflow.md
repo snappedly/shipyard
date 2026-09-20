@@ -39,7 +39,7 @@ The pre-commit hook runs staged formatting and then the cheap typecheck. The ful
 
 - Package output: `npm run build`; this also copies templates and checks that public declaration files are free of Effect references. The standard check invokes it before tests.
 - CI: pull requests and pushes to `main` run the package smoke test and documentation build.
-- Package release: the push-triggered `release.yml` workflow maintains the Changesets version pull request, then verifies and publishes its exact `main` commit after approval through the `production` environment.
+- Package release: the push-triggered `release.yml` workflow maintains and automatically merges the Changesets version pull request after CI, then verifies and publishes its exact `main` commit after approval through the `production` environment.
 
 ## Required checks
 
@@ -71,7 +71,7 @@ No preview deployment is configured today. If a future non-production preview ex
 
 ## Production release
 
-Package publication is automated by `release.yml`. Pending changesets create or update a version pull request. Merging that pull request triggers a publish run for its exact `main` commit. The workflow reruns `npm run check`, inspects the package manifest, and publishes through npm trusted publishing only after approval through the `production` environment. See `RELEASING.md`.
+Package publication is automated by `release.yml`. Pending changesets create or update a version pull request, and the workflow automatically merges it after its exact-head CI passes. The workflow then dispatches a publish run for the resulting `main` commit, reruns `npm run check`, inspects the package manifest, and publishes through npm trusted publishing only after approval through the `production` environment. See `RELEASING.md`.
 
 The repository has no hosted production environment or deployment workflow. Publishing the npm package does not deploy an always-on Shipyard service.
 

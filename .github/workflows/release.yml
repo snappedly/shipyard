@@ -33,7 +33,7 @@ jobs:
         uses: changesets/action/select-mode@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
 
   version:
-    name: Update version pull request
+    name: Version and merge release pull request
     if: needs.select-mode.outputs.mode == 'version'
     needs: select-mode
     runs-on: ubuntu-latest
@@ -69,12 +69,58 @@ jobs:
           script: npm run version-packages
       - name: Run CI for version pull request
         if: steps.changesets.outputs.pr-number != ''
+        id: version-ci
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ steps.changesets.outputs.pr-number }}
         run: |
+          set -euo pipefail
           HEAD_REF=$(gh pr view "$PR_NUMBER" --json headRefName --jq .headRefName)
+          HEAD_SHA=$(gh pr view "$PR_NUMBER" --json headRefOid --jq .headRefOid)
           gh workflow run ci.yml --ref "$HEAD_REF"
+
+          RUN_ID=""
+          for _ in $(seq 1 30); do
+            RUN_ID=$(gh run list \
+              --workflow ci.yml \
+              --event workflow_dispatch \
+              --commit "$HEAD_SHA" \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId // empty')
+            if [[ -n "$RUN_ID" ]]; then
+              break
+            fi
+            sleep 2
+          done
+
+          test -n "$RUN_ID"
+          gh run watch "$RUN_ID" --compact --exit-status
+          {
+            echo "head-ref=$HEAD_REF"
+            echo "head-sha=$HEAD_SHA"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Merge version pull request
+        if: steps.version-ci.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ steps.version-ci.outputs.head-sha }}
+          PR_NUMBER: ${{ steps.changesets.outputs.pr-number }}
+        run: |
+          set -euo pipefail
+          gh pr merge "$PR_NUMBER" \
+            --squash \
+            --delete-branch \
+            --match-head-commit "$HEAD_SHA"
+
+      - name: Start release for versioned main
+        if: steps.version-ci.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # Merges made with GITHUB_TOKEN do not emit a new push workflow run.
+        # Dispatch explicitly so the merged version is built and published.
+        run: gh workflow run release.yml --ref main
 
   build-package:
     name: Build npm package

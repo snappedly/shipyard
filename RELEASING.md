@@ -1,7 +1,7 @@
 # Releasing Shipyard
 
-Package publication is automated from `main` and requires human approval of
-the exact production candidate.
+Package versioning starts automatically after a change reaches `main`.
+Publication still requires human approval of the exact production candidate.
 
 ## One-time setup
 
@@ -19,6 +19,10 @@ the exact production candidate.
    settings.
 5. Enable GitHub private vulnerability reporting and branch protection for
    `main`.
+
+Keep the `ci` status check required on `main`, and do not require a human
+approval for the generated version pull request; the release workflow merges it
+after that check passes.
 
 Trusted publishing uses short-lived OIDC credentials, so the workflow does not
 need an npm write token.
@@ -39,12 +43,12 @@ Every push to `main` runs the **Release npm package** workflow after the full
 repository check:
 
 1. If pending changesets exist, the workflow creates or updates the
-   **Version Packages** pull request and starts CI for its exact head commit.
-2. Review and merge the version pull request when its version, changelog, and
-   CI results are correct.
-3. The resulting push to `main` identifies the unpublished version and queues
-   an unprivileged build job. That job creates the exact tarball and checksum
-   that the publish job will consume.
+   **Version Packages** pull request and runs CI for its exact head commit.
+2. After CI passes, the workflow merges that version pull request and
+   dispatches a release run for the resulting `main` commit. No manual review
+   or merge of the generated version pull request is required.
+3. The release run identifies the unpublished version and creates the exact
+   tarball and checksum that the publish job will consume.
 4. Review the workflow run, candidate commit, and built artifact, then approve
    the publish job through the protected `production` environment.
 

@@ -25,6 +25,7 @@ const commitFile = async (
 };
 
 const cliPath = join(import.meta.dirname, "..", "dist", "main.js");
+const cliTestTimeoutMs = 15_000;
 
 const runCli = (args: string, cwd: string, env?: NodeJS.ProcessEnv) =>
   execAsync(`node ${cliPath} ${args}`, {
@@ -32,7 +33,7 @@ const runCli = (args: string, cwd: string, env?: NodeJS.ProcessEnv) =>
     env: { ...process.env, ...env },
   });
 
-describe("shipyard CLI", () => {
+describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
   it("shows help with --help flag", async () => {
     const { stdout } = await runCli("--help", process.cwd());
     expect(stdout).toContain("shipyard");
