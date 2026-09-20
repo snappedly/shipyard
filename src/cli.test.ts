@@ -3,7 +3,11 @@ import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { NodeContext } from "@effect/platform-node";
+import { Effect, Exit, Layer } from "effect";
 import { describe, expect, it } from "vitest";
+import { cli } from "./cli.js";
+import { ClackDisplay } from "./Display.js";
 
 const execAsync = promisify(exec);
 
@@ -32,6 +36,15 @@ const runCli = (args: string, cwd: string, env?: NodeJS.ProcessEnv) =>
     cwd,
     env: { ...process.env, ...env },
   });
+
+// Parser-only compatibility checks do not need a packaged-process boundary.
+// Keeping them in-process avoids a flaky child-process wait under CI.
+const cliTestLayer = Layer.merge(NodeContext.layer, ClackDisplay.layer);
+
+const runCliInProcess = (args: ReadonlyArray<string>) =>
+  Effect.runPromiseExit(
+    cli(["node", "shipyard", ...args]).pipe(Effect.provide(cliTestLayer)),
+  );
 
 describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
   it("shows help with --help flag", async () => {
@@ -206,22 +219,15 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
   });
 
   it("old top-level build-image command no longer works", async () => {
-    try {
-      await runCli("build-image", process.cwd());
-      expect.fail("Expected command to fail");
-    } catch (err: unknown) {
-      // Command should fail since build-image is no longer a top-level command
-      expect(err).toBeDefined();
-    }
+    const result = await runCliInProcess(["build-image"]);
+
+    expect(Exit.isFailure(result)).toBe(true);
   });
 
   it("old top-level remove-image command no longer works", async () => {
-    try {
-      await runCli("remove-image", process.cwd());
-      expect.fail("Expected command to fail");
-    } catch (err: unknown) {
-      expect(err).toBeDefined();
-    }
+    const result = await runCliInProcess(["remove-image"]);
+
+    expect(Exit.isFailure(result)).toBe(true);
   });
 
   it("--help does not show a podman namespace", async () => {
