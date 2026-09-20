@@ -18,13 +18,6 @@ worktrees/
 ${LOCKS_DIR}/
 `;
 
-/**
- * Filename of the setup prompt scaffolded for the `custom` issue tracker.
- * Both the per-agent `setupCommand` and the in-scaffold sentinels point at it,
- * so it is defined once here.
- */
-const SETUP_ISSUE_TRACKER_DOC = "SETUP_ISSUE_TRACKER.md";
-const SETUP_ISSUE_TRACKER_PATH = `${CONFIG_DIR}/${SETUP_ISSUE_TRACKER_DOC}`;
 export const DEFAULT_AGENT_NAME = "codex";
 const TEMPLATE_AGENT_FACTORY = "codex";
 
@@ -223,13 +216,6 @@ export interface AgentEntry {
   readonly dockerfileTemplate: string;
   /** Lines to include in the generated `.env.example` for this agent's API key. */
   readonly envExample: string;
-  /**
-   * Copy-pasteable interactive command that feeds the custom-issue-tracker
-   * setup prompt to this agent's CLI on the host. Printed in init's next steps
-   * when the `custom` issue tracker is selected. Runs on the host (the
-   * sandbox image isn't built yet), so the user must have the CLI installed.
-   */
-  readonly setupCommand: string;
 }
 
 const CLAUDE_CODE_DOCKERFILE = `FROM node:22-bookworm
@@ -309,7 +295,6 @@ const AGENT_REGISTRY: AgentEntry[] = [
     dockerfileTemplate: CODEX_DOCKERFILE,
     envExample: `# OpenAI API key
 OPENAI_API_KEY=`,
-    setupCommand: `codex "$(cat ${SETUP_ISSUE_TRACKER_PATH})"`,
   },
   {
     name: "claude-code",
@@ -322,7 +307,6 @@ OPENAI_API_KEY=`,
 CLAUDE_CODE_OAUTH_TOKEN=
 # Or use an Anthropic API key instead — uncomment and fill in:
 # ANTHROPIC_API_KEY=`,
-    setupCommand: `claude "$(cat ${SETUP_ISSUE_TRACKER_PATH})"`,
   },
 ];
 
@@ -353,31 +337,6 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \\
   && apt-get update && apt-get install -y gh \\
   && rm -rf /var/lib/apt/lists/*`;
 
-const BEADS_TOOLS = `# Install system dependencies for Beads
-RUN apt-get update && apt-get install -y \\
-  dpkg-dev \\
-  libicu72 \\
-  && rm -rf /var/lib/apt/lists/* \\
-  && ARCH_DIR=$(dpkg-architecture -qDEB_HOST_MULTIARCH) \\
-  && for lib in /usr/lib/$ARCH_DIR/libicu*.so.72; do \\
-       ln -s "$lib" "\${lib%.72}.74"; \\
-     done
-
-RUN curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash
-
-RUN corepack enable`;
-
-// Sentinels baked into the scaffold for the `custom` issue tracker. The
-// project ships deliberately broken-until-configured; the setup agent finds
-// and replaces these markers in place (see SETUP_ISSUE_TRACKER.md). Defined as
-// shared constants so the registry entry and the setup doc stay in sync.
-const CUSTOM_LIST_TASKS_SENTINEL = `echo 'No issue tracker configured — run ${SETUP_ISSUE_TRACKER_PATH} through your coding agent.' >&2; exit 1`;
-const CUSTOM_VIEW_TASK_MARKER = `<view command — see ${SETUP_ISSUE_TRACKER_PATH}>`;
-const CUSTOM_CLOSE_TASK_MARKER = `<close command — see ${SETUP_ISSUE_TRACKER_PATH}>`;
-const CUSTOM_TRACKER_TOOLS = `# TODO: install your issue tracker's CLI here. See ${SETUP_ISSUE_TRACKER_PATH}`;
-const CUSTOM_ENV_EXAMPLE = `# TODO: add any env vars your issue tracker needs (e.g. an API token).
-# See ${SETUP_ISSUE_TRACKER_PATH}`;
-
 const ISSUE_TRACKER_REGISTRY: IssueTrackerEntry[] = [
   {
     name: "github-issues",
@@ -392,32 +351,6 @@ const ISSUE_TRACKER_REGISTRY: IssueTrackerEntry[] = [
 # Create a fine-grained token: https://github.com/settings/personal-access-tokens/new
 # Required repository permissions: Issues (Read and write) and Metadata (Read)
 GH_TOKEN=`,
-  },
-  {
-    name: "beads",
-    label: "Beads",
-    templateArgs: {
-      LIST_TASKS_COMMAND: "bd ready --json",
-      VIEW_TASK_COMMAND: "bd show <ID>",
-      CLOSE_TASK_COMMAND: `bd close <ID> --reason="Completed by ${PRODUCT_NAME}"`,
-      ISSUE_TRACKER_TOOLS: BEADS_TOOLS,
-    },
-    envExample: "",
-  },
-  {
-    name: "custom",
-    label: "Custom",
-    templateArgs: {
-      // The only real shell expression: PromptPreprocessor fails the run on a
-      // non-zero exit and surfaces stderr, so this is the single enforcement
-      // point that keeps the scaffold broken until the user configures it.
-      LIST_TASKS_COMMAND: CUSTOM_LIST_TASKS_SENTINEL,
-      // Inline text markers — replaced by the setup agent, never executed.
-      VIEW_TASK_COMMAND: CUSTOM_VIEW_TASK_MARKER,
-      CLOSE_TASK_COMMAND: CUSTOM_CLOSE_TASK_MARKER,
-      ISSUE_TRACKER_TOOLS: CUSTOM_TRACKER_TOOLS,
-    },
-    envExample: CUSTOM_ENV_EXAMPLE,
   },
 ];
 
@@ -467,7 +400,6 @@ export const getSandboxProvider = (
 export function getNextStepsLines(
   template: string,
   mainFilename: string,
-  issueTracker: IssueTrackerEntry,
   agent: AgentEntry,
   packageManager: PackageManager,
   codexAuth: CodexAuthMode = "api-key",
@@ -503,24 +435,6 @@ export function getNextStepsLines(
     ];
   };
 
-  // The custom issue tracker scaffolds a broken-until-configured project, so
-  // its next steps are about running the setup prompt — not the template's
-  // normal "set env vars and go" flow. This branch wins over template-specific
-  // steps regardless of the chosen template.
-  if (issueTracker.name === "custom") {
-    const authLines =
-      agent.name === "codex" && codexAuth === "chatgpt" ? getAuthLines(1) : [];
-    const setupStep = authLines.length > 0 ? 2 : 1;
-    return [
-      "Next steps:",
-      ...authLines,
-      `${setupStep}. Your custom issue tracker isn't wired up yet — runs hard-fail until you configure it.`,
-      `${setupStep + 1}. Feed the setup prompt to ${agent.label} on your host to finish wiring it up:`,
-      `   ${agent.setupCommand}`,
-      `   (Runs on the host — you need the ${agent.label} CLI installed locally, since the sandbox image isn't built yet.)`,
-      `${setupStep + 2}. Follow ${CONFIG_DIR}/${SETUP_ISSUE_TRACKER_DOC} to edit the scaffolded files in place, build the image, and verify.`,
-    ];
-  }
   if (template === "blank") {
     const lines = ["Next steps:", ...getAuthLines(1)];
     lines.push(
@@ -810,69 +724,6 @@ const substituteTemplateArgs = (
     );
   });
 
-/**
- * Build the `SETUP_ISSUE_TRACKER.md` prompt scaffolded for the `custom` issue
- * tracker. It addresses the user's coding agent and walks it through wiring up
- * the tracker by editing the scaffolded files in place. The build command is
- * provider-parameterized so it names the selected CLI namespace.
- */
-const buildSetupIssueTrackerDoc = (cliNamespace: string): string =>
-  `# Set up your custom issue tracker
-
-You are a coding agent. Finish wiring up the **custom issue tracker** for this Shipyard project. It was scaffolded in a deliberately broken-until-configured state: until you complete the steps below, every Shipyard run hard-fails with a pointer back to this file.
-
-## Goal
-
-Wire up the issue tracker so the scaffolded prompts can **list**, **view**, and **close** tasks. There is no runtime abstraction to implement — the tracker commands are baked into the scaffolded files, so you edit those files **in place**.
-
-## 1. Interview the user
-
-Ask the user:
-
-- Which issue tracker do they use (e.g. Jira, Linear, a GitHub repo other than this one, an internal API)?
-- How should the sandbox authenticate — a CLI that is already logged in, or an API token? If a token, what is the environment variable name?
-
-## 2. Produce three commands
-
-Work out, together with the user, the shell commands for:
-
-- **list** — print all open tasks **as JSON** (match the shape the built-in trackers emit: an array of objects, each with at least an id/number, title, and body). This is what the agent reads at the start of every iteration.
-- **view** \`<ID>\` — show a single task by id.
-- **close** \`<ID>\` — close a single task by id.
-
-## 3. Edit the scaffolded files in place
-
-- **Dockerfile / Containerfile** — replace the line
-
-  \`\`\`
-  ${CUSTOM_TRACKER_TOOLS}
-  \`\`\`
-
-  with the install steps for your tracker's CLI (if it needs one).
-
-- **Prompt files (\`${CONFIG_DIR}/*.md\`)** — replace the sentinel
-
-  \`\`\`
-  ${CUSTOM_LIST_TASKS_SENTINEL}
-  \`\`\`
-
-  with your **list** command. In the prompt file the sentinel sits inside a Shipyard **shell expression** — a leading \`!\` followed by the command in backticks — whose output is injected into the prompt before each run. Keep that \`!\` and the surrounding backticks; replace only the command between them, and **remove the \`exit 1\`** (leaving it keeps every run hard-failing). Then replace the \`${CUSTOM_VIEW_TASK_MARKER}\` and \`${CUSTOM_CLOSE_TASK_MARKER}\` markers with your **view** and **close** commands.
-
-- **\`.env.example\`** — replace the \`# TODO\` block with the real env var(s) your tracker needs, then tell the user to set them in \`${CONFIG_DIR}/.env\`.
-
-## 4. Build the image
-
-Once the files are wired up, build the sandbox image:
-
-\`\`\`
-${CLI_NAME} ${cliNamespace} build-image
-\`\`\`
-
-## 5. Verify
-
-Run your **list** command inside the built image and confirm it returns the open tasks as JSON. If it errors, fix the command or the auth and rebuild.
-`;
-
 // ---------------------------------------------------------------------------
 // Main scaffold function
 // ---------------------------------------------------------------------------
@@ -995,19 +846,6 @@ export const scaffold = (
     // Strip the Shipyard label from prompt files when the user declined label creation
     if (!createLabel) {
       yield* rewritePromptFiles(configDir);
-    }
-
-    // For the custom issue tracker, drop the setup prompt the user feeds to
-    // their coding agent. Written after substituteTemplateArgs so it isn't
-    // clobbered and references the resolved sentinel markers the agent finds
-    // (not the {{KEY}} names, which are gone by now).
-    if (issueTracker.name === "custom") {
-      yield* fs
-        .writeFileString(
-          join(configDir, SETUP_ISSUE_TRACKER_DOC),
-          buildSetupIssueTrackerDoc(sandboxProvider.cliNamespace),
-        )
-        .pipe(Effect.mapError((e) => new Error(e.message)));
     }
 
     return { mainFilename };

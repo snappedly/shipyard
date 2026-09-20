@@ -33,8 +33,9 @@ npx shipyard init
 cp .shipyard/.env.example .shipyard/.env
 ```
 
-`init` asks which agent, sandbox provider, issue tracker, and starter template
-to use. Start with the `blank` template. Put the requested credentials in
+`init` asks which agent, sandbox provider, and starter template to use. Its
+issue-based templates use GitHub Issues. Start with the `blank` template. Put
+the requested credentials in
 `.shipyard/.env`, then write one concrete task in `.shipyard/prompt.md`.
 
 Run it:

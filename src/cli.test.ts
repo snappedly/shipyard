@@ -276,8 +276,8 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
       const output = stdout + stderr;
       expect(output).toContain("nonexistent");
       expect(output).toContain("github-issues");
-      expect(output).toContain("beads");
-      expect(output).toContain("custom");
+      expect(output).not.toContain("beads");
+      expect(output).not.toContain("custom");
     }
   });
 
@@ -289,7 +289,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     // vitest workers have no TTY, so this confirms the fully-non-interactive
     // path runs to completion without clack crashing on a missing prompt.
     const { stdout } = await runCli(
-      "init --agent claude-code --template blank --sandbox docker --issue-tracker beads --build-image false",
+      "init --agent claude-code --template blank --sandbox docker --issue-tracker github-issues --create-label false --build-image false",
       hostDir,
     );
 
@@ -308,7 +308,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     await writeFile(join(isolatedHome, ".codex", "auth.json"), "{}\n");
 
     await runCli(
-      "init --agent codex --codex-auth chatgpt --template blank --sandbox docker --issue-tracker beads --build-image false",
+      "init --agent codex --codex-auth chatgpt --template blank --sandbox docker --issue-tracker github-issues --create-label false --build-image false",
       hostDir,
       { HOME: isolatedHome },
     );
@@ -335,7 +335,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     let error: unknown;
     try {
       await runCli(
-        "init --agent codex --codex-auth chatgpt --template blank --sandbox docker --issue-tracker beads --build-image false",
+        "init --agent codex --codex-auth chatgpt --template blank --sandbox docker --issue-tracker github-issues --create-label false --build-image false",
         hostDir,
         { HOME: isolatedHome },
       );
@@ -382,22 +382,5 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
       expect(output).toContain("--create-label");
       expect(output).toContain("non-interactive");
     }
-  });
-
-  it("init --issue-tracker custom ignores --build-image and scaffolds without trying to build", async () => {
-    const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
-    await initRepo(hostDir);
-
-    // --build-image is meaningless for the custom tracker (Dockerfile is
-    // deliberately broken until configured) and must be silently ignored
-    // rather than fail-fast or attempt a build.
-    const { stdout } = await runCli(
-      "init --agent claude-code --template blank --sandbox docker --issue-tracker custom --build-image true",
-      hostDir,
-    );
-
-    expect(stdout).toContain("Init complete");
-    const entries = await readdir(join(hostDir, ".shipyard"));
-    expect(entries).toContain("SETUP_ISSUE_TRACKER.md");
   });
 });
