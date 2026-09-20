@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0
+
+### Minor Changes
+
+- f61b3a9: Remove Beads and custom issue-tracker choices from `shipyard init`.
+
 ## 0.3.1
 
 ### Patch Changes
