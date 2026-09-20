@@ -1,0 +1,181 @@
+name: Release npm package
+
+on:
+  push:
+    branches:
+      - main
+
+permissions: {}
+
+jobs:
+  select-mode:
+    name: Select release mode
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      mode: ${{ steps.changesets.outputs.mode }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: npm install --global npm@12.0.2
+      - run: npm ci
+      - run: npm run check
+      - name: Select Changesets mode
+        id: changesets
+        uses: changesets/action/select-mode@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+
+  version:
+    name: Update version pull request
+    if: needs.select-mode.outputs.mode == 'version'
+    needs: select-mode
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: changesets-version
+      cancel-in-progress: false
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: npm install --global npm@12.0.2
+      - run: npm ci
+      - name: Verify exact main revision
+        env:
+          CANDIDATE_SHA: ${{ github.sha }}
+        run: |
+          git fetch origin main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
+      - name: Create or update version pull request
+        id: changesets
+        uses: changesets/action/version@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+        with:
+          script: npm run version-packages
+      - name: Run CI for version pull request
+        if: steps.changesets.outputs.pr-number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.changesets.outputs.pr-number }}
+        run: |
+          HEAD_REF=$(gh pr view "$PR_NUMBER" --json headRefName --jq .headRefName)
+          gh workflow run ci.yml --ref "$HEAD_REF"
+
+  build-package:
+    name: Build npm package
+    if: needs.select-mode.outputs.mode == 'publish'
+    needs: select-mode
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact candidate
+        env:
+          CANDIDATE_SHA: ${{ github.sha }}
+        run: |
+          git fetch origin main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: npm install --global npm@12.0.2
+      - run: npm ci
+      - run: npm run check
+      - name: Build publishable artifact
+        run: |
+          PACKAGE_FILE=$(npm pack --silent | tail -n 1)
+          mv "$PACKAGE_FILE" shipyard.tgz
+          sha256sum shipyard.tgz > shipyard.tgz.sha256
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20.18.1
+          package-manager-cache: false
+      - name: Smoke exact package at minimum Node version
+        run: node scripts/smoke-packed-package.mjs shipyard.tgz
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-package-${{ github.sha }}
+          path: |
+            shipyard.tgz
+            shipyard.tgz.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish npm package
+    if: needs.select-mode.outputs.mode == 'publish'
+    needs:
+      - select-mode
+      - build-package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: production
+      cancel-in-progress: false
+    environment:
+      name: production
+      url: https://www.npmjs.com/package/@snappedly-tools/shipyard
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: npm-package-${{ github.sha }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: npm install --global npm@12.0.2
+      - name: Verify approved artifact and exact candidate
+        env:
+          CANDIDATE_SHA: ${{ github.sha }}
+        run: |
+          sha256sum --check shipyard.tgz.sha256
+          git fetch origin main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
+          SOURCE_VERSION=$(node --print "require('./package.json').version")
+          PACKAGE_VERSION=$(tar -xOf shipyard.tgz package/package.json | node --input-type=module --eval "let input=''; process.stdin.on('data', chunk => input += chunk); process.stdin.on('end', () => console.log(JSON.parse(input).version))")
+          test "$SOURCE_VERSION" = "$PACKAGE_VERSION"
+      - name: Publish
+        run: npm publish shipyard.tgz --access public --provenance
+      - name: Create GitHub release
+        env:
+          CANDIDATE_SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(node --print "require('./package.json').version")
+          gh release create "v${VERSION}" \
+            --target "$CANDIDATE_SHA" \
+            --title "Shipyard v${VERSION}" \
+            --generate-notes

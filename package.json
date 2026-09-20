@@ -1,0 +1,106 @@
+{
+  "name": "@snappedly-tools/shipyard",
+  "version": "0.3.0",
+  "description": "Run AI coding agents in isolated sandboxes",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./sandboxes/docker": {
+      "import": "./dist/sandboxes/docker.js",
+      "types": "./dist/sandboxes/docker.d.ts"
+    },
+    "./sandboxes/vercel": {
+      "import": "./dist/sandboxes/vercel.js",
+      "types": "./dist/sandboxes/vercel.d.ts"
+    },
+    "./sandboxes/no-sandbox": {
+      "import": "./dist/sandboxes/no-sandbox.js",
+      "types": "./dist/sandboxes/no-sandbox.d.ts"
+    }
+  },
+  "bin": {
+    "shipyard": "dist/main.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "postbuild": "node scripts/copy-build-assets.mjs && node scripts/check-public-types-effect-free.mjs",
+    "prepack": "npm run build",
+    "check:package": "node scripts/check-package.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "version-packages": "changeset version",
+    "typecheck": "tsgo --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "npm run format:check && npm run typecheck && npm run build && npm run check:package && npm test",
+    "prepare": "husky",
+    "shipyard": "npm run build && tsx .shipyard/run.ts"
+  },
+  "keywords": [
+    "cli",
+    "sandbox",
+    "docker",
+    "ai",
+    "agent"
+  ],
+  "packageManager": "npm@12.0.2",
+  "engines": {
+    "node": ">=20.18.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/snappedly/shipyard.git"
+  },
+  "homepage": "https://github.com/snappedly/shipyard#readme",
+  "bugs": {
+    "url": "https://github.com/snappedly/shipyard/issues"
+  },
+  "author": "Snappedly",
+  "license": "SEE LICENSE IN LICENSE",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "devDependencies": {
+    "@changesets/cli": "^3.0.3",
+    "@effect/printer": "^0.51.0",
+    "@effect/printer-ansi": "^0.51.0",
+    "@typescript/native-preview": "^7.0.0-dev.20260707.2",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.5.1",
+    "prettier": "~3.8.1",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.3",
+    "vitest": "^5.0.1"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.8.1",
+    "@effect/cli": "^0.77.2",
+    "@effect/platform": "^0.97.2",
+    "@effect/platform-node": "^0.108.2",
+    "@standard-schema/spec": "^1.1.0",
+    "@types/node": "^26.6.1",
+    "effect": "^3.22.2",
+    "tsx": "^4.23.13",
+    "zod": "^4.6.5"
+  },
+  "peerDependencies": {
+    "@vercel/sandbox": ">=1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@vercel/sandbox": {
+      "optional": true
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "private": false
+}

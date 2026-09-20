@@ -1,0 +1,633 @@
+import { Effect, Option } from "effect";
+import { FileSystem } from "@effect/platform";
+import { randomBytes } from "node:crypto";
+import { join, normalize, resolve } from "node:path";
+import { WorktreeError, WorktreeTimeoutError, withTimeout } from "./errors.js";
+import {
+  CONFIG_DIR,
+  RUNTIME_NAMESPACE,
+  WORKTREES_DIR,
+} from "./runtimeNames.js";
+import { assertNoSymlinkComponents } from "./pathSecurity.js";
+import { execHostGit } from "./hostGit.js";
+
+const WORKTREE_TIMEOUT_MS = 30_000;
+
+/**
+ * Git global flags that prevent `git worktree add -b` from writing upstream
+ * tracking config to `.git/config`. Without these, a user's global
+ * `branch.autoSetupMerge` or `push.autoSetupRemote` can cause a config write
+ * that races with other processes holding `.git/config.lock`.
+ */
+const NO_CONFIG_LOCK_FLAGS = [
+  "-c",
+  "branch.autoSetupMerge=false",
+  "-c",
+  "push.autoSetupRemote=false",
+];
+
+/** Format a timestamp as YYYYMMDD-HHMMSS */
+const formatTimestamp = (date: Date): string => {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-` +
+    `${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
+  );
+};
+
+/**
+ * Short random hex suffix appended to generated temp branch names. Three
+ * bytes (six hex chars) is enough entropy to keep concurrent `run()` /
+ * `RunResult.fork()` calls within the same second from colliding on branch
+ * names — the second-granularity timestamp alone is not (see ADR 0018).
+ */
+const randomBranchSuffix = (): string => randomBytes(3).toString("hex");
+
+/** Sanitize a name for use in branch names and directory names. */
+export const sanitizeName = (name: string): string =>
+  name.toLowerCase().replace(/[^a-z0-9]/g, "-");
+
+const execGit = (
+  args: string[],
+  cwd: string,
+): Effect.Effect<string, WorktreeError> =>
+  Effect.tryPromise({
+    // Force the C locale so git emits English, machine-stable messages. Several
+    // callers match git's stderr (e.g. "invalid reference") to decide control
+    // flow; under a localized locale gettext translates those strings and the
+    // matches silently fail, breaking worktree creation (issue #595).
+    try: () => execHostGit(args, cwd, { env: { LC_ALL: "C" } }),
+    catch: (error) =>
+      new WorktreeError({
+        message: error instanceof Error ? error.message : String(error),
+      }),
+  });
+
+/**
+ * Generates a temporary branch name.
+ * When name is provided: `shipyard/<sanitized-name>/<YYYYMMDD-HHMMSS>-<random>`.
+ * Otherwise: `shipyard/<YYYYMMDD-HHMMSS>-<random>`.
+ *
+ * The random suffix prevents collisions between concurrent calls within the
+ * same wall-clock second — relevant for fan-out via `RunResult.fork()` and
+ * for plain `Promise.all([run(), run()])` callers.
+ */
+export const generateTempBranchName = (name?: string): string => {
+  const ts = formatTimestamp(new Date());
+  const suffix = randomBranchSuffix();
+  if (name) {
+    return `${RUNTIME_NAMESPACE}/${sanitizeName(name)}/${ts}-${suffix}`;
+  }
+  return `${RUNTIME_NAMESPACE}/${ts}-${suffix}`;
+};
+
+/** Returns the name of the currently checked-out branch in the given repo directory. */
+export const getCurrentBranch = (
+  repoDir: string,
+): Effect.Effect<string, WorktreeError> =>
+  execGit(["rev-parse", "--abbrev-ref", "HEAD"], repoDir).pipe(
+    Effect.map((output) => output.trim()),
+  );
+
+export interface WorktreeInfo {
+  path: string;
+  branch: string;
+}
+
+/** A single entry parsed from `git worktree list --porcelain`. */
+export interface WorktreeEntry {
+  path: string;
+  /** `null` for a detached HEAD (e.g. mid-rebase). */
+  branch: string | null;
+}
+
+/**
+ * Normalizes path separators to forward slashes.
+ *
+ * `git worktree list --porcelain` reports paths with forward slashes on every
+ * platform, but `node:path.join` produces backslashes on Windows. macOS also
+ * reports paths below `/private` while Node may retain the `/var` symlink
+ * spelling. Comparing the two without normalizing fails on those platforms,
+ * so all path comparisons in this module run both sides through this first.
+ */
+const normalizePath = (p: string): string => {
+  const normalized = p.replace(/\\/g, "/");
+  if (process.platform === "darwin" && normalized.startsWith("/private/")) {
+    return normalized.slice("/private".length);
+  }
+  return normalized;
+};
+
+/**
+ * Finds an existing worktree that collides with `branch` or `worktreePath`.
+ *
+ * Matches by branch first, then falls back to a path match — covering the
+ * mid-rebase detached-HEAD case where git reports a `null` branch. The path
+ * fallback normalizes separators so it works on Windows.
+ */
+export const findCollidingWorktree = (
+  existing: readonly WorktreeEntry[],
+  branch: string,
+  worktreePath: string,
+): WorktreeEntry | undefined =>
+  existing.find((wt) => wt.branch === branch) ??
+  existing.find((wt) => normalizePath(wt.path) === normalizePath(worktreePath));
+
+/**
+ * Whether `worktreePath` lives under `worktreesDir` (i.e. is a worktree managed
+ * by Shipyard rather than the main working tree or an external worktree).
+ * Separators are normalized so the check holds on Windows.
+ */
+export const isManagedWorktreePath = (
+  worktreePath: string,
+  worktreesDir: string,
+): boolean => {
+  const candidate = normalizePath(worktreePath).replace(/\/+$/, "");
+  const root = normalizePath(worktreesDir).replace(/\/+$/, "");
+  return candidate === root || candidate.startsWith(`${root}/`);
+};
+
+/**
+ * Whether a directory entry under `.shipyard/worktrees/` is orphaned — not
+ * present in the set of active worktree paths reported by git. Both sides are
+ * normalized so paths from `join` (backslashes on Windows) match git's
+ * forward-slash output.
+ */
+export const isOrphanedWorktreePath = (
+  entryPath: string,
+  activeWorktreePaths: Iterable<string>,
+): boolean => {
+  const normalizedEntry = normalizePath(entryPath);
+  for (const active of activeWorktreePaths) {
+    if (normalizePath(active) === normalizedEntry) return false;
+  }
+  return true;
+};
+
+/** Parses `git worktree list --porcelain` output into structured entries. */
+const listWorktrees = (
+  repoDir: string,
+): Effect.Effect<WorktreeEntry[], WorktreeError> =>
+  execGit(["worktree", "list", "--porcelain"], repoDir).pipe(
+    Effect.map((output) => {
+      const entries: WorktreeEntry[] = [];
+      let currentPath: string | null = null;
+      let currentBranch: string | null = null;
+
+      for (const line of output.split("\n")) {
+        if (line.startsWith("worktree ")) {
+          if (currentPath !== null) {
+            entries.push({ path: currentPath, branch: currentBranch });
+          }
+          currentPath = line.slice("worktree ".length).trim();
+          currentBranch = null;
+        } else if (line.startsWith("branch ")) {
+          // "branch refs/heads/my-branch" -> "my-branch"
+          currentBranch = line.slice("branch refs/heads/".length).trim();
+        }
+      }
+
+      if (currentPath !== null) {
+        entries.push({ path: currentPath, branch: currentBranch });
+      }
+
+      return entries;
+    }),
+  );
+
+/**
+ * On the clean-reuse path, fetches `origin/<branch>` into the worktree and
+ * fast-forwards local HEAD. Skipped silently (with an explanatory log) when:
+ *
+ * - HEAD is not attached to `<branch>` — a mid-rebase worktree paused at an
+ *   `edit`/`exec`/`break` instruction has a clean working tree but a detached
+ *   HEAD pointing at the pause point. `git merge --ff-only` there would
+ *   silently advance HEAD past the pause and break `git rebase --continue`;
+ * - the fetch fails (no `origin`, unreachable network, branch missing on
+ *   origin) — the worktree is reused as-is, never breaking the run; or
+ * - the local branch has diverged from `origin/<branch>` (unpushed commits +
+ *   moved origin), in which case `--ff-only` refuses and the unpushed work
+ *   is preserved exactly as it was.
+ *
+ * Errors here are non-fatal by design (ADR 0003): the worst case is the same
+ * stale-but-usable worktree the caller would have had before this refresh
+ * existed.
+ */
+const fastForwardFromOrigin = (
+  worktreePath: string,
+  branch: string,
+): Effect.Effect<void, never> =>
+  Effect.gen(function* () {
+    // `symbolic-ref --quiet HEAD` exits non-zero when HEAD is detached;
+    // map both failure and an unexpected target to "" so the predicate
+    // below treats them the same as "not on this branch".
+    const headRef = yield* execGit(
+      ["symbolic-ref", "--quiet", "HEAD"],
+      worktreePath,
+    ).pipe(
+      Effect.map((s) => s.trim()),
+      Effect.orElseSucceed(() => ""),
+    );
+    if (headRef !== `refs/heads/${branch}`) {
+      console.log(
+        `Reusing worktree at ${worktreePath} (branch '${branch}') — HEAD is not on '${branch}', skipping origin refresh`,
+      );
+      return;
+    }
+    const fetchResult = yield* Effect.either(
+      execGit(
+        [...NO_CONFIG_LOCK_FLAGS, "fetch", "origin", branch],
+        worktreePath,
+      ),
+    );
+    if (fetchResult._tag === "Left") {
+      console.log(
+        `Could not fetch from origin (reusing worktree at ${worktreePath} as-is, branch '${branch}')`,
+      );
+      return;
+    }
+    const before = yield* execGit(["rev-parse", "HEAD"], worktreePath).pipe(
+      Effect.map((s) => s.trim()),
+      Effect.orElseSucceed(() => ""),
+    );
+    const mergeResult = yield* Effect.either(
+      execGit(
+        [...NO_CONFIG_LOCK_FLAGS, "merge", "--ff-only", `origin/${branch}`],
+        worktreePath,
+      ),
+    );
+    if (mergeResult._tag === "Left") {
+      console.log(
+        `Branch '${branch}' has diverged from origin (reusing worktree at ${worktreePath} as-is)`,
+      );
+      return;
+    }
+    const after = yield* execGit(["rev-parse", "HEAD"], worktreePath).pipe(
+      Effect.map((s) => s.trim()),
+      Effect.orElseSucceed(() => ""),
+    );
+    if (before && after && before !== after) {
+      console.log(
+        `Fast-forwarded worktree at ${worktreePath} (branch '${branch}') to origin/${branch}`,
+      );
+    } else {
+      console.log(
+        `Reusing existing worktree at ${worktreePath} (branch '${branch}')`,
+      );
+    }
+  });
+
+/**
+ * Creates a git worktree at `.shipyard/worktrees/<name>/`.
+ *
+ * - If `branch` is specified, checks out that branch.
+ * - If not, creates a temporary `shipyard/<timestamp>` branch.
+ *
+ * When `branch` collides with an existing managed worktree:
+ * - Clean → reuses the existing worktree and fast-forwards it from
+ *   `origin/<branch>` when it is strictly behind (ADR 0003). A failed fetch
+ *   or a diverged branch is non-fatal and falls back to plain reuse.
+ * - Dirty (uncommitted changes) → reuses with a console warning, no refresh.
+ *
+ * Collisions with the main working tree or external worktrees always throw.
+ */
+export const create = (
+  repoDir: string,
+  opts?: {
+    branch?: string;
+    baseBranch?: string;
+    name?: string;
+  },
+): Effect.Effect<
+  WorktreeInfo,
+  WorktreeError | WorktreeTimeoutError,
+  FileSystem.FileSystem
+> =>
+  Effect.gen(function* () {
+    const configDir = join(repoDir, CONFIG_DIR);
+    const fs = yield* FileSystem.FileSystem;
+    const worktreesDir = join(configDir, WORKTREES_DIR);
+    yield* Effect.tryPromise({
+      try: () =>
+        assertNoSymlinkComponents(
+          configDir,
+          worktreesDir,
+          "Shipyard worktree directory",
+        ),
+      catch: (e) =>
+        new WorktreeError({
+          message: `Refusing symlinked Shipyard worktree directory: ${e instanceof Error ? e.message : String(e)}`,
+        }),
+    });
+    yield* fs
+      .makeDirectory(worktreesDir, { recursive: true })
+      .pipe(Effect.mapError((e) => new WorktreeError({ message: e.message })));
+    yield* Effect.tryPromise({
+      try: () =>
+        assertNoSymlinkComponents(
+          configDir,
+          worktreesDir,
+          "Shipyard worktree directory",
+        ),
+      catch: (e) =>
+        new WorktreeError({
+          message: `Refusing symlinked Shipyard worktree directory: ${e instanceof Error ? e.message : String(e)}`,
+        }),
+    });
+
+    let branch: string;
+    let worktreeName: string;
+
+    if (opts?.branch) {
+      branch = opts.branch;
+      // Validate before deriving a filesystem path. Git ref names reject path
+      // traversal and shell metacharacters, but constructing worktreeName first
+      // would still let a malformed Windows branch escape via backslashes.
+      yield* execGit(["check-ref-format", "--branch", branch], repoDir);
+      worktreeName = branch.replace(/\//g, "-");
+    } else {
+      const timestamp = formatTimestamp(new Date());
+      const suffix = randomBranchSuffix();
+      if (opts?.name) {
+        const sanitized = sanitizeName(opts.name);
+        branch = `${RUNTIME_NAMESPACE}/${sanitized}/${timestamp}-${suffix}`;
+        worktreeName = `${RUNTIME_NAMESPACE}-${sanitized}-${timestamp}-${suffix}`;
+      } else {
+        branch = `${RUNTIME_NAMESPACE}/${timestamp}-${suffix}`;
+        worktreeName = `${RUNTIME_NAMESPACE}-${timestamp}-${suffix}`;
+      }
+    }
+
+    const worktreePath = join(worktreesDir, worktreeName);
+    const assertWorktreePathIsSafe = () =>
+      assertNoSymlinkComponents(configDir, worktreePath, "worktree path");
+
+    yield* Effect.tryPromise({
+      try: assertWorktreePathIsSafe,
+      catch: (e) =>
+        new WorktreeError({
+          message: `Refusing symlinked worktree path: ${e instanceof Error ? e.message : String(e)}`,
+        }),
+    });
+
+    if (opts?.branch) {
+      // Proactively detect collision before git produces a confusing error.
+      // Match by branch first; fall back to target path (covers mid-rebase
+      // detached-HEAD state where the branch field is null).
+      const existing = yield* listWorktrees(repoDir);
+      const collision = findCollidingWorktree(existing, branch, worktreePath);
+      if (collision) {
+        // Only reuse worktrees managed by Shipyard (under .shipyard/worktrees/)
+        if (isManagedWorktreePath(collision.path, worktreesDir)) {
+          const dirty = yield* hasUncommittedChanges(collision.path);
+          if (dirty) {
+            console.warn(
+              `Reusing worktree at ${collision.path} (branch '${branch}') — worktree has uncommitted changes`,
+            );
+          } else {
+            yield* fastForwardFromOrigin(collision.path, branch);
+          }
+          // Git reports forward slashes even on Windows, and macOS may spell
+          // the same temp path as /private/var. Return the comparison-
+          // canonical spelling in the platform-native format so reused
+          // worktrees stay consistent with newly-created ones.
+          return { path: normalize(normalizePath(collision.path)), branch };
+        }
+        // Branch is checked out in the main working tree or external worktree
+        yield* Effect.fail(
+          new WorktreeError({
+            message:
+              `Branch '${branch}' is already checked out in worktree at '${collision.path}'. ` +
+              `Shipyard's branch and merge-to-head strategies run the agent in a git worktree under .shipyard/worktrees/, ` +
+              `and git refuses to check out the same branch in two worktrees at once (HEAD would become ambiguous). ` +
+              `Pick a different branch, or switch the main working tree to a different branch before re-running.`,
+          }),
+        );
+      }
+      yield* execGit(
+        [...NO_CONFIG_LOCK_FLAGS, "worktree", "add", worktreePath, branch],
+        repoDir,
+      ).pipe(
+        Effect.catchAll((e) => {
+          if (e.message.includes("invalid reference")) {
+            return execGit(
+              [
+                ...NO_CONFIG_LOCK_FLAGS,
+                "worktree",
+                "add",
+                "-b",
+                branch,
+                worktreePath,
+                opts?.baseBranch ?? "HEAD",
+              ],
+              repoDir,
+            );
+          }
+          return Effect.fail(e);
+        }),
+      );
+    } else {
+      yield* execGit(
+        [
+          ...NO_CONFIG_LOCK_FLAGS,
+          "worktree",
+          "add",
+          "-b",
+          branch,
+          worktreePath,
+          "HEAD",
+        ],
+        repoDir,
+      ).pipe(
+        Effect.catchAll((e) => {
+          if (
+            e.message.includes("already checked out") ||
+            e.message.includes("already exists")
+          ) {
+            return Effect.fail(
+              new WorktreeError({
+                message:
+                  `Branch '${branch}' is already checked out in another worktree. ` +
+                  `Use a different branch name, or wait for the other run to finish.`,
+              }),
+            );
+          }
+          return Effect.fail(e);
+        }),
+      );
+    }
+
+    yield* Effect.tryPromise({
+      try: assertWorktreePathIsSafe,
+      catch: (e) =>
+        new WorktreeError({
+          message: `Refusing symlinked worktree path: ${e instanceof Error ? e.message : String(e)}`,
+        }),
+    });
+
+    return { path: worktreePath, branch };
+  }).pipe(
+    withTimeout(
+      WORKTREE_TIMEOUT_MS,
+      () =>
+        new WorktreeTimeoutError({
+          message: `Worktree creation timed out after ${WORKTREE_TIMEOUT_MS}ms`,
+          timeoutMs: WORKTREE_TIMEOUT_MS,
+          path: repoDir,
+          operation: "create",
+        }),
+    ),
+  );
+
+/**
+ * Returns true if the worktree at `worktreePath` has any uncommitted changes:
+ * unstaged modifications, staged changes, or untracked files.
+ */
+export const hasUncommittedChanges = (
+  worktreePath: string,
+): Effect.Effect<boolean, WorktreeError> =>
+  execGit(["status", "--porcelain"], worktreePath).pipe(
+    Effect.map((output) => output.trim().length > 0),
+  );
+
+/**
+ * Removes a worktree and its git metadata.
+ *
+ * The `worktreePath` must be a path inside `.shipyard/worktrees/` so that
+ * the main repository directory can be derived from it.
+ */
+export const remove = (
+  worktreePath: string,
+): Effect.Effect<void, WorktreeError> => {
+  // Derive the main repo dir: worktreePath = <repoDir>/.shipyard/worktrees/<name>
+  // and verify the derivation before allowing git to remove anything. The old
+  // code accepted sibling prefixes such as `.shipyard/worktrees-evil`.
+  const candidate = resolve(worktreePath);
+  const repoDir = resolve(candidate, "..", "..", "..");
+  const worktreesDir = resolve(repoDir, ".shipyard", WORKTREES_DIR);
+  if (
+    !isManagedWorktreePath(candidate, worktreesDir) ||
+    candidate === worktreesDir
+  ) {
+    return Effect.fail(
+      new WorktreeError({
+        message: `Refusing to remove worktree outside ${worktreesDir}: ${worktreePath}`,
+      }),
+    );
+  }
+  return Effect.tryPromise({
+    try: () =>
+      assertNoSymlinkComponents(worktreesDir, candidate, "worktree path"),
+    catch: (e) =>
+      new WorktreeError({
+        message: `Refusing symlinked worktree path: ${e instanceof Error ? e.message : String(e)}`,
+      }),
+  }).pipe(
+    Effect.andThen(
+      execGit(["worktree", "remove", "--force", candidate], repoDir),
+    ),
+    Effect.asVoid,
+  );
+};
+
+/**
+ * Prunes stale git worktree metadata and removes orphaned directories under
+ * `.shipyard/worktrees/`.
+ */
+export const pruneStale = (
+  repoDir: string,
+): Effect.Effect<
+  void,
+  WorktreeError | WorktreeTimeoutError,
+  FileSystem.FileSystem
+> =>
+  Effect.gen(function* () {
+    const configDir = join(repoDir, CONFIG_DIR);
+    const fs = yield* FileSystem.FileSystem;
+
+    // Let git clean up metadata for worktrees whose directories are gone
+    yield* execGit(["worktree", "prune"], repoDir);
+
+    const worktreesDir = join(configDir, WORKTREES_DIR);
+
+    // Never recursively delete through a configurable symlink. A symlinked
+    // `.shipyard` is supported for active worktrees, but its target may be an
+    // unrelated directory; skip orphan-directory cleanup in that case.
+    const configDirIsSymlink = yield* fs.readLink(configDir).pipe(
+      Effect.map(() => true),
+      Effect.catchAll(() => Effect.succeed(false)),
+    );
+    const worktreesDirIsSymlink = yield* fs.readLink(worktreesDir).pipe(
+      Effect.map(() => true),
+      Effect.catchAll(() => Effect.succeed(false)),
+    );
+    if (configDirIsSymlink || worktreesDirIsSymlink) return;
+
+    // Read directory entries — return null if directory doesn't exist
+    const entries: string[] | null = yield* fs.readDirectory(worktreesDir).pipe(
+      Effect.map((es): string[] | null => es),
+      Effect.catchSome((e) =>
+        e._tag === "SystemError" && e.reason === "NotFound"
+          ? Option.some(Effect.succeed(null as string[] | null))
+          : Option.none(),
+      ),
+      Effect.mapError((e) => new WorktreeError({ message: e.message })),
+    );
+
+    if (entries === null) return;
+
+    // `git worktree list` canonicalizes paths via realpath. If repoDir or
+    // .shipyard is a symlink, joining the un-canonicalized prefix produces
+    // strings that never match git's output, and every active worktree looks
+    // orphaned. Resolve the prefix once so the Set lookup below works.
+    const realWorktreesDir = yield* fs
+      .realPath(worktreesDir)
+      .pipe(Effect.catchAll(() => Effect.succeed(worktreesDir)));
+
+    // Get the list of active worktree paths from git
+    const worktreeList = yield* execGit(
+      ["worktree", "list", "--porcelain"],
+      repoDir,
+    );
+    const activeWorktreePaths = new Set(
+      worktreeList
+        .split("\n")
+        .filter((line) => line.startsWith("worktree "))
+        .map((line) => line.slice("worktree ".length).trim()),
+    );
+
+    // Remove any directory under .shipyard/worktrees/ that is not an active worktree
+    for (const entry of entries) {
+      const entryPath = join(realWorktreesDir, entry);
+      const entryIsSymlink = yield* fs.readLink(entryPath).pipe(
+        Effect.map(() => true),
+        Effect.catchAll(() => Effect.succeed(false)),
+      );
+      if (entryIsSymlink) continue;
+      const isDir = yield* fs.stat(entryPath).pipe(
+        Effect.map((s) => s.type === "Directory"),
+        Effect.catchAll(() => Effect.succeed(false)),
+      );
+      if (isDir && isOrphanedWorktreePath(entryPath, activeWorktreePaths)) {
+        yield* fs.remove(entryPath, { recursive: true, force: true }).pipe(
+          Effect.mapError(
+            (e) =>
+              new WorktreeError({
+                message: `Failed to remove ${entryPath}: ${e.message}`,
+              }),
+          ),
+        );
+      }
+    }
+  }).pipe(
+    withTimeout(
+      WORKTREE_TIMEOUT_MS,
+      () =>
+        new WorktreeTimeoutError({
+          message: `Worktree prune timed out after ${WORKTREE_TIMEOUT_MS}ms`,
+          timeoutMs: WORKTREE_TIMEOUT_MS,
+          path: repoDir,
+          operation: "prune",
+        }),
+    ),
+  );

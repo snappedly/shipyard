@@ -1,0 +1,62 @@
+import { describe, expect, it, vi } from "vitest";
+import {
+  PostgresCoordinatorStorage,
+  type PostgresQueryClient,
+} from "./index.js";
+
+describe("PostgresCoordinatorStorage", () => {
+  it("wraps coordinator operations in a transaction and releases pooled clients", async () => {
+    const query = vi.fn(
+      async (_text: string, _values?: readonly unknown[]) => ({
+        rows: [],
+      }),
+    );
+    const release = vi.fn();
+    const client: PostgresQueryClient & {
+      connect: () => Promise<{ query: typeof query; release: typeof release }>;
+    } = {
+      query,
+      connect: async () => ({ query, release }),
+    };
+    const storage = new PostgresCoordinatorStorage({ client });
+
+    await expect(storage.transaction(async () => "ok")).resolves.toBe("ok");
+    expect(query.mock.calls.map(([text]) => text)).toEqual(["BEGIN", "COMMIT"]);
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("rolls back and preserves the operation error", async () => {
+    const query = vi.fn(async (_text: string) => ({ rows: [] }));
+    const storage = new PostgresCoordinatorStorage({ client: { query } });
+    const failure = new Error("operation failed");
+
+    await expect(
+      storage.transaction(async () => {
+        throw failure;
+      }),
+    ).rejects.toBe(failure);
+    expect(query.mock.calls.map(([text]) => text)).toEqual([
+      "BEGIN",
+      "ROLLBACK",
+    ]);
+  });
+
+  it("locks mutable jobs and absent lease resources inside the transaction", async () => {
+    const query = vi.fn(
+      async (_text: string, _values?: readonly unknown[]) => ({
+        rows: [],
+      }),
+    );
+    const storage = new PostgresCoordinatorStorage({ client: { query } });
+
+    await storage.transaction(async (transaction) => {
+      expect(await transaction.getJob("missing")).toBeUndefined();
+      await transaction.lockLeaseResource("snappedly/shipyard", "main");
+    });
+
+    const statements = query.mock.calls.map(([text]) => text);
+    expect(statements[1]).toContain("FOR UPDATE");
+    expect(statements[2]).toContain("pg_advisory_xact_lock");
+    expect(query.mock.calls[2]?.[1]).toEqual(["snappedly/shipyard\u0000main"]);
+  });
+});

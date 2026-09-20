@@ -1,0 +1,86 @@
+---
+title: Getting Started
+description: Run an AI coding agent in a sandbox with Shipyard.
+---
+
+## What is Shipyard?
+
+Shipyard is a TypeScript library and CLI for running AI coding agents in
+sandboxes. Your script chooses an agent, a sandbox provider, a prompt, and a
+branch strategy. Shipyard manages the sandbox lifecycle and collects the
+agent's commits. Start with a single run; reusable sandboxes and parallel
+workflows are available when you need them.
+
+## Quick start
+
+You need Node.js 20.18.1 or newer and npm, Git, a running Docker engine, and
+agent credentials.
+For Codex, you can use either an OpenAI API key or a ChatGPT login.
+
+### 1. Install
+
+```sh
+npm install --save-dev @snappedly-tools/shipyard
+```
+
+### 2. Initialize the target repository
+
+```sh
+npx shipyard init --template blank --agent codex --codex-auth chatgpt --sandbox docker \
+  --issue-tracker github-issues --create-label false --build-image false
+cp .shipyard/.env.example .shipyard/.env
+```
+
+In an interactive terminal, `init` starts `codex login` if needed and asks that
+login to use a one-time file-based credential store. Complete the browser login
+and ensure `~/.codex/auth.json` exists; the generated entry point mounts it
+read-only. In a non-interactive environment, run `codex login` before this
+command.
+Leave `OPENAI_API_KEY` out of `.shipyard/.env` in this mode. To use API-key
+authentication instead, use `--codex-auth api-key` and set the key in `.env`.
+Set the scaffold's `GH_TOKEN` entry if your prompt accesses GitHub. Edit
+`.shipyard/prompt.md` with the task, verification instructions, and a request
+to commit the changes.
+
+### 3. Configure and run
+
+Init generates `.shipyard/main.ts` for ESM projects (`"type": "module"`),
+otherwise `.shipyard/main.mts`. That file configures `run()`; there is no
+`config.json`.
+
+Docker keeps Git storage inside the sandbox and syncs changes back. Its default
+`merge-to-head` strategy merges transferred commits into your
+current branch. To retain changes on a separate branch for inspection, add:
+
+```ts
+branchStrategy: { type: "branch", branch: "agent/first-task" },
+logging: { type: "stdout" },
+```
+
+Commit the setup files you want available on that branch, leaving `.env`
+untracked. Run the configured workflow with one command:
+
+```sh
+npx shipyard run
+```
+
+The command detects `main.ts` or `main.mts`, finds the generated `Dockerfile`,
+builds the cached image, and starts
+the workflow. Use `npx shipyard run --skip-build` when the image definition has
+not changed. Inspect commits with `git log HEAD..agent/first-task` and changes
+with `git diff HEAD...agent/first-task`. Merge when ready.
+
+You can add `"shipyard": "shipyard run"` to the target project's scripts if
+you prefer `npm run shipyard`. Shipyard's own repository script runs its
+advanced multi-agent workflow instead.
+
+## Next steps
+
+- [Configuration](/docs/configuration): prompts, branches, hooks, and environment variables.
+- [Agent providers](/docs/agents): choose an agent and configure authentication.
+- Try the `simple-loop`, `sequential-reviewer`, `parallel-planner`, or
+  `parallel-planner-with-review` templates after reviewing their prompts.
+
+The optional workflow coordinator APIs support more elaborate hosted automation.
+They are not required to run the library or its templates; ordinary use needs
+no database, webhook service, or release-policy configuration.

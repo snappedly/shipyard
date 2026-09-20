@@ -1,0 +1,53 @@
+---
+title: Agent Providers
+description: Learn about agent providers and how to configure them.
+---
+
+## Overview
+
+An agent provider builds the agent command, parses streamed output, and can
+supply environment variables and session support. Init separately supplies the
+Dockerfile and environment example for each built-in agent.
+
+## Built-in Providers
+
+### Codex
+
+The default agent provider. Uses the OpenAI Codex CLI as the coding agent
+inside the sandbox.
+
+Codex supports two authentication modes:
+
+- `--codex-auth api-key`: the generated scaffold declares `OPENAI_API_KEY`.
+  Copy `.shipyard/.env.example` to `.shipyard/.env` and fill it in. API usage
+  is billed through the OpenAI API Platform.
+- `--codex-auth chatgpt`: run `codex login` on the host and ensure
+  `~/.codex/auth.json` exists. Interactive init starts that login flow when
+  needed and asks it to use a one-time file-based credential store;
+  non-interactive init expects it to exist already. Init adds a read-only mount
+  for that file and does not declare `OPENAI_API_KEY`. Use this only with
+  trusted repositories.
+
+`--codex-auth api-key` is the default. `GH_TOKEN` is for prompts that access
+GitHub, not a requirement of the Codex provider.
+
+Generated Codex runs use `CODEX_MODELS.routine` by default. For heavier
+planning, review, or merge work, use `codex(CODEX_MODELS.strong)`. Each role
+contains a model identifier and its reasoning effort. Defaults are centralized
+in `src/modelConfig.ts`; set overrides in the host process environment before
+starting the script with
+`SHIPYARD_CODEX_ROUTINE_MODEL`, `SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT`,
+`SHIPYARD_CODEX_STRONG_MODEL`, and `SHIPYARD_CODEX_STRONG_REASONING_EFFORT`.
+
+### Claude Code
+
+Uses Claude Code as the AI coding agent inside the sandbox.
+
+Required environment variables (one of):
+
+| Variable                  | Description                                                                                                                                        |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Claude Code OAuth token — get one by running `claude setup-token` on your host. Lets the agent use your Claude subscription instead of an API key. |
+| `ANTHROPIC_API_KEY`       | Anthropic API key (alternative to `CLAUDE_CODE_OAUTH_TOKEN`)                                                                                       |
+
+`GH_TOKEN` is also needed when your prompt accesses GitHub.

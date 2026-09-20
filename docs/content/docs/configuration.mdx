@@ -1,0 +1,154 @@
+---
+title: Configuration
+description: Configure Shipyard's TypeScript entry point, prompts, and sandbox environment.
+---
+
+## Config directory
+
+Init creates `.shipyard/` in the target repository:
+
+- `main.ts` or `main.mts`: your executable TypeScript configuration.
+- `Dockerfile`: the local sandbox image definition.
+- `prompt.md` (or several template-specific prompts): the agent's task instructions.
+- `.env.example`: environment entries for the chosen agent and issue tracker.
+- `.gitignore`: excludes credentials, logs, worktrees, and locks.
+
+Copy `.env.example` to `.env` and supply credentials. Shipyard also writes logs,
+worktrees, and recovery patches under this directory.
+
+## Run configuration
+
+Options go directly into the JS API, not a `config.json` file:
+
+```ts
+import { CODEX_MODELS, codex, run } from "@snappedly-tools/shipyard";
+import { docker } from "@snappedly-tools/shipyard/sandboxes/docker";
+
+const result = await run({
+  agent: codex(CODEX_MODELS.routine),
+  sandbox: docker(),
+  promptFile: ".shipyard/prompt.md",
+  branchStrategy: { type: "branch", branch: "agent/my-task" },
+  maxIterations: 1,
+  logging: { type: "stdout" },
+  hooks: {
+    sandbox: {
+      onSandboxReady: [{ command: "npm ci" }],
+    },
+  },
+});
+
+console.log(result.branch, result.commits);
+```
+
+Adapt the dependency hook to your project. Run the configured workflow with
+`shipyard run`; it builds the cached Docker image automatically. Use
+`shipyard run --skip-build` when the image definition has not changed. The
+`shipyard docker build-image` command remains available when you need to
+rebuild the image by itself.
+
+### Codex authentication
+
+Codex scaffolds use API-key authentication by default. Pass
+`--codex-auth chatgpt` to `shipyard init` to use a ChatGPT login instead. In an
+interactive terminal, init starts `codex login` when the cache is missing and
+asks it to use a one-time file-based credential store. In non-interactive mode,
+run `codex login` first. Configure file-based credentials if necessary and
+ensure `~/.codex/auth.json` exists. Init then adds this read-only mount to the
+generated sandbox:
+
+```ts
+sandbox: docker({
+  mounts: [
+    {
+      hostPath: "~/.codex/auth.json",
+      sandboxPath: "~/.codex/auth.json",
+      readonly: true,
+    },
+  ],
+}),
+```
+
+The mount exposes a ChatGPT credential to the agent, so use it only with
+trusted repositories. API-key mode is the safer choice for unattended or
+untrusted runs.
+
+| Option                  | Default                                                  | Purpose                                                     |
+| ----------------------- | -------------------------------------------------------- | ----------------------------------------------------------- |
+| `agent`                 | Required                                                 | Agent provider and model                                    |
+| `sandbox`               | Required                                                 | Sandbox provider                                            |
+| `promptFile` / `prompt` | Supply one                                               | File template or inline instructions                        |
+| `maxIterations`         | `1`                                                      | Maximum agent invocations                                   |
+| `branchStrategy`        | `merge-to-head` for Docker/Vercel; `head` for no-sandbox | Direct host access, temporary merge, or explicit branch     |
+| `logging`               | File under `.shipyard/logs/`                             | File logging or terminal progress with `{ type: "stdout" }` |
+| `completionSignal`      | `<promise>COMPLETE</promise>`                            | Agent output that ends the loop early                       |
+| `cwd`                   | `process.cwd()`                                          | Host repository to operate on                               |
+
+`promptFile` is resolved against the calling process's working directory, even
+when `cwd` points at another repository. Runtime files such as `.shipyard/.env`
+follow `cwd`.
+
+Docker and Vercel Sandbox do not support `head` or automatically mount your checkout.
+They start from committed Git history. Use `copyToWorktree` for selected ignored
+or untracked files; these copy from the original repository. Mounts must stay
+outside `/home/agent/workspace` and its ancestors (for example `/mnt/cache` or
+`~/.codex/auth.json`). This prevents mounts from replacing sandbox-owned Git
+storage. Session capture and resume use file transfer.
+
+### No-sandbox mode
+
+Use no-sandbox mode when you intentionally want the agent to run directly on
+the host:
+
+```ts
+import { CODEX_MODELS, codex, run } from "@snappedly-tools/shipyard";
+import { noSandbox } from "@snappedly-tools/shipyard/sandboxes/no-sandbox";
+
+const result = await run({
+  agent: codex(CODEX_MODELS.routine),
+  sandbox: noSandbox(),
+  promptFile: ".shipyard/prompt.md",
+});
+```
+
+It defaults to the `head` branch strategy and grants the agent the permissions
+of the Shipyard process. Use it only with trusted repositories and prompts.
+
+## Prompts
+
+A `promptFile` supports `{{KEY}}` substitution from `promptArgs` and shell
+expressions such as `` !`git status --short` ``. Shell expressions execute inside
+the sandbox before each iteration. Inline `prompt` strings are passed through
+without either kind of expansion.
+
+Ask the agent to commit completed work if you want commits returned in
+`result.commits`. The completion signal stops iteration; it does not verify
+tests or commit changes on the agent's behalf.
+
+## Environment variables
+
+Sandbox environment resolution uses `.shipyard/.env`:
+
+1. A nonempty value in `.shipyard/.env` wins.
+2. An empty entry such as `OPENAI_API_KEY=` falls back to the host's `process.env`.
+3. Undeclared host environment keys are not forwarded by this resolver.
+
+The repository-root `.env` is not loaded. Provider-level `env` options can also
+supply sandbox variables. Keep `.shipyard/.env` untracked.
+
+## Codex model roles
+
+Generated scripts use `codex(CODEX_MODELS.routine)`. Use
+`codex(CODEX_MODELS.strong)` for heavier planning or review, or pass your chosen
+model directly: `codex("your-model", { effort: "high" })`.
+
+The role defaults live in `src/modelConfig.ts`. Override them in the **host
+process environment before starting your script**:
+
+- `SHIPYARD_CODEX_ROUTINE_MODEL`
+- `SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT`
+- `SHIPYARD_CODEX_STRONG_MODEL`
+- `SHIPYARD_CODEX_STRONG_REASONING_EFFORT`
+
+These configure the host-side library at import time; putting them only in
+`.shipyard/.env` does not change the model roles.
