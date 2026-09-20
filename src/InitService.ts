@@ -473,23 +473,34 @@ export function getNextStepsLines(
   codexAuth: CodexAuthMode = "api-key",
 ): string[] {
   const getAuthLines = (step: number): string[] => {
-    if (agent.name === "codex" && codexAuth === "chatgpt") {
+    if (agent.name === "codex") {
+      if (codexAuth === "chatgpt") {
+        return [
+          `${step}. Use your ChatGPT subscription with Codex: run \`codex login\` on the host and make sure \`~/.codex/auth.json\` exists`,
+          '   If it does not exist, set `cli_auth_credentials_store = "file"` in `~/.codex/config.toml`, then run the login again',
+          "   Shipyard mounts this credential read-only; use this mode only with trusted repositories.",
+          `   If subscription auth does not work, rerun init with \`--codex-auth api-key\` and set \`OPENAI_API_KEY\` in ${CONFIG_DIR}/.env instead.`,
+          `   Also set any issue-tracker variables shown in ${CONFIG_DIR}/.env.example.`,
+        ];
+      }
       return [
-        `${step}. Authenticate Codex on the host with your ChatGPT subscription: run \`codex login\` and make sure \`~/.codex/auth.json\` exists`,
-        '   If it does not exist, set `cli_auth_credentials_store = "file"` in `~/.codex/config.toml`, then run the login again',
-        "   This mounts your credential read-only; use this mode only with trusted repositories.",
+        `${step}. Use your ChatGPT subscription with Codex (recommended): run \`codex login\` on the host, then initialize with \`--codex-auth chatgpt\` so Shipyard can mount \`~/.codex/auth.json\` read-only`,
+        `   If subscription auth does not work, use API-key billing instead by setting \`OPENAI_API_KEY\` in ${CONFIG_DIR}/.env (see ${CONFIG_DIR}/.env.example).`,
+        `   Also set any issue-tracker variables shown in ${CONFIG_DIR}/.env.example.`,
       ];
     }
 
-    const lines = [
+    if (agent.name === "claude-code") {
+      return [
+        `${step}. Use your Claude subscription (recommended): run \`claude setup-token\` on the host and paste the result into \`CLAUDE_CODE_OAUTH_TOKEN\` in ${CONFIG_DIR}/.env`,
+        `   If subscription auth does not work, use API-key billing instead by uncommenting \`ANTHROPIC_API_KEY\` in ${CONFIG_DIR}/.env and setting it to your key.`,
+        `   Also set any issue-tracker variables shown in ${CONFIG_DIR}/.env.example.`,
+      ];
+    }
+
+    return [
       `${step}. Set the required env vars in ${CONFIG_DIR}/.env (see ${CONFIG_DIR}/.env.example)`,
     ];
-    if (agent.name === "claude-code") {
-      lines.push(
-        "   To use your Claude subscription instead of an API key, run `claude setup-token` on your host and paste the result into CLAUDE_CODE_OAUTH_TOKEN.",
-      );
-    }
-    return lines;
   };
 
   // The custom issue tracker scaffolds a broken-until-configured project, so
