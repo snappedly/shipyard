@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1
+
+### Patch Changes
+
+- f53943b: Verify the automated package version bump and release flow.
+
 ## 0.4.0
 
 ### Minor Changes
