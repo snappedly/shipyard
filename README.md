@@ -124,16 +124,18 @@ untracked or ignored files.
 the chosen agent. Keep `.shipyard/.env`, agent login files, logs, and recovery
 patches private.
 
-For Codex, choose either:
+Use a subscription first when the selected agent supports it. If subscription
+authentication does not work in your environment, use the API-key fallback:
 
-- ChatGPT authentication: select `chatgpt` during init and complete the
-  browser login. The generated configuration mounts `~/.codex/auth.json`
-  read-only.
-- API authentication: select `api-key` and put `OPENAI_API_KEY` in
-  `.shipyard/.env`.
-
-For Claude Code, run `claude setup-token` and put the resulting value in the
-generated `CLAUDE_CODE_OAUTH_TOKEN` entry.
+- Codex subscription authentication: run `codex login` on the host, then pass
+  `--codex-auth chatgpt` to `shipyard init`. The generated configuration mounts
+  `~/.codex/auth.json` read-only.
+- Codex API authentication: pass `--codex-auth api-key` and put
+  `OPENAI_API_KEY` in `.shipyard/.env`.
+- Claude Code subscription authentication: run `claude setup-token` on the
+  host and put the result in `CLAUDE_CODE_OAUTH_TOKEN` in `.shipyard/.env`.
+- Claude Code API authentication: uncomment `ANTHROPIC_API_KEY` in
+  `.shipyard/.env` and put your API key there.
 
 ## Generated files
 

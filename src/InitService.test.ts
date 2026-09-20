@@ -667,16 +667,32 @@ describe("InitService scaffold", () => {
       );
     });
 
-    it("claude-code agent gets a `claude setup-token` hint under the env-vars step", () => {
+    it("claude-code agent leads with subscription auth and explains the API-key fallback", () => {
       const blank = next("blank", "main.mts").join("\n");
       const nonBlank = next("simple-loop", "main.mts").join("\n");
       expect(blank).toContain("claude setup-token");
       expect(blank).toContain("CLAUDE_CODE_OAUTH_TOKEN");
+      expect(blank).toContain("recommended");
+      expect(blank).toContain("ANTHROPIC_API_KEY");
       expect(nonBlank).toContain("claude setup-token");
       expect(nonBlank).toContain("CLAUDE_CODE_OAUTH_TOKEN");
     });
 
-    it("Codex ChatGPT auth explains the host login and credential mount", () => {
+    it("Codex API-key setup explains subscription auth first and the API-key fallback", () => {
+      const joined = getNextStepsLines(
+        "blank",
+        "main.mts",
+        ghIssues,
+        codexAgent,
+        "npm",
+      ).join("\n");
+      expect(joined).toContain("codex login");
+      expect(joined).toContain("--codex-auth chatgpt");
+      expect(joined).toContain("OPENAI_API_KEY");
+      expect(joined).toContain("recommended");
+    });
+
+    it("Codex ChatGPT auth explains the host login, credential mount, and API-key fallback", () => {
       const lines = getNextStepsLines(
         "blank",
         "main.mts",
@@ -689,7 +705,7 @@ describe("InitService scaffold", () => {
       expect(joined).toContain("codex login");
       expect(joined).toContain("~/.codex/auth.json");
       expect(joined).toContain("trusted repositories");
-      expect(joined).not.toContain("OPENAI_API_KEY");
+      expect(joined).toContain("OPENAI_API_KEY");
     });
 
     it("non-claude-code agents do not get the `claude setup-token` hint", () => {
