@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { NodeContext } from "@effect/platform-node";
-import { Effect, Exit, Layer } from "effect";
+import { Cause, Effect, Exit, Layer } from "effect";
 import { describe, expect, it } from "vitest";
 import { cli } from "./cli.js";
 import { ClackDisplay } from "./Display.js";
@@ -37,14 +37,24 @@ const runCli = (args: string, cwd: string, env?: NodeJS.ProcessEnv) =>
     env: { ...process.env, ...env },
   });
 
-// Parser-only compatibility checks do not need a packaged-process boundary.
-// Keeping them in-process avoids a flaky child-process wait under CI.
+// CLI validation checks do not need a packaged-process boundary. Keeping them
+// in-process avoids a flaky child-process wait under CI.
 const cliTestLayer = Layer.merge(NodeContext.layer, ClackDisplay.layer);
 
 const runCliInProcess = (args: ReadonlyArray<string>) =>
   Effect.runPromiseExit(
     cli(["node", "shipyard", ...args]).pipe(Effect.provide(cliTestLayer)),
   );
+
+const runCliInProcessAt = async (args: ReadonlyArray<string>, cwd: string) => {
+  const previousCwd = process.cwd();
+  process.chdir(cwd);
+  try {
+    return await runCliInProcess(args);
+  } finally {
+    process.chdir(previousCwd);
+  }
+};
 
 describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
   it("shows help with --help flag", async () => {
@@ -90,13 +100,11 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     await initRepo(hostDir);
     await commitFile(hostDir, "hello.txt", "hello", "initial commit");
 
-    try {
-      await runCli("run --skip-build", hostDir);
-      expect.fail("Expected command to fail");
-    } catch (err: unknown) {
-      const { stdout, stderr } = err as { stdout: string; stderr: string };
-      const output = stdout + stderr;
-      expect(output).toContain("No .shipyard/ found");
+    const result = await runCliInProcessAt(["run", "--skip-build"], hostDir);
+
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
+      expect(Cause.pretty(result.cause)).toContain("No .shipyard/ found");
     }
   });
 
