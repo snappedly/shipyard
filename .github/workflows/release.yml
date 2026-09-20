@@ -203,7 +203,7 @@ jobs:
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
       - run: npm install --global npm@12.0.2
-      - name: Verify approved artifact and exact candidate
+      - name: Verify artifact and exact candidate
         env:
           CANDIDATE_SHA: ${{ github.sha }}
         run: |

@@ -1,7 +1,8 @@
 # Releasing Shipyard
 
 Package versioning starts automatically after a change reaches `main`.
-Publication still requires human approval of the exact production candidate.
+Publication also starts automatically after the exact production candidate is
+verified.
 
 ## One-time setup
 
@@ -13,8 +14,8 @@ Publication still requires human approval of the exact production candidate.
    - workflow: `release.yml`
    - environment: `production`
    - allowed action: `npm publish`
-3. Configure the GitHub `production` environment with required reviewers and
-   restrict it to `main`.
+3. Configure the GitHub `production` environment, restrict it to `main`, and
+   leave it without required reviewers or wait timers.
 4. Allow GitHub Actions to create pull requests in the repository Actions
    settings.
 5. Enable GitHub private vulnerability reporting and branch protection for
@@ -49,19 +50,14 @@ repository check:
    or merge of the generated version pull request is required.
 3. The release run identifies the unpublished version and creates the exact
    tarball and checksum that the publish job will consume.
-4. Review the workflow run, candidate commit, and built artifact, then approve
-   the publish job through the protected `production` environment.
+4. The publish job verifies the exact candidate and artifact, then publishes
+   automatically through the `production` environment.
 
 The publish job rejects a candidate superseded by a newer `main`, verifies the
-approved artifact checksum and version, publishes that tarball with public
-access and provenance, then creates a matching `v<version>` tag and GitHub
-release with generated notes. Repository credentials are not persisted into
-the checkout used by package scripts.
-
-The repository currently has one administrator. Production therefore permits
-that maintainer to approve the environment deployment; requiring a different
-reviewer would deadlock releases. Add a second trusted maintainer before
-disabling self-review or requiring a separate pull-request approval.
+artifact checksum and version, publishes that tarball with public access and
+provenance, then creates a matching `v<version>` tag and GitHub release with
+generated notes. Repository credentials are not persisted into the checkout
+used by package scripts.
 
 If no changesets or unpublished versions exist, the workflow does nothing.
 
@@ -77,7 +73,7 @@ npx shipyard --help
 
 Confirm that the matching tag and release are visible on the repository's
 Releases page. If package publication succeeds but release creation fails,
-create the GitHub release manually from the same approved commit; do not
+create the GitHub release manually from the same commit; do not
 publish the package version again.
 
 If publication fails before npm accepts the package, fix the cause and rerun
