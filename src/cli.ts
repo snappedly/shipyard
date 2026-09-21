@@ -42,6 +42,12 @@ import {
   RunnerInstallError,
 } from "./RepositoryRunner.js";
 import {
+  getRepositoryRunnerStatus,
+  RunnerControlError,
+  startRepositoryRunner,
+  stopRepositoryRunner,
+} from "./RepositoryRunnerControl.js";
+import {
   ACTIVATION_LABEL,
   CONFIG_DIR,
   CLI_NAME,
@@ -828,6 +834,70 @@ const installRunnerCommand = Command.make(
     }),
 );
 
+const runnerControlEffect = <A>(operation: () => Promise<A>) =>
+  Effect.tryPromise({
+    try: operation,
+    catch: (error) =>
+      new InitError({
+        message:
+          error instanceof RunnerControlError
+            ? error.message
+            : `Repository runner operation failed: ${error instanceof Error ? error.message : String(error)}`,
+      }),
+  });
+
+const startRunnerCommand = Command.make("start", {}, () =>
+  Effect.gen(function* () {
+    const d = yield* Display;
+    const cwd = process.cwd();
+    yield* d.status(
+      "Starting the repository runner in this terminal...",
+      "info",
+    );
+    const result = yield* runnerControlEffect(() =>
+      startRepositoryRunner({ repoDir: cwd }),
+    );
+    yield* d.status(
+      result.initialWorkFound
+        ? `Repository runner for ${result.repository} stopped after processing startup work.`
+        : `Repository runner for ${result.repository} stopped.`,
+      "info",
+    );
+  }),
+);
+
+const statusRunnerCommand = Command.make("status", {}, () =>
+  Effect.gen(function* () {
+    const d = yield* Display;
+    const status = yield* runnerControlEffect(() =>
+      getRepositoryRunnerStatus({ repoDir: process.cwd() }),
+    );
+    yield* d.summary("Repository runner", {
+      Installed: status.installed ? "yes" : "no",
+      "Local process": status.running
+        ? `running (PID ${status.pid ?? "unknown"})`
+        : "stopped",
+      GitHub: status.github,
+      Repository: status.repository ?? "unknown",
+      State: status.state,
+      "Last outcome": status.lastOutcome,
+    });
+  }),
+);
+
+const stopRunnerCommand = Command.make("stop", {}, () =>
+  Effect.gen(function* () {
+    const d = yield* Display;
+    const result = yield* runnerControlEffect(() =>
+      stopRepositoryRunner({ repoDir: process.cwd() }),
+    );
+    yield* d.status(
+      `Stopping repository runner process ${result.pid}...`,
+      "success",
+    );
+  }),
+);
+
 const runnerCommand = Command.make("runner", {}, () =>
   Effect.gen(function* () {
     const d = yield* Display;
@@ -836,7 +906,14 @@ const runnerCommand = Command.make("runner", {}, () =>
       "info",
     );
   }),
-).pipe(Command.withSubcommands([installRunnerCommand]));
+).pipe(
+  Command.withSubcommands([
+    installRunnerCommand,
+    startRunnerCommand,
+    statusRunnerCommand,
+    stopRunnerCommand,
+  ]),
+);
 
 // --- Root command ---
 

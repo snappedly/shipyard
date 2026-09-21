@@ -75,12 +75,12 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     expect(stdout).not.toContain("sync-out");
   });
 
-  it("runner --help exposes install without later lifecycle commands", async () => {
+  it("runner --help exposes foreground lifecycle commands", async () => {
     const { stdout } = await runCli("runner --help", process.cwd());
     expect(stdout).toContain("install");
-    expect(stdout).not.toContain("start");
-    expect(stdout).not.toContain("status");
-    expect(stdout).not.toContain("stop");
+    expect(stdout).toContain("start");
+    expect(stdout).toContain("status");
+    expect(stdout).toContain("stop");
     expect(stdout).not.toContain("remove");
   });
 

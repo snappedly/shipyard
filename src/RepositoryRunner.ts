@@ -158,7 +158,7 @@ const defaultAdapters: RunnerInstallAdapters = {
   },
 };
 
-const parseGitHubRepository = (
+export const parseGitHubRepository = (
   remote: string,
 ): { owner: string; repository: string } => {
   const trimmed = remote.trim();
