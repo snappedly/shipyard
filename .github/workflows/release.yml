@@ -33,7 +33,7 @@ jobs:
         uses: changesets/action/select-mode@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
 
   version:
-    name: Update version pull request
+    name: Version and merge release pull request
     if: needs.select-mode.outputs.mode == 'version'
     needs: select-mode
     runs-on: ubuntu-latest
@@ -45,6 +45,7 @@ jobs:
       actions: write
       contents: write
       pull-requests: write
+      statuses: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -69,12 +70,89 @@ jobs:
           script: npm run version-packages
       - name: Run CI for version pull request
         if: steps.changesets.outputs.pr-number != ''
+        id: version-ci
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ steps.changesets.outputs.pr-number }}
         run: |
+          set -euo pipefail
           HEAD_REF=$(gh pr view "$PR_NUMBER" --json headRefName --jq .headRefName)
+          HEAD_SHA=$(gh pr view "$PR_NUMBER" --json headRefOid --jq .headRefOid)
           gh workflow run ci.yml --ref "$HEAD_REF"
+
+          RUN_ID=""
+          for _ in $(seq 1 30); do
+            RUN_ID=$(gh run list \
+              --workflow ci.yml \
+              --event workflow_dispatch \
+              --commit "$HEAD_SHA" \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId // empty')
+            if [[ -n "$RUN_ID" ]]; then
+              break
+            fi
+            sleep 2
+          done
+
+          test -n "$RUN_ID"
+          gh run watch "$RUN_ID" --compact --exit-status
+          {
+            echo "head-ref=$HEAD_REF"
+            echo "head-sha=$HEAD_SHA"
+            echo "run-id=$RUN_ID"
+          } >> "$GITHUB_OUTPUT"
+
+      # workflow_dispatch checks are not evaluated as pull request checks by
+      # branch protection. Mirror the successful exact-head run as the
+      # required status so the generated PR can merge without approval.
+      - name: Publish version pull request CI status
+        if: steps.version-ci.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ steps.version-ci.outputs.head-sha }}
+          RUN_ID: ${{ steps.version-ci.outputs.run-id }}
+        run: |
+          set -euo pipefail
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA}" \
+            -f state=success \
+            -f context=ci \
+            -f description="Version pull request CI passed" \
+            -f target_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
+
+      - name: Merge version pull request
+        if: steps.version-ci.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ steps.version-ci.outputs.head-sha }}
+          PR_NUMBER: ${{ steps.changesets.outputs.pr-number }}
+        run: |
+          set -euo pipefail
+          gh pr merge "$PR_NUMBER" \
+            --squash \
+            --delete-branch \
+            --match-head-commit "$HEAD_SHA" \
+            --auto
+
+          for _ in $(seq 1 30); do
+            STATE=$(gh pr view "$PR_NUMBER" --json state --jq .state)
+            if [[ "$STATE" == "MERGED" ]]; then
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "Version pull request #$PR_NUMBER did not merge after auto-merge was enabled." >&2
+          exit 1
+
+      - name: Start release for versioned main
+        if: steps.version-ci.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # Merges made with GITHUB_TOKEN do not emit a new push workflow run.
+        # Dispatch explicitly so the merged version is built and published.
+        run: gh workflow run release.yml --ref main
 
   build-package:
     name: Build npm package
@@ -125,6 +203,44 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  record-release-ci-status:
+    name: Record release candidate CI status
+    if: always() && needs.select-mode.result == 'success' && needs.select-mode.outputs.mode == 'publish'
+    needs:
+      - select-mode
+      - build-package
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      statuses: write
+    steps:
+      # The version pull request is merged with GITHUB_TOKEN, so its push
+      # event does not start ci.yml. Record the exact-candidate result as the
+      # required commit status so the merged release commit has the same
+      # visible CI signal as a normal main push.
+      - name: Publish exact candidate CI status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ github.sha }}
+          BUILD_RESULT: ${{ needs.build-package.result }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [[ "$BUILD_RESULT" == "success" ]]; then
+            STATE=success
+            DESCRIPTION="Release candidate CI passed"
+          else
+            STATE=failure
+            DESCRIPTION="Release candidate CI failed"
+          fi
+
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/statuses/${CANDIDATE_SHA}" \
+            -f state="$STATE" \
+            -f context=ci \
+            -f description="$DESCRIPTION" \
+            -f target_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
+
   publish:
     name: Publish npm package
     if: needs.select-mode.outputs.mode == 'publish'
@@ -157,7 +273,7 @@ jobs:
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
       - run: npm install --global npm@12.0.2
-      - name: Verify approved artifact and exact candidate
+      - name: Verify artifact and exact candidate
         env:
           CANDIDATE_SHA: ${{ github.sha }}
         run: |

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.1
+
+### Patch Changes
+
+- f53943b: Verify the automated package version bump and release flow.
+
+## 0.4.0
+
+### Minor Changes
+
+- f61b3a9: Remove Beads and custom issue-tracker choices from `shipyard init`.
+
+## 0.3.1
+
+### Patch Changes
+
+- b434341: Clarify `shipyard init` authentication next steps, including subscription login and API-key fallbacks for Codex and Claude Code.
+
 ## 0.3.0
 
 ### Minor Changes

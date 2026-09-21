@@ -33,10 +33,11 @@ npx shipyard init
 cp .shipyard/.env.example .shipyard/.env
 ```
 
-`init` asks which agent, sandbox provider, issue tracker, and starter template
-to use. When you select Codex, it also asks whether to sign in with ChatGPT or
-use an API key. Start with the `blank` template. Put any requested credentials
-in `.shipyard/.env`, then write one concrete task in `.shipyard/prompt.md`.
+`init` asks which agent, sandbox provider, and starter template to use. Its
+issue-based templates use GitHub Issues. When you select Codex, it also asks
+whether to sign in with ChatGPT or use an API key. Start with the `blank`
+template. Put any requested credentials in `.shipyard/.env`, then write one
+concrete task in `.shipyard/prompt.md`.
 
 Run it:
 
@@ -125,19 +126,20 @@ untracked or ignored files.
 the chosen agent. Keep `.shipyard/.env`, agent login files, logs, and recovery
 patches private.
 
-For Codex, choose either:
+Use a subscription first when the selected agent supports it. If subscription
+authentication does not work in your environment, use the API-key fallback:
 
-- ChatGPT authentication: choose **Sign in with ChatGPT** during interactive
-  init and complete the browser login. The generated configuration mounts
-  `~/.codex/auth.json` read-only.
-- API authentication: choose **OpenAI API key** and put `OPENAI_API_KEY` in
-  `.shipyard/.env`.
-
-For non-interactive init, pass `--codex-auth chatgpt` or
-`--codex-auth api-key` explicitly.
-
-For Claude Code, run `claude setup-token` and put the resulting value in the
-generated `CLAUDE_CODE_OAUTH_TOKEN` entry.
+- Codex subscription authentication: choose **Sign in with ChatGPT** during
+  interactive init and complete the browser login. The generated configuration
+  mounts `~/.codex/auth.json` read-only. For non-interactive init, run
+  `codex login` on the host, then pass `--codex-auth chatgpt`.
+- Codex API authentication: choose **OpenAI API key** during interactive init
+  and put `OPENAI_API_KEY` in `.shipyard/.env`. For non-interactive init, pass
+  `--codex-auth api-key`.
+- Claude Code subscription authentication: run `claude setup-token` on the
+  host and put the result in `CLAUDE_CODE_OAUTH_TOKEN` in `.shipyard/.env`.
+- Claude Code API authentication: uncomment `ANTHROPIC_API_KEY` in
+  `.shipyard/.env` and put your API key there.
 
 ## Generated files
 

@@ -272,9 +272,7 @@ const sandboxOption = Options.text("sandbox").pipe(
 );
 
 const issueTrackerOption = Options.text("issue-tracker").pipe(
-  Options.withDescription(
-    "Issue tracker to use (e.g. github-issues, beads, custom)",
-  ),
+  Options.withDescription("Issue tracker to use (github-issues)"),
   Options.optional,
 );
 
@@ -292,9 +290,7 @@ const createLabelOption = Options.choice("create-label", [
 );
 
 const buildImageOption = Options.choice("build-image", ["true", "false"]).pipe(
-  Options.withDescription(
-    "Whether to build the sandbox image now (ignored when --issue-tracker custom is selected)",
-  ),
+  Options.withDescription("Whether to build the sandbox image now"),
   Options.optional,
 );
 
@@ -692,50 +688,34 @@ const initCommand = Command.make(
         }
       }
 
-      // Prompt user before building image. The custom issue tracker scaffolds
-      // an intentionally unfinished Dockerfile (the install block is a TODO),
-      // so there is nothing valid to build yet — skip the build prompt entirely
-      // (and silently ignore --build-image) and let the next steps point the
-      // user at the setup doc.
       const providerLabel = selectedSandboxProvider.label;
-      if (selectedIssueTracker.name === "custom") {
+      const shouldBuild = yield* resolveConfirmFlag({
+        choice: buildImageChoice,
+        flag: "--build-image",
+        promptMessage: `Build the default ${providerLabel} image now?`,
+        cancelMessage: "Build-image selection cancelled.",
+      });
+
+      if (shouldBuild) {
+        const containerfileDir = join(cwd, CONFIG_DIR);
+        yield* d.spinner(
+          `Building ${providerLabel} image '${imageName}'...`,
+          buildImage(imageName, containerfileDir, {
+            buildArgs: defaultUidBuildArgs(),
+          }),
+        );
+        yield* d.status("Init complete! Image built successfully.", "success");
+      } else {
         yield* d.status(
-          "Init complete! Your custom issue tracker isn't configured yet — see the steps below before building.",
+          `Init complete! Run \`${CLI_NAME} ${selectedSandboxProvider.cliNamespace} build-image\` to build the ${providerLabel} image later.`,
           "success",
         );
-      } else {
-        const shouldBuild = yield* resolveConfirmFlag({
-          choice: buildImageChoice,
-          flag: "--build-image",
-          promptMessage: `Build the default ${providerLabel} image now?`,
-          cancelMessage: "Build-image selection cancelled.",
-        });
-
-        if (shouldBuild) {
-          const containerfileDir = join(cwd, CONFIG_DIR);
-          yield* d.spinner(
-            `Building ${providerLabel} image '${imageName}'...`,
-            buildImage(imageName, containerfileDir, {
-              buildArgs: defaultUidBuildArgs(),
-            }),
-          );
-          yield* d.status(
-            "Init complete! Image built successfully.",
-            "success",
-          );
-        } else {
-          yield* d.status(
-            `Init complete! Run \`${CLI_NAME} ${selectedSandboxProvider.cliNamespace} build-image\` to build the ${providerLabel} image later.`,
-            "success",
-          );
-        }
       }
 
       // Show template-specific next steps
       const nextSteps = getNextStepsLines(
         selectedTemplate,
         scaffoldResult.mainFilename,
-        selectedIssueTracker,
         selectedAgent,
         packageManager,
         selectedCodexAuth,

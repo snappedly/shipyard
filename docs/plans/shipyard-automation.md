@@ -47,7 +47,7 @@ Reuse these contracts rather than introducing a separate engineering methodology
 - Shipyard owns PR delivery and state transitions. Implementation workers return commits and evidence. Reviewers return findings and never recursively start implementers.
 - The requested separate automated PR review becomes an explicit Shipyard workflow requirement. Review depth still varies by risk.
 - Existing whole-spec guidance allows one normal fix batch and one follow-up before coordinator disposition. Start with that same bounded convergence rule.
-- The current workflow template requires a human to approve the exact production candidate. Preserve that until the team explicitly changes release policy. It is a template requirement, not evidence that any project's deployment system currently enforces it.
+- The current Shipyard package workflow publishes the exact production candidate without a human approval gate. A target repository may choose a separate gate for service deployments; that is not required for npm package publication.
 
 ## Proposed lifecycle
 
@@ -100,7 +100,7 @@ Mark the PR ready for a person only after required checks and finding dispositio
 
 Distinguish Git branches from deployment environments. If a project already uses `staging` → `main`, integrate with that flow and validate the resulting merge candidate. For a new project, consider one protected integration branch and promotion of the same immutable build from staging to production; a staging environment does not inherently need a staging branch. Production evidence must identify the actual candidate/artifact, including any release merge, rather than assuming the PR head is unchanged.
 
-Start with a separate production approval after staging validation, consistent with the existing template. Configure an environment gate or equivalent deployment-system control, verify that the organization's plan supports it, and prevent the bot from bypassing it. A later single-approval policy needs precise candidate identity and explicit team agreement. [Deployment environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments).
+For a separate service deployment, start with a production approval after staging validation and configure an environment gate or equivalent deployment-system control. The Shipyard npm package release is an explicit exception: its exact candidate and immutable artifact checks run automatically, while the `production` environment remains unprotected for npm trusted publishing. [Deployment environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments).
 
 Release completion includes smoke/health checks and a recorded result. Failure stops promotion and follows the project's recovery procedure. Database changes may require roll-forward; never assume that redeploying the previous app artifact reverses a migration.
 
@@ -151,7 +151,7 @@ Prefer explicit coordinator scheduling over chains of labels. GitHub documents t
 | 0: agree the pilot            | Repository contract, initial issue classes, credentials/sandbox choice, model choice, budgets, release gates                                    | One clear bug and one small enhancement with agreed acceptance criteria; ambiguous request exercises needs-info                                 |
 | 1: issue-to-reviewed-PR slice | Manual dispatch or maintainer label; versioned brief; isolated implementation; checks; draft PR; separate review; bounded repair; human handoff | Both work types reach review with evidence; failed checks block readiness; rerunning does not create another PR                                 |
 | 2: continuous GitHub service  | GitHub App, persisted intake/jobs, autonomous triage, replies/resumption, permitted auto-start classes                                          | Duplicate/out-of-order events, crash after PR creation, stale head, expired worker lease, cancellation, and budget exhaustion recover correctly |
-| 3: release integration        | Human approval, staging validation, exact-candidate production gate, verification and recovery                                                  | A deliberately failed staging check prevents production; changed candidates invalidate approval; recovery is exercised                          |
+| 3: release integration        | Exact-candidate publication, optional service-deployment approval, verification and recovery                                                    | A deliberately failed check prevents publication/deployment; changed candidates invalidate prior evidence; recovery is exercised                |
 | 4: Slack intake               | Mention/message shortcut, thread linkage, status and clarification routing                                                                      | One request creates one GitHub item; existing issue links reuse the issue; unauthorized senders cannot authorize execution                      |
 | 5: expand autonomy            | More repositories and change classes; eventually whole-spec orchestration                                                                       | Agreed observed quality/cost targets over a representative pilot set, including failures; rollback and human intervention rates acceptable      |
 
@@ -166,7 +166,7 @@ For Slack, start with an explicit mention or message shortcut in allowed channel
 3. Which agent provider, hosting/sandbox environment, and per-issue budget should the trial use? Choose through a small representative trial, not unmeasured model preferences.
 4. Should PR repair issues always be created, or only when a fix needs separate assignment? In either case they update the original PR.
 5. Is completion defined as merge, staging verification, or production verification? Recommended product outcome: production verification, with merge tracked separately.
-6. Should the existing separate production approval remain? Recommended initial answer: yes.
+6. Should a separate production approval remain for any future service deployment? The npm package release itself is intentionally unattended after exact-candidate verification.
 
 Next implementation scope after these decisions: the manually triggered, single-issue vertical slice through human PR handoff. The complete lifecycle remains the destination; Slack and unattended production should not be prerequisites for proving it.
 

@@ -165,7 +165,7 @@ The `.shipyard/` directory in a **host** repo containing sandbox configuration.
 _Avoid_: ".shipyard folder", "shipyard dir"
 
 **Issue tracker**:
-A pluggable source of **tasks** for the **agent**, selected during **init** (e.g. GitHub Issues, Beads). Used loosely -- Beads is a dependency-aware task tracker rather than a literal issue tracker, but "issue tracker" is the umbrella term.
+A source of **tasks** for the **agent**, selected during **init**. The built-in integration is GitHub Issues.
 _Avoid_: "backlog manager" (retired name), "task source"
 
 **Template argument**:

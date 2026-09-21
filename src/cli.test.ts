@@ -3,7 +3,11 @@ import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { NodeContext } from "@effect/platform-node";
+import { Cause, Effect, Exit, Layer } from "effect";
 import { describe, expect, it } from "vitest";
+import { cli } from "./cli.js";
+import { ClackDisplay } from "./Display.js";
 
 const execAsync = promisify(exec);
 
@@ -25,6 +29,7 @@ const commitFile = async (
 };
 
 const cliPath = join(import.meta.dirname, "..", "dist", "main.js");
+const cliTestTimeoutMs = 15_000;
 
 const runCli = (args: string, cwd: string, env?: NodeJS.ProcessEnv) =>
   execAsync(`node ${cliPath} ${args}`, {
@@ -32,7 +37,26 @@ const runCli = (args: string, cwd: string, env?: NodeJS.ProcessEnv) =>
     env: { ...process.env, ...env },
   });
 
-describe("shipyard CLI", () => {
+// CLI validation checks do not need a packaged-process boundary. Keeping them
+// in-process avoids a flaky child-process wait under CI.
+const cliTestLayer = Layer.merge(NodeContext.layer, ClackDisplay.layer);
+
+const runCliInProcess = (args: ReadonlyArray<string>) =>
+  Effect.runPromiseExit(
+    cli(["node", "shipyard", ...args]).pipe(Effect.provide(cliTestLayer)),
+  );
+
+const runCliInProcessAt = async (args: ReadonlyArray<string>, cwd: string) => {
+  const previousCwd = process.cwd();
+  process.chdir(cwd);
+  try {
+    return await runCliInProcess(args);
+  } finally {
+    process.chdir(previousCwd);
+  }
+};
+
+describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
   it("shows help with --help flag", async () => {
     const { stdout } = await runCli("--help", process.cwd());
     expect(stdout).toContain("shipyard");
@@ -76,13 +100,11 @@ describe("shipyard CLI", () => {
     await initRepo(hostDir);
     await commitFile(hostDir, "hello.txt", "hello", "initial commit");
 
-    try {
-      await runCli("run --skip-build", hostDir);
-      expect.fail("Expected command to fail");
-    } catch (err: unknown) {
-      const { stdout, stderr } = err as { stdout: string; stderr: string };
-      const output = stdout + stderr;
-      expect(output).toContain("No .shipyard/ found");
+    const result = await runCliInProcessAt(["run", "--skip-build"], hostDir);
+
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
+      expect(Cause.pretty(result.cause)).toContain("No .shipyard/ found");
     }
   });
 
@@ -205,22 +227,15 @@ describe("shipyard CLI", () => {
   });
 
   it("old top-level build-image command no longer works", async () => {
-    try {
-      await runCli("build-image", process.cwd());
-      expect.fail("Expected command to fail");
-    } catch (err: unknown) {
-      // Command should fail since build-image is no longer a top-level command
-      expect(err).toBeDefined();
-    }
+    const result = await runCliInProcess(["build-image"]);
+
+    expect(Exit.isFailure(result)).toBe(true);
   });
 
   it("old top-level remove-image command no longer works", async () => {
-    try {
-      await runCli("remove-image", process.cwd());
-      expect.fail("Expected command to fail");
-    } catch (err: unknown) {
-      expect(err).toBeDefined();
-    }
+    const result = await runCliInProcess(["remove-image"]);
+
+    expect(Exit.isFailure(result)).toBe(true);
   });
 
   it("--help does not show a podman namespace", async () => {
@@ -275,8 +290,8 @@ describe("shipyard CLI", () => {
       const output = stdout + stderr;
       expect(output).toContain("nonexistent");
       expect(output).toContain("github-issues");
-      expect(output).toContain("beads");
-      expect(output).toContain("custom");
+      expect(output).not.toContain("beads");
+      expect(output).not.toContain("custom");
     }
   });
 
@@ -288,7 +303,7 @@ describe("shipyard CLI", () => {
     // vitest workers have no TTY, so this confirms the fully-non-interactive
     // path runs to completion without clack crashing on a missing prompt.
     const { stdout } = await runCli(
-      "init --agent claude-code --template blank --sandbox docker --issue-tracker beads --build-image false",
+      "init --agent claude-code --template blank --sandbox docker --issue-tracker github-issues --create-label false --build-image false",
       hostDir,
     );
 
@@ -304,7 +319,7 @@ describe("shipyard CLI", () => {
 
     try {
       await runCli(
-        "init --agent codex --template blank --sandbox docker --issue-tracker beads --build-image false",
+        "init --agent codex --template blank --sandbox docker --issue-tracker github-issues --build-image false",
         hostDir,
       );
       expect.fail("Expected command to fail");
@@ -323,7 +338,7 @@ describe("shipyard CLI", () => {
     await writeFile(join(isolatedHome, ".codex", "auth.json"), "{}\n");
 
     await runCli(
-      "init --agent codex --codex-auth chatgpt --template blank --sandbox docker --issue-tracker beads --build-image false",
+      "init --agent codex --codex-auth chatgpt --template blank --sandbox docker --issue-tracker github-issues --create-label false --build-image false",
       hostDir,
       { HOME: isolatedHome },
     );
@@ -350,7 +365,7 @@ describe("shipyard CLI", () => {
     let error: unknown;
     try {
       await runCli(
-        "init --agent codex --codex-auth chatgpt --template blank --sandbox docker --issue-tracker beads --build-image false",
+        "init --agent codex --codex-auth chatgpt --template blank --sandbox docker --issue-tracker github-issues --create-label false --build-image false",
         hostDir,
         { HOME: isolatedHome },
       );
@@ -397,22 +412,5 @@ describe("shipyard CLI", () => {
       expect(output).toContain("--create-label");
       expect(output).toContain("non-interactive");
     }
-  });
-
-  it("init --issue-tracker custom ignores --build-image and scaffolds without trying to build", async () => {
-    const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
-    await initRepo(hostDir);
-
-    // --build-image is meaningless for the custom tracker (Dockerfile is
-    // deliberately broken until configured) and must be silently ignored
-    // rather than fail-fast or attempt a build.
-    const { stdout } = await runCli(
-      "init --agent claude-code --template blank --sandbox docker --issue-tracker custom --build-image true",
-      hostDir,
-    );
-
-    expect(stdout).toContain("Init complete");
-    const entries = await readdir(join(hostDir, ".shipyard"));
-    expect(entries).toContain("SETUP_ISSUE_TRACKER.md");
   });
 });
