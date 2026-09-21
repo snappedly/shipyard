@@ -27,12 +27,15 @@ import {
 import { defaultImageName } from "./sandboxes/docker.js";
 import type {
   AgentEntry,
-  CodexAuthMode,
   IssueTrackerEntry,
   SandboxProviderEntry,
 } from "./InitService.js";
 import { ExecHostError, InitError } from "./errors.js";
-import { ensureCodexChatGptAuth } from "./CodexAuth.js";
+import {
+  ensureCodexChatGptAuth,
+  resolveCodexAuthMode,
+  type CodexAuthMode,
+} from "./CodexAuth.js";
 import { requireCanonicalConfigDir } from "./runtimeConfig.js";
 import { CONFIG_DIR, CLI_NAME, PRODUCT_NAME } from "./runtimeNames.js";
 import { VERSION } from "./version.js";
@@ -462,22 +465,48 @@ const initCommand = Command.make(
         selectedAgent = getAgent(selected as string)!;
       }
 
+      const selectedCodexAuth = yield* Effect.tryPromise({
+        try: () =>
+          resolveCodexAuthMode({
+            agentName: selectedAgent.name,
+            requested:
+              codexAuthFlag._tag === "Some" ? codexAuthFlag.value : undefined,
+            interactive: isInteractive,
+            select: async () => {
+              const selected = await clack.select({
+                message: "How will you authenticate Codex?",
+                initialValue: "chatgpt",
+                options: [
+                  {
+                    value: "chatgpt" as const,
+                    label: "Sign in with ChatGPT",
+                    hint: "Use your ChatGPT subscription",
+                  },
+                  {
+                    value: "api-key" as const,
+                    label: "OpenAI API key",
+                    hint: "Use API billing",
+                  },
+                ],
+              });
+              return clack.isCancel(selected)
+                ? undefined
+                : (selected as CodexAuthMode);
+            },
+          }),
+        catch: (error) =>
+          error instanceof InitError
+            ? error
+            : new InitError({
+                message: `Codex authentication selection failed: ${String(error)}`,
+              }),
+      });
+
       // Resolve model: CLI flag > agent default
       const selectedModel =
         modelFlag._tag === "Some"
           ? modelFlag.value
           : selectedAgent.defaultModel;
-
-      const selectedCodexAuth: CodexAuthMode =
-        codexAuthFlag._tag === "Some" ? codexAuthFlag.value : "api-key";
-      if (selectedCodexAuth === "chatgpt" && selectedAgent.name !== "codex") {
-        yield* Effect.fail(
-          new InitError({
-            message:
-              "--codex-auth chatgpt can only be used with --agent codex.",
-          }),
-        );
-      }
 
       if (selectedCodexAuth === "chatgpt") {
         yield* Effect.try({

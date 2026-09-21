@@ -3,6 +3,7 @@ import { Effect } from "effect";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SANDBOX_REPO_DIR } from "./SandboxFactory.js";
+import type { CodexAuthMode } from "./CodexAuth.js";
 import { assertConfigDirAvailable } from "./runtimeConfig.js";
 import {
   CONFIG_DIR,
@@ -20,8 +21,6 @@ ${LOCKS_DIR}/
 
 export const DEFAULT_AGENT_NAME = "codex";
 const TEMPLATE_AGENT_FACTORY = "codex";
-
-export type CodexAuthMode = "api-key" | "chatgpt";
 
 const CODEX_CHATGPT_ENV_EXAMPLE = `# Codex ChatGPT subscription authentication
 # On the host, run \`codex login\` and make sure \`~/.codex/auth.json\` exists.

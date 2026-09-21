@@ -4,6 +4,45 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { InitError } from "./errors.js";
 
+export type CodexAuthMode = "api-key" | "chatgpt";
+
+export interface ResolveCodexAuthModeOptions {
+  readonly agentName: string;
+  readonly requested?: CodexAuthMode;
+  readonly interactive: boolean;
+  readonly select: () => Promise<CodexAuthMode | undefined>;
+}
+
+/** Resolve Codex authentication immediately after agent selection. */
+export const resolveCodexAuthMode = async (
+  options: ResolveCodexAuthModeOptions,
+): Promise<CodexAuthMode> => {
+  if (options.agentName !== "codex") {
+    if (options.requested === "chatgpt") {
+      throw new InitError({
+        message: "--codex-auth chatgpt can only be used with --agent codex.",
+      });
+    }
+    return "api-key";
+  }
+
+  if (options.requested !== undefined) return options.requested;
+  if (!options.interactive) {
+    throw new InitError({
+      message:
+        "--codex-auth is required in non-interactive mode (no TTY detected).",
+    });
+  }
+
+  const selected = await options.select();
+  if (selected === undefined) {
+    throw new InitError({
+      message: "Codex authentication selection cancelled.",
+    });
+  }
+  return selected;
+};
+
 export interface CodexAuthPreflightOptions {
   readonly cwd: string;
   readonly interactive: boolean;

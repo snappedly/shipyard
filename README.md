@@ -34,9 +34,10 @@ cp .shipyard/.env.example .shipyard/.env
 ```
 
 `init` asks which agent, sandbox provider, and starter template to use. Its
-issue-based templates use GitHub Issues. Start with the `blank` template. Put
-the requested credentials in
-`.shipyard/.env`, then write one concrete task in `.shipyard/prompt.md`.
+issue-based templates use GitHub Issues. When you select Codex, it also asks
+whether to sign in with ChatGPT or use an API key. Start with the `blank`
+template. Put any requested credentials in `.shipyard/.env`, then write one
+concrete task in `.shipyard/prompt.md`.
 
 Run it:
 
@@ -128,11 +129,13 @@ patches private.
 Use a subscription first when the selected agent supports it. If subscription
 authentication does not work in your environment, use the API-key fallback:
 
-- Codex subscription authentication: run `codex login` on the host, then pass
-  `--codex-auth chatgpt` to `shipyard init`. The generated configuration mounts
-  `~/.codex/auth.json` read-only.
-- Codex API authentication: pass `--codex-auth api-key` and put
-  `OPENAI_API_KEY` in `.shipyard/.env`.
+- Codex subscription authentication: choose **Sign in with ChatGPT** during
+  interactive init and complete the browser login. The generated configuration
+  mounts `~/.codex/auth.json` read-only. For non-interactive init, run
+  `codex login` on the host, then pass `--codex-auth chatgpt`.
+- Codex API authentication: choose **OpenAI API key** during interactive init
+  and put `OPENAI_API_KEY` in `.shipyard/.env`. For non-interactive init, pass
+  `--codex-auth api-key`.
 - Claude Code subscription authentication: run `claude setup-token` on the
   host and put the result in `CLAUDE_CODE_OAUTH_TOKEN` in `.shipyard/.env`.
 - Claude Code API authentication: uncomment `ANTHROPIC_API_KEY` in
