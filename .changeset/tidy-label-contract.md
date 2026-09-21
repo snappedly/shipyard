@@ -2,4 +2,4 @@
 "@snappedly-tools/shipyard": minor
 ---
 
-Use lowercase `shipyard` as the fixed GitHub Issues activation label and always attempt to create it during initialization.
+Add the Apple Silicon macOS repository runner for immediate GitHub label and manual wake-ups, with foreground lifecycle commands, safe finite backlog draining, protected runner state, and the fixed lowercase `shipyard` activation label.

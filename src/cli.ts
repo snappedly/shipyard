@@ -42,6 +42,10 @@ import {
   RunnerInstallError,
 } from "./RepositoryRunner.js";
 import {
+  initializeRepositoryRunner,
+  repositoryRunnerNextSteps,
+} from "./InitRepositoryRunner.js";
+import {
   getRepositoryRunnerStatus,
   RunnerControlError,
   startRepositoryRunner,
@@ -313,6 +317,16 @@ const installTemplateDepsOption = Options.choice("install-template-deps", [
   Options.optional,
 );
 
+const installRunnerOption = Options.choice("install-runner", [
+  "true",
+  "false",
+]).pipe(
+  Options.withDescription(
+    "Whether to install a foreground repository runner after scaffolding",
+  ),
+  Options.optional,
+);
+
 /**
  * Translate an `Options.choice("flag", ["true", "false"]).optional` value into
  * a tri-state boolean. None when the flag was absent; otherwise the parsed bool.
@@ -334,6 +348,7 @@ const initCommand = Command.make(
     issueTracker: issueTrackerOption,
     buildImage: buildImageOption,
     installTemplateDeps: installTemplateDepsOption,
+    installRunner: installRunnerOption,
   },
   ({
     imageName: imageNameFlag,
@@ -345,6 +360,7 @@ const initCommand = Command.make(
     issueTracker: issueTrackerFlag,
     buildImage: buildImageFlag,
     installTemplateDeps: installTemplateDepsFlag,
+    installRunner: installRunnerFlag,
   }) =>
     Effect.gen(function* () {
       const d = yield* Display;
@@ -397,6 +413,7 @@ const initCommand = Command.make(
       const installTemplateDepsChoice = choiceToTriBool(
         installTemplateDepsFlag,
       );
+      const installRunnerChoice = choiceToTriBool(installRunnerFlag);
 
       const isInteractive = process.stdin.isTTY === true;
       const failIfNonInteractive = (flag: string) =>
@@ -700,13 +717,63 @@ const initCommand = Command.make(
             buildArgs: defaultUidBuildArgs(),
           }),
         );
-        yield* d.status("Init complete! Image built successfully.", "success");
+        yield* d.status("Image built successfully.", "success");
       } else {
         yield* d.status(
-          `Init complete! Run \`${CLI_NAME} ${selectedSandboxProvider.cliNamespace} build-image\` to build the ${providerLabel} image later.`,
-          "success",
+          `Run \`${CLI_NAME} ${selectedSandboxProvider.cliNamespace} build-image\` to build the ${providerLabel} image later.`,
+          "info",
         );
       }
+
+      const runnerInit = yield* Effect.tryPromise({
+        try: () =>
+          initializeRepositoryRunner({
+            interactive: isInteractive,
+            requested:
+              installRunnerChoice._tag === "Some"
+                ? installRunnerChoice.value
+                : undefined,
+            confirm: async ({ message, initialValue }) => {
+              const confirmed = await clack.confirm({ message, initialValue });
+              if (clack.isCancel(confirmed)) {
+                throw new InitError({
+                  message:
+                    "Repository-runner installation selection cancelled.",
+                });
+              }
+              return confirmed === true;
+            },
+            install: () => installRepositoryRunner({ repoDir: cwd }),
+          }),
+        catch: (error) =>
+          error instanceof InitError
+            ? error
+            : new InitError({
+                message: `Repository-runner setup failed: ${error instanceof Error ? error.message : String(error)}`,
+              }),
+      });
+
+      if (runnerInit.status === "installed") {
+        yield* d.status(
+          `Installed ${runnerInit.result.name} for ${runnerInit.result.repository}.`,
+          "success",
+        );
+        yield* d.text("Repository runner next steps:");
+        for (const [index, line] of repositoryRunnerNextSteps().entries()) {
+          yield* d.text(styleText("dim", `${index + 1}. ${line}`));
+        }
+      } else if (runnerInit.status === "failed") {
+        yield* d.status(
+          `Shipyard scaffolding is ready, but repository runner installation failed: ${runnerInit.message}`,
+          "warn",
+        );
+        yield* d.status(
+          `Retry from this repository with \`npx ${CLI_NAME} runner install\`.`,
+          "warn",
+        );
+      }
+
+      yield* d.status("Init complete!", "success");
 
       // Show template-specific next steps
       const nextSteps = getNextStepsLines(

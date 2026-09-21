@@ -1,0 +1,93 @@
+---
+title: Repository runner
+description: Wake a foreground Shipyard controller from labelled GitHub Issues.
+---
+
+The repository runner keeps one initialized GitHub.com repository ready for
+work on an Apple Silicon Mac. It uses GitHub's official self-hosted Actions
+runner only to deliver wake-up triggers. The foreground controller invokes the
+repository's existing `npx shipyard run`; the Actions job does not own or report
+the agent outcome.
+
+## Install
+
+You need Apple Silicon macOS, Docker Desktop, an initialized Shipyard
+repository, `gh` authenticated with repository-administration access, and agent
+credentials in `.shipyard/.env`.
+
+Interactive `npx shipyard init` offers runner installation after scaffolding
+and defaults to No. Non-interactive init skips it unless you pass
+`--install-runner true`. You can install later:
+
+```sh
+npx shipyard runner install
+git add .github/workflows/shipyard-wake.yml .shipyard/.gitignore
+git commit -m "Add Shipyard wake workflow"
+git push
+npx shipyard runner start
+```
+
+Installation never commits or pushes. Start requires the exact generated
+workflow on the default branch. It validates the platform, repository,
+installation, local Shipyard package, Docker, GitHub access, activation label,
+credentials, and published workflow.
+
+## Wake and drain behavior
+
+Only the exact lowercase GitHub issue label `shipyard` is eligible. Adding it
+or manually dispatching **Shipyard wake-up** signals the controller. A
+differently cased label, issue edit, or comment does not wake it.
+
+Start always preflights the current backlog, recovering labels added while the
+Mac was off. If work exists, it invokes exactly `npx shipyard run`. After a
+successful invocation, an empty eligible issue set returns to idle, a changed
+nonempty set starts another finite invocation, and an unchanged set records no
+progress and returns to idle. A new label event, manual dispatch, or restart
+retries no-progress work. Concurrent wake-ups are coalesced.
+
+The workflow's result reports wake delivery only. Inspect the foreground
+terminal, `npx shipyard runner status`, repository state, and
+`.shipyard/runner/.shipyard-last-failure.json` for the Shipyard outcome. A
+nonzero Shipyard exit or failed prerequisite records an actionable error and
+takes the controller offline.
+
+## Lifecycle
+
+The controller runs only while its `runner start` terminal remains open. It
+does not start at login. Ctrl-C, closing the terminal, and `runner stop` use the
+bounded shutdown path and cancel active work while preserving Shipyard logs and
+worktrees.
+
+```sh
+npx shipyard runner status
+npx shipyard runner stop
+npx shipyard runner remove
+```
+
+Normal removal unregisters GitHub and deletes protected runner files, while
+preserving Shipyard configuration, workflow, activation label, issues, logs,
+and worktrees. If unregistration fails, local state is preserved. Use
+`runner remove --force` only when necessary, then remove the named orphaned
+registration in GitHub.
+
+There is no Mac sleep detector. After a sleep beyond GitHub's 24-hour queue
+lifetime, manually dispatch the workflow or restart the controller. GitHub can
+remove registrations after 14 days offline; start re-registers a missing runner
+using the current administrative `gh` login. A Mac rename requires explicit
+remove and reinstall.
+
+## Cost and trust
+
+GitHub does not charge Actions minutes for self-hosted runners. Model cost is
+incurred only when eligible work starts Shipyard; the host owner still supplies
+the Mac, Docker, network, storage, electricity, and model access.
+
+Self-hosted runners on public repositories can expose the host to untrusted
+repository activity. Use least-privilege credentials and tightly control label,
+workflow, and collaborator authority. Runner binaries and credentials are
+gitignored and protected under `.shipyard/runner/`, and isolated sandboxes
+cannot mount or copy them. No-sandbox mode remains host-trusted by definition.
+
+Use the
+[Apple Silicon validation runbook](https://github.com/snappedly/shipyard/blob/main/docs/runbooks/repository-runner-macos-validation.md)
+for the full operator trial.

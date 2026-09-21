@@ -302,6 +302,11 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     expect(stdout).toContain("--install-template-deps");
   });
 
+  it("init --help exposes the optional repository runner choice", async () => {
+    const { stdout } = await runCli("init --help", process.cwd());
+    expect(stdout).toContain("--install-runner");
+  });
+
   it("init --issue-tracker nonexistent produces error listing available trackers", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
     await initRepo(hostDir);
@@ -332,9 +337,14 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     );
 
     expect(stdout).toContain("Init complete");
+    expect(stdout).toContain("npx shipyard run");
     const entries = await readdir(join(hostDir, ".shipyard"));
     expect(entries).toContain("Dockerfile");
     expect(entries).toContain("prompt.md");
+    expect(entries).not.toContain("runner");
+    expect(
+      await readdir(join(hostDir, ".github", "workflows")).catch(() => []),
+    ).not.toContain("shipyard-wake.yml");
   });
 
   it("init requires --codex-auth for Codex in a non-TTY env", async () => {
