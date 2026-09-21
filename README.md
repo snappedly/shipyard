@@ -39,6 +39,22 @@ whether to sign in with ChatGPT or use an API key. Start with the `blank`
 template. Put any requested credentials in `.shipyard/.env`, then write one
 concrete task in `.shipyard/prompt.md`.
 
+Use a subscription first when the selected agent supports it. If subscription
+authentication does not work in your environment, use the API-key fallback:
+
+- Codex subscription authentication: choose **Sign in with ChatGPT** during
+  interactive init and complete the browser login. The generated configuration
+  mounts `~/.codex/auth.json` read-only. For non-interactive init, run
+  `codex login` on the host, then pass `--codex-auth chatgpt`.
+- Codex API authentication: choose **OpenAI API key** during interactive init
+  and put `OPENAI_API_KEY` in `.shipyard/.env`. For non-interactive init, pass
+  `--codex-auth api-key`.
+- Claude Code subscription authentication: run `claude setup-token` on the
+  host and put the result in `CLAUDE_CODE_OAUTH_TOKEN` in `.shipyard/.env`.
+- Claude Code API authentication: uncomment `ANTHROPIC_API_KEY` in
+  `.shipyard/.env` and put your API key there.
+- GitHub Issues authentication: set `GH_TOKEN` and `GH_REPO` in `.shipyard/.env`.
+
 Run it:
 
 ```sh
@@ -51,41 +67,6 @@ image when its definition has not changed:
 
 ```sh
 npx shipyard run --skip-build
-```
-
-Inspect the generated branch strategy and start from a clean working tree. A
-completion marker means the agent stopped; inspect its commits and run the
-repository's checks before keeping the result.
-
-## JavaScript API
-
-The generated `.shipyard/main.ts` or `.shipyard/main.mts` is ordinary
-TypeScript:
-
-```ts
-import { CODEX_MODELS, codex, run } from "@snappedly-tools/shipyard";
-import { docker } from "@snappedly-tools/shipyard/sandboxes/docker";
-
-const result = await run({
-  agent: codex(CODEX_MODELS.routine),
-  sandbox: docker(),
-  promptFile: ".shipyard/prompt.md",
-});
-
-console.log(result.commits);
-```
-
-Use a dedicated branch when the scaffold has already been committed:
-
-```ts
-const result = await run({
-  agent: codex(CODEX_MODELS.routine),
-  sandbox: docker(),
-  promptFile: ".shipyard/prompt.md",
-  branchStrategy: { type: "branch", branch: "agent/my-task" },
-  maxIterations: 1,
-  logging: { type: "stdout" },
-});
 ```
 
 Shipyard supports Codex and Claude Code agents, with Docker, Vercel Sandbox,
@@ -107,42 +88,6 @@ const result = await run({
 
 No-sandbox mode grants the agent the permissions of the Shipyard process. Use
 it only with trusted repositories and prompts.
-
-## Branch behavior
-
-Docker keeps the repository and Git metadata inside the sandbox. It starts
-from committed history and syncs changes back. The generated blank
-template omits `branchStrategy`, which defaults to `merge-to-head`: commits
-are transferred to a temporary host branch and merged into your current
-branch. Direct `head` mode is not supported by Docker or Vercel Sandbox.
-
-The explicit `branch` strategy keeps commits on the named branch for review.
-Commit input files before either strategy, or use `copyToWorktree` for specific
-untracked or ignored files.
-
-## Authentication
-
-`shipyard init` generates the environment variables and mounts required by
-the chosen agent. Keep `.shipyard/.env`, agent login files, logs, and recovery
-patches private.
-
-Use a subscription first when the selected agent supports it. If subscription
-authentication does not work in your environment, use the API-key fallback:
-
-- Codex subscription authentication: choose **Sign in with ChatGPT** during
-  interactive init and complete the browser login. The generated configuration
-  mounts `~/.codex/auth.json` read-only. For non-interactive init, run
-  `codex login` on the host, then pass `--codex-auth chatgpt`.
-- Codex API authentication: choose **OpenAI API key** during interactive init
-  and put `OPENAI_API_KEY` in `.shipyard/.env`. For non-interactive init, pass
-  `--codex-auth api-key`.
-- Claude Code subscription authentication: run `claude setup-token` on the
-  host and put the result in `CLAUDE_CODE_OAUTH_TOKEN` in `.shipyard/.env`.
-- Claude Code API authentication: uncomment `ANTHROPIC_API_KEY` in
-  `.shipyard/.env` and put your API key there.
-- GitHub Issues authentication: set `GH_TOKEN` in `.shipyard/.env`. To use the
-  token from a host-side `gh auth login` without storing it in the file, leave
-  `GH_TOKEN=` blank and run `GH_TOKEN="$(gh auth token)" npx shipyard run`.
 
 ## Generated files
 
