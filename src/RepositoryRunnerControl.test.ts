@@ -275,6 +275,103 @@ describe("startRepositoryRunner", () => {
     expect(base.spawns[0]!.env).toMatchObject({ GH_TOKEN: "repo-token" });
   });
 
+  it("recognizes a replaced issue with the same count and runs Shipyard again", async () => {
+    const base = makeAdapters();
+    const issueSets = ["42\n", "43\n", ""];
+    const adapters: RunnerControlAdapters = {
+      ...base.adapters,
+      run: async (command, args, options) => {
+        if (command === "gh" && args[0] === "issue") {
+          return { stdout: issueSets.shift() ?? "", stderr: "" };
+        }
+        return base.adapters.run(command, args, options);
+      },
+    };
+
+    await startRepositoryRunner({ repoDir }, adapters);
+
+    expect(base.spawns.map(({ command, args }) => [command, args])).toEqual([
+      ["npx", ["shipyard", "run"]],
+      ["npx", ["shipyard", "run"]],
+      ["./run.sh", []],
+    ]);
+  });
+
+  it("drains an issue that arrives during a successful Shipyard invocation", async () => {
+    const base = makeAdapters();
+    const issueSets = ["42\n", "42\n43\n", ""];
+    const adapters: RunnerControlAdapters = {
+      ...base.adapters,
+      run: async (command, args, options) => {
+        if (command === "gh" && args[0] === "issue") {
+          return { stdout: issueSets.shift() ?? "", stderr: "" };
+        }
+        return base.adapters.run(command, args, options);
+      },
+    };
+
+    await startRepositoryRunner({ repoDir }, adapters);
+
+    expect(base.spawns.map(({ command }) => command)).toEqual([
+      "npx",
+      "npx",
+      "./run.sh",
+    ]);
+  });
+
+  it("records no progress when the sorted eligible issue identities are unchanged", async () => {
+    let resolveListener!: (result: {
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }) => void;
+    let listenerStarted!: () => void;
+    const listenerStartedPromise = new Promise<void>(
+      (resolve) => (listenerStarted = resolve),
+    );
+    const listenerExit = new Promise<{
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }>((resolve) => (resolveListener = resolve));
+    const base = makeAdapters();
+    const issueSets = ["43\n42\n", "42\n43\n"];
+    const adapters: RunnerControlAdapters = {
+      ...base.adapters,
+      run: async (command, args, options) => {
+        if (command === "gh" && args[0] === "issue") {
+          return { stdout: issueSets.shift() ?? "", stderr: "" };
+        }
+        return base.adapters.run(command, args, options);
+      },
+      spawn: (command, args, options) => {
+        base.spawns.push({ command, args, env: options.env });
+        if (command === "./run.sh") {
+          listenerStarted();
+          return {
+            pid: 201,
+            wait: () => listenerExit,
+            terminate: () => undefined,
+          };
+        }
+        return makeChild(200);
+      },
+    };
+
+    const started = startRepositoryRunner({ repoDir }, adapters);
+    await listenerStartedPromise;
+
+    expect(base.spawns.map(({ command }) => command)).toEqual([
+      "npx",
+      "./run.sh",
+    ]);
+    expect(JSON.parse(base.files.get(statePath)!)).toMatchObject({
+      state: "idle",
+      lastOutcome: "Shipyard made no progress; eligible issues are unchanged",
+    });
+
+    resolveListener({ code: 0, signal: null });
+    await started;
+  });
+
   it("checks eligibility and invokes Shipyard after a delivered wake-up", async () => {
     let deliverWake!: () => void;
     let resolveListener!: (result: {
@@ -333,11 +430,99 @@ describe("startRepositoryRunner", () => {
     resolveListener({ code: 0, signal: null });
     await started;
 
-    expect(issueChecks).toBe(2);
+    expect(issueChecks).toBe(3);
     expect(base.spawns.map(({ command, args }) => [command, args])).toEqual([
       ["./run.sh", []],
       ["npx", ["shipyard", "run"]],
     ]);
+  });
+
+  it("coalesces wake-ups delivered while Shipyard is active", async () => {
+    let deliverWake!: () => void;
+    let resolveListener!: (result: {
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }) => void;
+    let resolveShipyard!: (result: {
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }) => void;
+    let listenerStarted!: () => void;
+    let shipyardStarted!: () => void;
+    let coalescedWakeChecked!: () => void;
+    const listenerStartedPromise = new Promise<void>(
+      (resolve) => (listenerStarted = resolve),
+    );
+    const shipyardStartedPromise = new Promise<void>(
+      (resolve) => (shipyardStarted = resolve),
+    );
+    const coalescedWakeCheckedPromise = new Promise<void>(
+      (resolve) => (coalescedWakeChecked = resolve),
+    );
+    const listenerExit = new Promise<{
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }>((resolve) => (resolveListener = resolve));
+    const shipyardExit = new Promise<{
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }>((resolve) => (resolveShipyard = resolve));
+    const base = makeAdapters();
+    const issueSets = ["", "42\n", "", ""];
+    let issueChecks = 0;
+    const adapters: RunnerControlAdapters = {
+      ...base.adapters,
+      onWake: (handler) => {
+        deliverWake = handler;
+        return () => undefined;
+      },
+      run: async (command, args, options) => {
+        if (command === "gh" && args[0] === "issue") {
+          issueChecks += 1;
+          if (issueChecks === 4) coalescedWakeChecked();
+          return { stdout: issueSets.shift() ?? "", stderr: "" };
+        }
+        return base.adapters.run(command, args, options);
+      },
+      spawn: (command, args, options) => {
+        base.spawns.push({ command, args, env: options.env });
+        if (command === "./run.sh") {
+          listenerStarted();
+          return {
+            pid: 200,
+            wait: () => listenerExit,
+            terminate: () => undefined,
+          };
+        }
+        shipyardStarted();
+        return {
+          pid: 201,
+          wait: () => shipyardExit,
+          terminate: () => undefined,
+        };
+      },
+    };
+
+    const started = startRepositoryRunner({ repoDir }, adapters);
+    await listenerStartedPromise;
+    deliverWake();
+    await shipyardStartedPromise;
+    deliverWake();
+    deliverWake();
+    deliverWake();
+
+    expect(base.spawns.filter(({ command }) => command === "npx")).toHaveLength(
+      1,
+    );
+    resolveShipyard({ code: 0, signal: null });
+    await coalescedWakeCheckedPromise;
+    resolveListener({ code: 0, signal: null });
+    await started;
+
+    expect(issueChecks).toBe(4);
+    expect(base.spawns.filter(({ command }) => command === "npx")).toHaveLength(
+      1,
+    );
   });
 
   it("acknowledges an empty stale wake-up without invoking Shipyard", async () => {
@@ -461,6 +646,71 @@ describe("startRepositoryRunner", () => {
     expect(
       base.files.get(join(runnerDir, ".shipyard-last-failure.json")),
     ).toContain("exited with code 7");
+    expect(JSON.parse(base.files.get(statePath)!)).toMatchObject({
+      state: "stopped",
+      lastOutcome: "npx shipyard run exited with code 7.",
+    });
+  });
+
+  it("takes an active listener offline when a woken Shipyard invocation fails", async () => {
+    let deliverWake!: () => void;
+    let resolveListener!: (result: {
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }) => void;
+    let listenerStarted!: () => void;
+    const listenerStartedPromise = new Promise<void>(
+      (resolve) => (listenerStarted = resolve),
+    );
+    const listenerExit = new Promise<{
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }>((resolve) => (resolveListener = resolve));
+    const listenerTerminations: NodeJS.Signals[] = [];
+    const base = makeAdapters();
+    const issueSets = ["", "42\n"];
+    const adapters: RunnerControlAdapters = {
+      ...base.adapters,
+      onWake: (handler) => {
+        deliverWake = handler;
+        return () => undefined;
+      },
+      run: async (command, args, options) => {
+        if (command === "gh" && args[0] === "issue") {
+          return { stdout: issueSets.shift() ?? "", stderr: "" };
+        }
+        return base.adapters.run(command, args, options);
+      },
+      spawn: (command, args, options) => {
+        base.spawns.push({ command, args, env: options.env });
+        if (command === "./run.sh") {
+          listenerStarted();
+          return {
+            pid: 200,
+            wait: () => listenerExit,
+            terminate: (signal) => {
+              listenerTerminations.push(signal);
+              resolveListener({ code: null, signal });
+            },
+          };
+        }
+        return makeChild(201, { code: 7, signal: null });
+      },
+    };
+
+    const started = startRepositoryRunner({ repoDir }, adapters);
+    await listenerStartedPromise;
+    deliverWake();
+
+    await expect(started).rejects.toThrow(
+      "npx shipyard run exited with code 7",
+    );
+    expect(listenerTerminations).toEqual(["SIGTERM"]);
+    expect(base.files.has(lockPath)).toBe(false);
+    expect(JSON.parse(base.files.get(statePath)!)).toMatchObject({
+      state: "stopped",
+      lastOutcome: "npx shipyard run exited with code 7.",
+    });
   });
 
   it("refuses a second start while the recorded controller is alive", async () => {

@@ -594,7 +594,7 @@ export const startRepositoryRunner = async (
 
   let initialWorkFound = false;
   try {
-    const processEligibleWork = async (): Promise<boolean> => {
+    const listEligibleIssueNumbers = async (): Promise<readonly string[]> => {
       const issues = await runCommand(
         adapters,
         "Checking for eligible GitHub issues",
@@ -609,7 +609,7 @@ export const startRepositoryRunner = async (
           "--label",
           ACTIVATION_LABEL,
           "--limit",
-          "1",
+          "100",
           "--json",
           "number",
           "--jq",
@@ -617,36 +617,63 @@ export const startRepositoryRunner = async (
         ],
         { cwd: options.repoDir, env: context.runtimeEnvironment },
       );
-      const workFound = issues.stdout.trim().length > 0;
-      if (stopping || !workFound) return workFound;
+      return [...new Set(issues.stdout.split(/\s+/).filter(Boolean))].sort(
+        (left, right) => Number(left) - Number(right),
+      );
+    };
+    const sameIssueNumbers = (
+      left: readonly string[],
+      right: readonly string[],
+    ): boolean =>
+      left.length === right.length &&
+      left.every((issue, index) => issue === right[index]);
+    const processEligibleWork = async (): Promise<boolean> => {
+      let issueNumbers = await listEligibleIssueNumbers();
+      const workFound = issueNumbers.length > 0;
 
-      await saveState("processing", "Shipyard is processing eligible issues");
-      shipyardChild = adapters.spawn("npx", ["shipyard", "run"], {
-        cwd: options.repoDir,
-        env: context.runtimeEnvironment,
-      });
-      const runResult = await shipyardChild.wait();
-      shipyardChild = undefined;
-      if (stopping) {
-        await shutdownPromise;
-        return workFound;
+      while (!stopping && issueNumbers.length > 0) {
+        await saveState("processing", "Shipyard is processing eligible issues");
+        shipyardChild = adapters.spawn("npx", ["shipyard", "run"], {
+          cwd: options.repoDir,
+          env: context.runtimeEnvironment,
+        });
+        const runResult = await shipyardChild.wait();
+        shipyardChild = undefined;
+        if (stopping) {
+          await shutdownPromise;
+          return workFound;
+        }
+        if (runResult.code !== 0) {
+          const failure = childFailure("npx shipyard run", runResult);
+          await writeJson(
+            failurePath,
+            {
+              schemaVersion: 1,
+              repository: context.repository,
+              message: failure.message,
+              recordedAt: new Date().toISOString(),
+            },
+            adapters,
+          );
+          await saveState("stopped", failure.message);
+          throw failure;
+        }
+
+        const nextIssueNumbers = await listEligibleIssueNumbers();
+        if (nextIssueNumbers.length === 0) {
+          await saveState("idle", "Shipyard completed; no eligible issues");
+          break;
+        }
+        if (sameIssueNumbers(issueNumbers, nextIssueNumbers)) {
+          await saveState(
+            "idle",
+            "Shipyard made no progress; eligible issues are unchanged",
+          );
+          break;
+        }
+        issueNumbers = nextIssueNumbers;
       }
-      if (runResult.code !== 0) {
-        const failure = childFailure("npx shipyard run", runResult);
-        await writeJson(
-          failurePath,
-          {
-            schemaVersion: 1,
-            repository: context.repository,
-            message: failure.message,
-            recordedAt: new Date().toISOString(),
-          },
-          adapters,
-        );
-        await saveState("stopped", failure.message);
-        throw failure;
-      }
-      await saveState("idle", "Shipyard completed successfully");
+
       return workFound;
     };
 
