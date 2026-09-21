@@ -115,6 +115,9 @@ describe("InitService scaffold", () => {
     );
     expect(envExample).toContain("Issues");
     expect(envExample).toContain("Metadata");
+    expect(envExample).toContain(
+      'GH_TOKEN="$(gh auth token)" npx shipyard run',
+    );
   });
 
   it("does not scaffold config.json for blank template", async () => {
