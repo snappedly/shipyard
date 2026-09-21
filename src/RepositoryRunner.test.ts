@@ -234,8 +234,84 @@ describe("installRepositoryRunner", () => {
 
     await expect(
       installRepositoryRunner({ repoDir }, adapters),
-    ).rejects.toThrow("already installed");
-    expect(base.calls).toHaveLength(0);
+    ).rejects.toThrow("not a valid Shipyard repository runner installation");
+    expect(base.calls.some(({ command }) => command === "./config.sh")).toBe(
+      false,
+    );
+  });
+
+  it("validates a healthy matching installation without duplicating it", async () => {
+    const base = makeAdapters();
+    const runnerDir = join(repoDir, ".shipyard", "runner");
+    const maskDir = join(repoDir, ".shipyard", "runner-sandbox-mask");
+    const metadataPath = join(runnerDir, ".shipyard-install.json");
+    const existingMetadata = {
+      schemaVersion: 1,
+      repository: "snappedly/shipyard",
+      repositoryUrl: "https://github.com/snappedly/shipyard",
+      name: "shipyard-shipyard-jon-s-macbook-local",
+      label: "shipyard",
+      version: "2.331.0",
+    };
+    const adapters: RunnerInstallAdapters = {
+      ...base.adapters,
+      exists: async (path) =>
+        [
+          runnerDir,
+          maskDir,
+          metadataPath,
+          join(runnerDir, ".credentials"),
+          join(runnerDir, "run.sh"),
+        ].includes(path) || base.adapters.exists(path),
+      readText: async (path) =>
+        path === metadataPath
+          ? JSON.stringify(existingMetadata)
+          : base.adapters.readText(path),
+      run: async (command, args, options) => {
+        base.calls.push({ command, args, ...options });
+        if (command === "git") {
+          return {
+            stdout: "git@github.com:snappedly/shipyard.git\n",
+            stderr: "",
+          };
+        }
+        if (
+          command === "gh" &&
+          args.some((arg) => arg.endsWith("/actions/runners"))
+        ) {
+          return {
+            stdout:
+              "shipyard-shipyard-jon-s-macbook-local\tonline\tself-hosted,macOS,shipyard\n",
+            stderr: "",
+          };
+        }
+        return { stdout: "", stderr: "" };
+      },
+    };
+
+    await expect(
+      installRepositoryRunner({ repoDir }, adapters),
+    ).resolves.toEqual({
+      name: existingMetadata.name,
+      repository: existingMetadata.repository,
+      version: existingMetadata.version,
+      runnerDir,
+    });
+    expect(base.calls.some(({ command }) => command === "tar")).toBe(false);
+    expect(base.calls.some(({ command }) => command === "./config.sh")).toBe(
+      false,
+    );
+    expect(
+      base.calls.some(({ args }) => args.includes("registration-token")),
+    ).toBe(false);
+    expect(
+      base.writes.get(
+        join(repoDir, ".github", "workflows", "shipyard-wake.yml"),
+      ),
+    ).toBe(REPOSITORY_RUNNER_WORKFLOW);
+    expect(base.writes.get(join(runnerDir, "shipyard-wake"))).toBe(
+      REPOSITORY_RUNNER_WAKE_SCRIPT,
+    );
   });
 
   it("refuses a differing wake workflow before registering a runner", async () => {

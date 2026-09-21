@@ -99,6 +99,17 @@ const makeAdapters = (
     remove: async (path) => {
       files.delete(path);
     },
+    makeDirectory: async (path) => {
+      directories.add(path);
+    },
+    removeTree: async (path) => {
+      for (const key of [...files.keys()]) {
+        if (key === path || key.startsWith(`${path}/`)) files.delete(key);
+      }
+      for (const key of [...directories]) {
+        if (key === path || key.startsWith(`${path}/`)) directories.delete(key);
+      }
+    },
     commandExists: async () => true,
     resolveEnvironment: async () => ({ GH_TOKEN: "repo-token" }),
     run: async (command, args, options) => {
@@ -129,7 +140,12 @@ const makeAdapters = (
         command === "gh" &&
         args.some((arg) => arg.endsWith("/actions/runners"))
       ) {
-        return { stdout: "online\n", stderr: "" };
+        return {
+          stdout: args.some((arg) => arg.endsWith("| .status"))
+            ? "online\n"
+            : "shipyard-shipyard-test-mac\tonline\tself-hosted,macOS,shipyard\n",
+          stderr: "",
+        };
       }
       return { stdout: "", stderr: "" };
     },
@@ -142,6 +158,7 @@ const makeAdapters = (
       signals.push({ pid, signal });
     },
     onShutdown: () => () => undefined,
+    pause: async () => undefined,
     ...overrides,
   };
 
@@ -182,7 +199,7 @@ describe("startRepositoryRunner", () => {
         ) {
           return { stdout: REPOSITORY_RUNNER_WORKFLOW, stderr: "" };
         }
-        return { stdout: "", stderr: "" };
+        return base.adapters.run(command, args, options);
       },
     };
 
@@ -244,7 +261,7 @@ describe("startRepositoryRunner", () => {
         ) {
           return { stdout: REPOSITORY_RUNNER_WORKFLOW, stderr: "" };
         }
-        return { stdout: "", stderr: "" };
+        return base.adapters.run(command, args, options);
       },
     };
 
@@ -427,7 +444,7 @@ describe("startRepositoryRunner", () => {
         ) {
           return { stdout: REPOSITORY_RUNNER_WORKFLOW, stderr: "" };
         }
-        return { stdout: "", stderr: "" };
+        return base.adapters.run(command, args, options);
       },
       spawn: (command, args, options) => {
         base.spawns.push({ command, args, env: options.env });
@@ -457,6 +474,59 @@ describe("startRepositoryRunner", () => {
       startRepositoryRunner({ repoDir }, base.adapters),
     ).rejects.toThrow("already running with process 999");
     expect(base.spawns).toHaveLength(0);
+  });
+
+  it("repairs an expired remote registration before listening", async () => {
+    const base = makeAdapters();
+    base.files.delete(join(runnerDir, ".credentials"));
+    const adapters: RunnerControlAdapters = {
+      ...base.adapters,
+      run: async (command, args, options) => {
+        base.commands.push({ command, args, env: options.env });
+        if (command === "git") {
+          return {
+            stdout: "git@github.com:snappedly/shipyard.git\n",
+            stderr: "",
+          };
+        }
+        if (command === "gh" && args[0] === "label") {
+          return { stdout: "shipyard\n", stderr: "" };
+        }
+        if (
+          command === "gh" &&
+          args.some((arg) => arg.endsWith("/actions/runners"))
+        ) {
+          return { stdout: "", stderr: "" };
+        }
+        if (
+          command === "gh" &&
+          args.some((arg) => arg.endsWith("/registration-token"))
+        ) {
+          return { stdout: '{"token":"repair-token"}\n', stderr: "" };
+        }
+        return base.adapters.run(command, args, options);
+      },
+    };
+
+    await startRepositoryRunner({ repoDir }, adapters);
+
+    const registration = base.commands.find(
+      ({ command }) => command === "./config.sh",
+    );
+    expect(registration?.args).toEqual([
+      "--url",
+      "https://github.com/snappedly/shipyard",
+      "--token",
+      "repair-token",
+      "--name",
+      "shipyard-shipyard-test-mac",
+      "--labels",
+      "shipyard",
+      "--work",
+      "_work",
+      "--unattended",
+    ]);
+    expect(registration?.env).not.toHaveProperty("GH_TOKEN");
   });
 
   it("uses the same shutdown path to terminate an active listener and clear the process lock", async () => {

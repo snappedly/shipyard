@@ -22,6 +22,10 @@ import {
   assertRepositoryRunnerWorkflowCanBeInstalled,
   installRepositoryRunnerWakeFiles,
 } from "./RepositoryRunnerWake.js";
+import {
+  RunnerLifecycleError,
+  validateExistingRepositoryRunner,
+} from "./RepositoryRunnerLifecycle.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -286,11 +290,7 @@ export const installRepositoryRunner = async (
       `No ${CONFIG_DIR}/ found. Run \`shipyard init\` in this repository first.`,
     );
   }
-  if (await adapters.exists(runnerDir)) {
-    throw new RunnerInstallError(
-      `A repository runner is already installed at ${runnerDir}. Remove it before installing another.`,
-    );
-  }
+  const runnerExists = await adapters.exists(runnerDir);
   try {
     await assertRepositoryRunnerWorkflowCanBeInstalled(
       options.repoDir,
@@ -303,8 +303,10 @@ export const installRepositoryRunner = async (
   }
 
   await requireCommand(adapters, "git", "reading the repository remote");
-  await requireCommand(adapters, "tar", "extracting the runner archive");
-  if (!options.registrationToken) {
+  if (!runnerExists) {
+    await requireCommand(adapters, "tar", "extracting the runner archive");
+  }
+  if (!options.registrationToken || runnerExists) {
     await requireCommand(adapters, "gh", "requesting repository runner access");
   }
 
@@ -322,7 +324,7 @@ export const installRepositoryRunner = async (
   const repoUrl = `https://github.com/${repository}`;
   const runnerName = `shipyard-${normalizeNamePart(identity.repository)}-${normalizeNamePart(adapters.hostname())}`;
 
-  if (!options.registrationToken) {
+  if (!options.registrationToken || runnerExists) {
     await adapters
       .run("gh", ["auth", "status", "--hostname", "github.com"], {
         cwd: options.repoDir,
@@ -334,6 +336,50 @@ export const installRepositoryRunner = async (
           error,
         );
       });
+  }
+
+  if (runnerExists) {
+    let metadata;
+    try {
+      metadata = await validateExistingRepositoryRunner(
+        {
+          repoDir: options.repoDir,
+          runnerDir,
+          maskDir,
+          repository,
+          runnerName,
+        },
+        adapters,
+      );
+    } catch (error) {
+      throw new RunnerInstallError(
+        error instanceof RunnerLifecycleError
+          ? error.message
+          : `Validating the existing repository runner failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    await appendRunnerIgnores(join(configDir, ".gitignore"), adapters);
+    await adapters.chmod(runnerDir, 0o700);
+    await adapters.chmod(maskDir, 0o700);
+    try {
+      await installRepositoryRunnerWakeFiles(
+        { repoDir: options.repoDir, runnerDir },
+        adapters,
+      );
+    } catch (error) {
+      throw new RunnerInstallError(
+        `The existing runner is valid, but its wake-up files could not be refreshed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    return {
+      name: metadata.name,
+      repository: metadata.repository,
+      version: metadata.version,
+      runnerDir,
+    };
+  }
+
+  if (!options.registrationToken) {
     const existing = await adapters
       .run(
         "gh",

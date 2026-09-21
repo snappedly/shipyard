@@ -81,7 +81,13 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     expect(stdout).toContain("start");
     expect(stdout).toContain("status");
     expect(stdout).toContain("stop");
-    expect(stdout).not.toContain("remove");
+    expect(stdout).toContain("remove");
+  });
+
+  it("runner remove --help exposes explicit forced local removal", async () => {
+    const { stdout } = await runCli("runner remove --help", process.cwd());
+    expect(stdout).toContain("--force");
+    expect(stdout).toContain("GitHub");
   });
 
   it("runner install --help exposes one-time registration token input", async () => {

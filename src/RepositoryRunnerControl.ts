@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { constants } from "node:fs";
-import { access, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { NodeFileSystem } from "@effect/platform-node";
@@ -14,11 +14,22 @@ import {
   createRepositoryRunnerWakeSubscription,
   requirePublishedRepositoryRunnerWorkflow,
 } from "./RepositoryRunnerWake.js";
-import { ACTIVATION_LABEL, CONFIG_DIR, RUNNER_DIR } from "./runtimeNames.js";
+import {
+  recoverRepositoryRunner,
+  RUNNER_CONTROLLER_LOCK,
+  RUNNER_INSTALL_METADATA,
+  RunnerLifecycleError,
+  type RunnerInstallMetadata,
+  type RunnerLifecycleAdapters,
+} from "./RepositoryRunnerLifecycle.js";
+import {
+  ACTIVATION_LABEL,
+  CONFIG_DIR,
+  RUNNER_DIR,
+  RUNNER_SANDBOX_MASK_DIR,
+} from "./runtimeNames.js";
 
 const execFileAsync = promisify(execFile);
-const INSTALL_METADATA = ".shipyard-install.json";
-const CONTROLLER_LOCK = ".shipyard-controller.lock";
 const CONTROLLER_STATE = ".shipyard-state.json";
 const LAST_FAILURE = ".shipyard-last-failure.json";
 
@@ -56,6 +67,8 @@ export interface RunnerControlAdapters {
   readonly writeText: (path: string, content: string) => Promise<void>;
   readonly writeExclusive: (path: string, content: string) => Promise<void>;
   readonly remove: (path: string) => Promise<void>;
+  readonly makeDirectory: (path: string) => Promise<void>;
+  readonly removeTree: (path: string) => Promise<void>;
   readonly commandExists: (command: string) => Promise<boolean>;
   readonly resolveEnvironment: (
     repoDir: string,
@@ -74,15 +87,7 @@ export interface RunnerControlAdapters {
   readonly signalProcess: (pid: number, signal: NodeJS.Signals) => void;
   readonly onShutdown: (handler: () => Promise<void>) => () => void;
   readonly onWake?: (handler: () => void) => () => void;
-}
-
-interface RunnerInstallMetadata {
-  readonly schemaVersion: 1;
-  readonly repository: string;
-  readonly repositoryUrl: string;
-  readonly name: string;
-  readonly label: string;
-  readonly version: string;
+  readonly pause: (milliseconds: number) => Promise<void>;
 }
 
 interface RunnerControllerLock {
@@ -196,6 +201,10 @@ const defaultAdapters: RunnerControlAdapters = {
   writeExclusive: (path, content) =>
     writeFile(path, content, { encoding: "utf8", mode: 0o600, flag: "wx" }),
   remove: (path) => rm(path, { force: true }),
+  makeDirectory: async (path) => {
+    await mkdir(path, { recursive: true, mode: 0o700 });
+  },
+  removeTree: (path) => rm(path, { recursive: true, force: true }),
   commandExists: async (command) => {
     try {
       await execFileAsync("which", [command]);
@@ -227,6 +236,8 @@ const defaultAdapters: RunnerControlAdapters = {
   },
   signalProcess: (pid, signal) => process.kill(pid, signal),
   onShutdown: registerRunnerShutdown,
+  pause: (milliseconds) =>
+    new Promise((resolve) => setTimeout(resolve, milliseconds)),
 };
 
 const readJson = async <T>(
@@ -285,7 +296,9 @@ const requireCommand = async (
 
 interface RunnerControlContext {
   readonly runnerDir: string;
+  readonly maskDir: string;
   readonly repository: string;
+  readonly metadata: RunnerInstallMetadata;
   readonly hostEnvironment: NodeJS.ProcessEnv;
   readonly runtimeEnvironment: NodeJS.ProcessEnv;
 }
@@ -302,6 +315,7 @@ const requireRunnerContext = async (
 
   const configDir = join(repoDir, CONFIG_DIR);
   const runnerDir = join(configDir, RUNNER_DIR);
+  const maskDir = join(configDir, RUNNER_SANDBOX_MASK_DIR);
   if (!(await adapters.exists(configDir))) {
     throw new RunnerControlError(
       `No ${CONFIG_DIR}/ found. Run \`shipyard init\` in this repository first.`,
@@ -314,7 +328,7 @@ const requireRunnerContext = async (
   }
 
   const metadata = await readJson<RunnerInstallMetadata>(
-    join(runnerDir, INSTALL_METADATA),
+    join(runnerDir, RUNNER_INSTALL_METADATA),
     adapters,
   );
   if (
@@ -325,11 +339,6 @@ const requireRunnerContext = async (
   ) {
     throw new RunnerControlError(
       "The repository runner installation metadata is missing or invalid. Reinstall the repository runner.",
-    );
-  }
-  if (!(await adapters.exists(join(runnerDir, ".credentials")))) {
-    throw new RunnerControlError(
-      "The repository runner credentials are missing. Reinstall the repository runner.",
     );
   }
   if (!(await adapters.exists(join(runnerDir, "run.sh")))) {
@@ -450,7 +459,9 @@ const requireRunnerContext = async (
 
   return {
     runnerDir,
+    maskDir,
     repository,
+    metadata,
     hostEnvironment,
     runtimeEnvironment,
   };
@@ -486,7 +497,34 @@ export const startRepositoryRunner = async (
   adapters: RunnerControlAdapters = defaultAdapters,
 ): Promise<RepositoryRunnerStartResult> => {
   const context = await requireRunnerContext(options.repoDir, adapters);
-  const lockPath = join(context.runnerDir, CONTROLLER_LOCK);
+  const lifecycleAdapters: RunnerLifecycleAdapters = {
+    environment: adapters.environment,
+    exists: adapters.exists,
+    readText: adapters.readText,
+    makeDirectory: adapters.makeDirectory,
+    remove: adapters.removeTree,
+    run: adapters.run,
+    isProcessRunning: adapters.isProcessRunning,
+    signalProcess: adapters.signalProcess,
+    pause: adapters.pause,
+  };
+  await recoverRepositoryRunner(
+    {
+      repoDir: options.repoDir,
+      runnerDir: context.runnerDir,
+      maskDir: context.maskDir,
+      metadata: context.metadata,
+      runnerEnvironment: repositoryRunnerEnvironment(context.hostEnvironment),
+    },
+    lifecycleAdapters,
+  ).catch((error) => {
+    throw new RunnerControlError(
+      error instanceof RunnerLifecycleError
+        ? error.message
+        : `Repository runner recovery failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
+  const lockPath = join(context.runnerDir, RUNNER_CONTROLLER_LOCK);
   const statePath = join(context.runnerDir, CONTROLLER_STATE);
   const failurePath = join(context.runnerDir, LAST_FAILURE);
   const existingLock = await readJson<RunnerControllerLock>(lockPath, adapters);
@@ -695,7 +733,7 @@ export const getRepositoryRunnerStatus = async (
 ): Promise<RepositoryRunnerStatus> => {
   const runnerDir = join(options.repoDir, CONFIG_DIR, RUNNER_DIR);
   const metadata = await readJson<RunnerInstallMetadata>(
-    join(runnerDir, INSTALL_METADATA),
+    join(runnerDir, RUNNER_INSTALL_METADATA),
     adapters,
   );
   if (!metadata) {
@@ -709,7 +747,7 @@ export const getRepositoryRunnerStatus = async (
   }
 
   const lock = await readJson<RunnerControllerLock>(
-    join(runnerDir, CONTROLLER_LOCK),
+    join(runnerDir, RUNNER_CONTROLLER_LOCK),
     adapters,
   );
   const state = await readJson<RunnerControllerState>(
@@ -762,7 +800,7 @@ export const stopRepositoryRunner = async (
     options.repoDir,
     CONFIG_DIR,
     RUNNER_DIR,
-    CONTROLLER_LOCK,
+    RUNNER_CONTROLLER_LOCK,
   );
   const lock = await readJson<RunnerControllerLock>(lockPath, adapters);
   if (!lock || !Number.isInteger(lock.pid)) {

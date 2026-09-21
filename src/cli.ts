@@ -48,6 +48,10 @@ import {
   stopRepositoryRunner,
 } from "./RepositoryRunnerControl.js";
 import {
+  removeRepositoryRunner,
+  RunnerLifecycleError,
+} from "./RepositoryRunnerLifecycle.js";
+import {
   ACTIVATION_LABEL,
   CONFIG_DIR,
   CLI_NAME,
@@ -840,7 +844,8 @@ const runnerControlEffect = <A>(operation: () => Promise<A>) =>
     catch: (error) =>
       new InitError({
         message:
-          error instanceof RunnerControlError
+          error instanceof RunnerControlError ||
+          error instanceof RunnerLifecycleError
             ? error.message
             : `Repository runner operation failed: ${error instanceof Error ? error.message : String(error)}`,
       }),
@@ -898,6 +903,28 @@ const stopRunnerCommand = Command.make("stop", {}, () =>
   }),
 );
 
+const forceRemoveRunnerOption = Options.boolean("force").pipe(
+  Options.withDescription(
+    "delete local runner files if GitHub unregistration fails",
+  ),
+);
+
+const removeRunnerCommand = Command.make(
+  "remove",
+  { force: forceRemoveRunnerOption },
+  ({ force }) =>
+    Effect.gen(function* () {
+      const d = yield* Display;
+      const result = yield* runnerControlEffect(() =>
+        removeRepositoryRunner({ repoDir: process.cwd(), force }),
+      );
+      yield* d.status("Repository runner removed.", "success");
+      if (result.manualCleanup) {
+        yield* d.status(result.manualCleanup, "warn");
+      }
+    }),
+);
+
 const runnerCommand = Command.make("runner", {}, () =>
   Effect.gen(function* () {
     const d = yield* Display;
@@ -912,6 +939,7 @@ const runnerCommand = Command.make("runner", {}, () =>
     startRunnerCommand,
     statusRunnerCommand,
     stopRunnerCommand,
+    removeRunnerCommand,
   ]),
 );
 
