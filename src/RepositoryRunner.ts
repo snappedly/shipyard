@@ -18,11 +18,13 @@ import {
   RUNNER_DIR,
   RUNNER_SANDBOX_MASK_DIR,
 } from "./runtimeNames.js";
+import { repositoryRunnerEnvironment } from "./runnerSecurity.js";
 import {
   assertRepositoryRunnerWorkflowCanBeInstalled,
   installRepositoryRunnerWakeFiles,
 } from "./RepositoryRunnerWake.js";
 import {
+  RUNNER_INSTALL_METADATA,
   RunnerLifecycleError,
   validateExistingRepositoryRunner,
 } from "./RepositoryRunnerLifecycle.js";
@@ -30,22 +32,8 @@ import {
 const execFileAsync = promisify(execFile);
 
 const RUNNER_ARCHIVE = "runner.tgz";
-const INSTALL_METADATA = ".shipyard-install.json";
 const RELEASES_API =
   "https://api.github.com/repos/actions/runner/releases/latest";
-const SAFE_RUNNER_ENV_KEYS = new Set([
-  "HOME",
-  "LANG",
-  "LC_ALL",
-  "LOGNAME",
-  "PATH",
-  "SHELL",
-  "TEMP",
-  "TERM",
-  "TMP",
-  "TMPDIR",
-  "USER",
-]);
 
 export class RunnerInstallError extends Error {
   readonly name = "RunnerInstallError";
@@ -195,15 +183,6 @@ const normalizeNamePart = (value: string): string => {
     .replace(/-+/g, "-");
   return normalized || "unknown";
 };
-
-export const repositoryRunnerEnvironment = (
-  source: NodeJS.ProcessEnv,
-): NodeJS.ProcessEnv =>
-  Object.fromEntries(
-    Object.entries(source).filter(
-      ([key, value]) => SAFE_RUNNER_ENV_KEYS.has(key) && value !== undefined,
-    ),
-  );
 
 const requireCommand = async (
   adapters: RunnerInstallAdapters,
@@ -507,7 +486,7 @@ export const installRepositoryRunner = async (
   }
 
   await adapters.writeText(
-    join(runnerDir, INSTALL_METADATA),
+    join(runnerDir, RUNNER_INSTALL_METADATA),
     `${JSON.stringify(
       {
         schemaVersion: 1,

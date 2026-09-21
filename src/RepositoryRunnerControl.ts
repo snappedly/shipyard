@@ -6,10 +6,8 @@ import { promisify } from "node:util";
 import { NodeFileSystem } from "@effect/platform-node";
 import { Effect } from "effect";
 import { resolveEnv } from "./EnvResolver.js";
-import {
-  parseGitHubRepository,
-  repositoryRunnerEnvironment,
-} from "./RepositoryRunner.js";
+import { parseGitHubRepository } from "./RepositoryRunner.js";
+import { repositoryRunnerEnvironment } from "./runnerSecurity.js";
 import {
   createRepositoryRunnerWakeSubscription,
   requirePublishedRepositoryRunnerWorkflow,

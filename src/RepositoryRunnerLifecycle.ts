@@ -9,6 +9,7 @@ import {
   RUNNER_DIR,
   RUNNER_SANDBOX_MASK_DIR,
 } from "./runtimeNames.js";
+import { repositoryRunnerEnvironment } from "./runnerSecurity.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -20,19 +21,6 @@ const REGISTRATION_FILES = [
   ".credentials_rsaparams",
   ".runner",
 ] as const;
-const SAFE_RUNNER_ENV_KEYS = new Set([
-  "HOME",
-  "LANG",
-  "LC_ALL",
-  "LOGNAME",
-  "PATH",
-  "SHELL",
-  "TEMP",
-  "TERM",
-  "TMP",
-  "TMPDIR",
-  "USER",
-]);
 
 interface CommandResult {
   readonly stdout: string;
@@ -197,15 +185,6 @@ const parseRemoteRunners = (stdout: string): readonly RemoteRunner[] =>
         labels: new Set(labels.split(",").filter(Boolean)),
       };
     });
-
-const runnerProcessEnvironment = (
-  source: NodeJS.ProcessEnv,
-): NodeJS.ProcessEnv =>
-  Object.fromEntries(
-    Object.entries(source).filter(
-      ([key, value]) => SAFE_RUNNER_ENV_KEYS.has(key) && value !== undefined,
-    ),
-  );
 
 const listRemoteRunners = async (
   repository: string,
@@ -472,7 +451,7 @@ const unregisterRepositoryRunner = async (
     await adapters.run(
       "./config.sh",
       ["remove", "--token", token, "--unattended"],
-      { cwd: runnerDir, env: runnerProcessEnvironment(environment) },
+      { cwd: runnerDir, env: repositoryRunnerEnvironment(environment) },
     );
   } catch {
     throw new RunnerLifecycleError(
