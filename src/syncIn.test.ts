@@ -1,5 +1,5 @@
 import { exec } from "node:child_process";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -167,6 +167,27 @@ describe("syncIn", () => {
       // Untracked file should not exist
       const ls = (await handle.exec("ls")).stdout;
       expect(ls).not.toContain("untracked.txt");
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it("refuses runner-owned files committed on any ref", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "host-runner-"));
+    await initRepo(hostDir);
+    await mkdir(join(hostDir, ".shipyard", "runner"), { recursive: true });
+    await commitFile(
+      hostDir,
+      ".shipyard/runner/.credentials",
+      "secret",
+      "bad runner state",
+    );
+
+    const handle = await testIsolated().create({ env: {} });
+    try {
+      await expect(Effect.runPromise(syncIn(hostDir, handle))).rejects.toThrow(
+        "repository runner",
+      );
     } finally {
       await handle.close();
     }

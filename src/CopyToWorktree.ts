@@ -10,6 +10,7 @@ import {
   assertNoSymlinkComponents,
   resolveSafeRelativePath,
 } from "./pathSecurity.js";
+import { assertExcludesRepositoryRunner } from "./runnerSecurity.js";
 
 const COPY_TO_WORKTREE_TIMEOUT_MS = 60_000;
 
@@ -39,6 +40,7 @@ export const copyToWorktree = (
       let src: string;
       let dest: string;
       try {
+        assertExcludesRepositoryRunner(relativePath);
         src = resolveSafeRelativePath(hostRepoDir, relativePath, "copy path");
         dest = resolveSafeRelativePath(worktreePath, relativePath, "copy path");
       } catch (error) {

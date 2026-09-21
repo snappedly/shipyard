@@ -111,6 +111,33 @@ describe("copyToWorktree", () => {
     }
   });
 
+  it.each([".shipyard", ".shipyard/runner", ".shipyard/runner/.credentials"])(
+    "rejects copying the protected repository runner through %s",
+    async (copyPath) => {
+      const hostDir = await mkdtemp(join(tmpdir(), "cw-test-"));
+      const worktreeDir = await mkdtemp(join(tmpdir(), "cw-wt-"));
+      await mkdir(join(hostDir, ".shipyard", "runner"), { recursive: true });
+      await writeFile(
+        join(hostDir, ".shipyard", "runner", ".credentials"),
+        "secret",
+      );
+
+      try {
+        const exit = await Effect.runPromiseExit(
+          copyToWorktree([copyPath], hostDir, worktreeDir),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit) && exit.cause._tag === "Fail") {
+          expect(exit.cause.error).toBeInstanceOf(CopyToWorktreeError);
+          expect(exit.cause.error.message).toContain("repository runner");
+        }
+      } finally {
+        await rm(hostDir, { recursive: true, force: true });
+        await rm(worktreeDir, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("uses custom timeoutMs when provided", async () => {
     vi.useFakeTimers();
     const hostDir = await mkdtemp(join(tmpdir(), "cw-test-"));

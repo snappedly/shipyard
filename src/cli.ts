@@ -38,6 +38,10 @@ import {
 } from "./CodexAuth.js";
 import { requireCanonicalConfigDir } from "./runtimeConfig.js";
 import {
+  installRepositoryRunner,
+  RunnerInstallError,
+} from "./RepositoryRunner.js";
+import {
   ACTIVATION_LABEL,
   CONFIG_DIR,
   CLI_NAME,
@@ -781,6 +785,59 @@ const dockerCommand = Command.make("docker", {}, () =>
   }),
 ).pipe(Command.withSubcommands([buildImageCommand, removeImageCommand]));
 
+// --- Repository runner namespace command ---
+
+const registrationTokenOption = Options.text("registration-token").pipe(
+  Options.withDescription(
+    "one-time GitHub repository runner registration token (not stored)",
+  ),
+  Options.optional,
+);
+
+const installRunnerCommand = Command.make(
+  "install",
+  { registrationToken: registrationTokenOption },
+  ({ registrationToken }) =>
+    Effect.gen(function* () {
+      const d = yield* Display;
+      const cwd = process.cwd();
+      const result = yield* d.spinner(
+        "Installing repository runner...",
+        Effect.tryPromise({
+          try: () =>
+            installRepositoryRunner({
+              repoDir: cwd,
+              registrationToken:
+                registrationToken._tag === "Some"
+                  ? registrationToken.value
+                  : undefined,
+            }),
+          catch: (error) =>
+            new InitError({
+              message:
+                error instanceof RunnerInstallError
+                  ? error.message
+                  : `Repository runner installation failed: ${error instanceof Error ? error.message : String(error)}`,
+            }),
+        }),
+      );
+      yield* d.status(
+        `Installed ${result.name} for ${result.repository}.`,
+        "success",
+      );
+    }),
+);
+
+const runnerCommand = Command.make("runner", {}, () =>
+  Effect.gen(function* () {
+    const d = yield* Display;
+    yield* d.status(
+      "Repository runner commands. Use --help to see available subcommands.",
+      "info",
+    );
+  }),
+).pipe(Command.withSubcommands([installRunnerCommand]));
+
 // --- Root command ---
 
 const rootCommand = Command.make(CLI_NAME, {}, () =>
@@ -792,7 +849,12 @@ const rootCommand = Command.make(CLI_NAME, {}, () =>
 );
 
 export const shipyard = rootCommand.pipe(
-  Command.withSubcommands([initCommand, runCommand, dockerCommand]),
+  Command.withSubcommands([
+    initCommand,
+    runCommand,
+    dockerCommand,
+    runnerCommand,
+  ]),
 );
 
 export const cli = Command.run(shipyard, {

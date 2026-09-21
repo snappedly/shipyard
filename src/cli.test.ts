@@ -63,6 +63,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     expect(stdout).toContain("docker");
     expect(stdout).toContain("init");
     expect(stdout).toContain("run");
+    expect(stdout).toContain("runner install");
     expect(stdout).not.toContain("interactive");
     // build-image and remove-image are namespaced under docker, not top-level
     expect(stdout).toContain("docker build-image");
@@ -72,6 +73,21 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     expect(stdout).not.toContain("cleanup-sandbox");
     expect(stdout).not.toContain("sync-in");
     expect(stdout).not.toContain("sync-out");
+  });
+
+  it("runner --help exposes install without later lifecycle commands", async () => {
+    const { stdout } = await runCli("runner --help", process.cwd());
+    expect(stdout).toContain("install");
+    expect(stdout).not.toContain("start");
+    expect(stdout).not.toContain("status");
+    expect(stdout).not.toContain("stop");
+    expect(stdout).not.toContain("remove");
+  });
+
+  it("runner install --help exposes one-time registration token input", async () => {
+    const { stdout } = await runCli("runner install --help", process.cwd());
+    expect(stdout).toContain("--registration-token");
+    expect(stdout).toContain("one-time");
   });
 
   it("docker --help shows build-image and remove-image subcommands", async () => {

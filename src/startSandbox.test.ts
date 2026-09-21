@@ -1,6 +1,6 @@
 import { Duration, Effect, Exit, TestClock, TestContext } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { exec } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -111,6 +111,49 @@ describe("startSandbox", () => {
 
       expect(result.stdout).toBe("hello");
     });
+
+    it("masks installed runner files in a head bind mount", async () => {
+      const hostDir = await mkdtemp(join(tmpdir(), "shipyard-runner-mask-"));
+      const runnerDir = join(hostDir, ".shipyard", "runner");
+      const maskDir = join(hostDir, ".shipyard", "runner-sandbox-mask");
+      await mkdir(runnerDir, { recursive: true });
+      await mkdir(maskDir);
+      await writeFile(join(runnerDir, ".credentials"), "secret");
+      const createCalls: any[] = [];
+      const provider = createBindMountSandboxProvider({
+        name: "test",
+        create: async (options) => {
+          createCalls.push(options);
+          return {
+            worktreePath: SANDBOX_REPO_DIR,
+            exec: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
+            copyFileIn: async () => {},
+            copyFileOut: async () => {},
+            close: async () => {},
+          };
+        },
+      });
+
+      try {
+        await Effect.runPromise(
+          startSandbox({
+            provider,
+            hostRepoDir: hostDir,
+            env: {},
+            worktreeOrRepoPath: hostDir,
+            gitMounts: [],
+            repoDir: SANDBOX_REPO_DIR,
+          }),
+        );
+        expect(createCalls[0].mounts).toContainEqual({
+          hostPath: maskDir,
+          sandboxPath: `${SANDBOX_REPO_DIR}/.shipyard/runner`,
+          readonly: true,
+        });
+      } finally {
+        await rm(hostDir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe("isolated provider", () => {
@@ -175,6 +218,34 @@ describe("startSandbox", () => {
 
       expect(result.stdout.trim()).toBe("extra content");
       await handle.close();
+    });
+
+    it("rejects protected runner paths before isolated copy-in", async () => {
+      const hostDir = await mkdtemp(join(tmpdir(), "shipyard-test-"));
+      tempDirs.push(hostDir);
+      await initRepo(hostDir);
+      await commitFile(hostDir, "hello.txt", "hello", "initial");
+      await mkdir(join(hostDir, ".shipyard", "runner"), { recursive: true });
+      await writeFile(
+        join(hostDir, ".shipyard", "runner", ".credentials"),
+        "secret",
+      );
+
+      const provider = testIsolated();
+      const exit = await Effect.runPromiseExit(
+        startSandbox({
+          provider,
+          hostRepoDir: hostDir,
+          sourceRepoDir: hostDir,
+          env: {},
+          copyPaths: [".shipyard"],
+        }),
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit) && exit.cause._tag === "Fail") {
+        expect(exit.cause.error.message).toContain("repository runner");
+      }
     });
 
     it("times out when copyIn hangs", async () => {
