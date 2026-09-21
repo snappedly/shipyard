@@ -83,6 +83,7 @@ const makeAdapters = (
       OPENAI_API_KEY: "host-agent-secret",
     }),
     currentPid: () => 100,
+    processIdentity: async (pid) => `started-${pid}`,
     exists: async (path) => directories.has(path) || files.has(path),
     readText: async (path) => {
       const content = files.get(path);
@@ -159,6 +160,8 @@ const makeAdapters = (
     },
     onShutdown: () => () => undefined,
     pause: async () => undefined,
+    now: () => new Date("2026-01-02T03:04:05.000Z"),
+    report: () => undefined,
     ...overrides,
   };
 
@@ -249,7 +252,7 @@ describe("startRepositoryRunner", () => {
         if (command === "gh" && args[0] === "label") {
           return { stdout: "shipyard\n", stderr: "" };
         }
-        if (command === "gh" && args[0] === "issue") {
+        if (command === "gh" && args.some((arg) => arg.endsWith("/issues"))) {
           return { stdout: "42\n", stderr: "" };
         }
         if (command === "gh" && args.includes(".default_branch")) {
@@ -273,6 +276,21 @@ describe("startRepositoryRunner", () => {
       ["./run.sh", []],
     ]);
     expect(base.spawns[0]!.env).toMatchObject({ GH_TOKEN: "repo-token" });
+    expect(base.spawns[0]!.env).toMatchObject({
+      SHIPYARD_RUNNER_OWNER: "snappedly/shipyard",
+    });
+    const eligibility = base.commands.find(
+      ({ command, args }) =>
+        command === "gh" && args.some((arg) => arg.endsWith("/issues")),
+    );
+    expect(eligibility?.args).toEqual(
+      expect.arrayContaining([
+        "--paginate",
+        "per_page=100",
+        ".[] | select(.pull_request == null) | .number",
+      ]),
+    );
+    expect(eligibility?.args).not.toContain("--limit");
   });
 
   it("recognizes a replaced issue with the same count and runs Shipyard again", async () => {
@@ -281,7 +299,7 @@ describe("startRepositoryRunner", () => {
     const adapters: RunnerControlAdapters = {
       ...base.adapters,
       run: async (command, args, options) => {
-        if (command === "gh" && args[0] === "issue") {
+        if (command === "gh" && args.some((arg) => arg.endsWith("/issues"))) {
           return { stdout: issueSets.shift() ?? "", stderr: "" };
         }
         return base.adapters.run(command, args, options);
@@ -303,7 +321,7 @@ describe("startRepositoryRunner", () => {
     const adapters: RunnerControlAdapters = {
       ...base.adapters,
       run: async (command, args, options) => {
-        if (command === "gh" && args[0] === "issue") {
+        if (command === "gh" && args.some((arg) => arg.endsWith("/issues"))) {
           return { stdout: issueSets.shift() ?? "", stderr: "" };
         }
         return base.adapters.run(command, args, options);
@@ -333,11 +351,12 @@ describe("startRepositoryRunner", () => {
       signal: NodeJS.Signals | null;
     }>((resolve) => (resolveListener = resolve));
     const base = makeAdapters();
+    const reports: string[] = [];
     const issueSets = ["43\n42\n", "42\n43\n"];
     const adapters: RunnerControlAdapters = {
       ...base.adapters,
       run: async (command, args, options) => {
-        if (command === "gh" && args[0] === "issue") {
+        if (command === "gh" && args.some((arg) => arg.endsWith("/issues"))) {
           return { stdout: issueSets.shift() ?? "", stderr: "" };
         }
         return base.adapters.run(command, args, options);
@@ -354,6 +373,7 @@ describe("startRepositoryRunner", () => {
         }
         return makeChild(200);
       },
+      report: (message) => reports.push(message),
     };
 
     const started = startRepositoryRunner({ repoDir }, adapters);
@@ -364,9 +384,12 @@ describe("startRepositoryRunner", () => {
       "./run.sh",
     ]);
     expect(JSON.parse(base.files.get(statePath)!)).toMatchObject({
-      state: "idle",
+      state: "stalled",
       lastOutcome: "Shipyard made no progress; eligible issues are unchanged",
     });
+    expect(reports).toContain(
+      "[repository runner] stalled: Shipyard made no progress; eligible issues are unchanged",
+    );
 
     resolveListener({ code: 0, signal: null });
     await started;
@@ -399,7 +422,7 @@ describe("startRepositoryRunner", () => {
         return () => undefined;
       },
       run: async (command, args, options) => {
-        if (command === "gh" && args[0] === "issue") {
+        if (command === "gh" && args.some((arg) => arg.endsWith("/issues"))) {
           issueChecks += 1;
           return {
             stdout: issueChecks === 1 ? "" : "42\n",
@@ -477,7 +500,7 @@ describe("startRepositoryRunner", () => {
         return () => undefined;
       },
       run: async (command, args, options) => {
-        if (command === "gh" && args[0] === "issue") {
+        if (command === "gh" && args.some((arg) => arg.endsWith("/issues"))) {
           issueChecks += 1;
           if (issueChecks === 4) coalescedWakeChecked();
           return { stdout: issueSets.shift() ?? "", stderr: "" };
@@ -552,7 +575,7 @@ describe("startRepositoryRunner", () => {
         return () => undefined;
       },
       run: async (command, args, options) => {
-        if (command === "gh" && args[0] === "issue") {
+        if (command === "gh" && args.some((arg) => arg.endsWith("/issues"))) {
           issueChecks += 1;
           if (issueChecks === 2) secondIssueCheck();
           return { stdout: "", stderr: "" };
@@ -617,7 +640,7 @@ describe("startRepositoryRunner", () => {
         if (command === "gh" && args[0] === "label") {
           return { stdout: "shipyard\n", stderr: "" };
         }
-        if (command === "gh" && args[0] === "issue") {
+        if (command === "gh" && args.some((arg) => arg.endsWith("/issues"))) {
           return { stdout: "42\n", stderr: "" };
         }
         if (command === "gh" && args.includes(".default_branch")) {
@@ -676,7 +699,7 @@ describe("startRepositoryRunner", () => {
         return () => undefined;
       },
       run: async (command, args, options) => {
-        if (command === "gh" && args[0] === "issue") {
+        if (command === "gh" && args.some((arg) => arg.endsWith("/issues"))) {
           return { stdout: issueSets.shift() ?? "", stderr: "" };
         }
         return base.adapters.run(command, args, options);
@@ -713,11 +736,43 @@ describe("startRepositoryRunner", () => {
     });
   });
 
+  it("records a post-run eligibility failure and takes the controller offline", async () => {
+    const base = makeAdapters();
+    let eligibilityChecks = 0;
+    const adapters: RunnerControlAdapters = {
+      ...base.adapters,
+      run: async (command, args, options) => {
+        if (command === "gh" && args.some((arg) => arg.endsWith("/issues"))) {
+          eligibilityChecks += 1;
+          if (eligibilityChecks === 1) return { stdout: "42\n", stderr: "" };
+          throw new Error("GitHub unavailable after Shipyard completed");
+        }
+        return base.adapters.run(command, args, options);
+      },
+    };
+
+    await expect(startRepositoryRunner({ repoDir }, adapters)).rejects.toThrow(
+      "Checking for eligible GitHub issues failed",
+    );
+    expect(base.files.has(lockPath)).toBe(false);
+    expect(
+      base.files.get(join(runnerDir, ".shipyard-last-failure.json")),
+    ).toContain("GitHub unavailable after Shipyard completed");
+    expect(JSON.parse(base.files.get(statePath)!)).toMatchObject({
+      state: "stopped",
+    });
+  });
+
   it("refuses a second start while the recorded controller is alive", async () => {
     const base = makeAdapters();
     base.files.set(
       lockPath,
-      JSON.stringify({ schemaVersion: 1, pid: 999, repository: "x/y" }),
+      JSON.stringify({
+        schemaVersion: 1,
+        pid: 999,
+        repository: "x/y",
+        processStartedAt: "started-999",
+      }),
     );
 
     await expect(
@@ -825,6 +880,60 @@ describe("startRepositoryRunner", () => {
       lastOutcome: "Stopped by signal",
     });
   });
+
+  it("cancels children and removes transient state even when shutdown state writes fail", async () => {
+    let shutdown!: () => Promise<void>;
+    let childStarted!: () => void;
+    let resolveExit!: (result: {
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }) => void;
+    const startedChild = new Promise<void>(
+      (resolve) => (childStarted = resolve),
+    );
+    const childExit = new Promise<{
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }>((resolve) => (resolveExit = resolve));
+    const terminations: NodeJS.Signals[] = [];
+    const base = makeAdapters();
+    const transientPath = join(runnerDir, "_work", "transient");
+    base.files.set(transientPath, "temporary");
+    let failStateWrites = false;
+    const adapters: RunnerControlAdapters = {
+      ...base.adapters,
+      writeText: async (path, content) => {
+        if (path === statePath && failStateWrites) throw new Error("disk full");
+        base.files.set(path, content);
+      },
+      spawn: (command, args, options) => {
+        base.spawns.push({ command, args, env: options.env });
+        childStarted();
+        return {
+          pid: 200,
+          wait: () => childExit,
+          terminate: (signal) => {
+            terminations.push(signal);
+            resolveExit({ code: null, signal });
+          },
+        };
+      },
+      onShutdown: (handler) => {
+        shutdown = handler;
+        return () => undefined;
+      },
+    };
+
+    const running = startRepositoryRunner({ repoDir }, adapters);
+    await startedChild;
+    failStateWrites = true;
+    await shutdown();
+    await running;
+
+    expect(terminations).toEqual(["SIGTERM"]);
+    expect(base.files.has(lockPath)).toBe(false);
+    expect(base.files.has(transientPath)).toBe(false);
+  });
 });
 
 describe("getRepositoryRunnerStatus", () => {
@@ -836,6 +945,7 @@ describe("getRepositoryRunnerStatus", () => {
         schemaVersion: 1,
         pid: 321,
         repository: "snappedly/shipyard",
+        processStartedAt: "started-321",
       }),
     );
     base.files.set(
@@ -845,6 +955,10 @@ describe("getRepositoryRunnerStatus", () => {
         repository: "snappedly/shipyard",
         state: "idle",
         lastOutcome: "Shipyard completed successfully",
+        lastWake: {
+          source: "signal",
+          recordedAt: "2026-01-02T03:04:05.000Z",
+        },
       }),
     );
 
@@ -858,6 +972,10 @@ describe("getRepositoryRunnerStatus", () => {
       repository: "snappedly/shipyard",
       state: "idle",
       lastOutcome: "Shipyard completed successfully",
+      lastWake: {
+        source: "signal",
+        recordedAt: "2026-01-02T03:04:05.000Z",
+      },
     });
     expect(JSON.stringify(status)).not.toContain("token");
     expect(JSON.stringify(status)).not.toContain("secret");
@@ -873,6 +991,7 @@ describe("stopRepositoryRunner", () => {
         schemaVersion: 1,
         pid: 321,
         repository: "snappedly/shipyard",
+        processStartedAt: "started-321",
       }),
     );
 
@@ -881,5 +1000,23 @@ describe("stopRepositoryRunner", () => {
     expect(result).toEqual({ pid: 321 });
     expect(base.signals).toEqual([{ pid: 321, signal: "SIGTERM" }]);
     expect(base.files.has(lockPath)).toBe(true);
+  });
+
+  it("does not signal a reused PID whose start identity differs", async () => {
+    const base = makeAdapters();
+    base.files.set(
+      lockPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        pid: 321,
+        repository: "snappedly/shipyard",
+        processStartedAt: "old-process",
+      }),
+    );
+
+    await expect(
+      stopRepositoryRunner({ repoDir }, base.adapters),
+    ).rejects.toThrow("no longer matches");
+    expect(base.signals).toHaveLength(0);
   });
 });

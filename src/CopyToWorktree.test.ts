@@ -111,7 +111,12 @@ describe("copyToWorktree", () => {
     }
   });
 
-  it.each([".shipyard", ".shipyard/runner", ".shipyard/runner/.credentials"])(
+  it.each([
+    ".shipyard",
+    ".shipyard/runner",
+    ".shipyard/runner/.credentials",
+    ".SHIPYARD/RUNNER/.credentials",
+  ])(
     "rejects copying the protected repository runner through %s",
     async (copyPath) => {
       const hostDir = await mkdtemp(join(tmpdir(), "cw-test-"));

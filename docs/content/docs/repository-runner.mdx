@@ -78,9 +78,11 @@ remove and reinstall.
 
 ## Cost and trust
 
-GitHub does not charge Actions minutes for self-hosted runners. Model cost is
-incurred only when eligible work starts Shipyard; the host owner still supplies
-the Mac, Docker, network, storage, electricity, and model access.
+GitHub does not charge Actions minutes for the self-hosted wake job. The brief
+exact-case gate runs on `ubuntu-latest` and may consume hosted Actions minutes
+for private repositories. Model cost is incurred only when eligible work starts
+Shipyard; the host owner still supplies the Mac, Docker, network, storage,
+electricity, and model access.
 
 Self-hosted runners on public repositories can expose the host to untrusted
 repository activity. Use least-privilege credentials and tightly control label,

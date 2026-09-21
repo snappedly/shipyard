@@ -85,6 +85,8 @@ export interface StartContainerOptions {
   readonly devices?: readonly string[];
   /** Limit CPU resources via `--cpus` (e.g. `1.5`). Fractional values allowed. */
   readonly cpus?: number;
+  /** Docker labels used to scope repository-runner crash recovery. */
+  readonly labels?: Readonly<Record<string, string>>;
   /**
    * SELinux volume label suffix applied to bind mounts (default `"z"`).
    *
@@ -152,6 +154,9 @@ export const startContainer = (
     ]);
     const cpusFlags =
       options?.cpus !== undefined ? ["--cpus", String(options.cpus)] : [];
+    const labelFlags = Object.entries(options?.labels ?? {}).flatMap(
+      ([key, value]) => ["--label", `${key}=${value}`],
+    );
 
     yield* dockerExec([
       "run",
@@ -159,6 +164,7 @@ export const startContainer = (
       "--init",
       "--name",
       containerName,
+      ...labelFlags,
       ...envFlags,
       ...volumeFlags,
       ...workdirFlags,

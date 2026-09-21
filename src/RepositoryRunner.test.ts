@@ -362,17 +362,21 @@ describe("installRepositoryRunner", () => {
     ).rejects.toThrow("already registered");
   });
 
-  it("accepts an explicit one-time token without requiring gh", async () => {
-    const base = makeAdapters({
-      commandExists: async (command) => command !== "gh",
-    });
+  it("uses an explicit one-time token only after GitHub uniqueness checks", async () => {
+    const base = makeAdapters();
 
     await installRepositoryRunner(
       { repoDir, registrationToken: "supplied-once" },
       base.adapters,
     );
 
-    expect(base.calls.some((call) => call.command === "gh")).toBe(false);
+    expect(
+      base.calls.some(
+        ({ command, args }) =>
+          command === "gh" &&
+          args.some((arg) => arg.endsWith("/actions/runners")),
+      ),
+    ).toBe(true);
     expect(
       base.calls.find((call) => call.command === "./config.sh")?.args,
     ).toContain("supplied-once");
@@ -381,6 +385,32 @@ describe("installRepositoryRunner", () => {
         String(value).includes("supplied-once"),
       ),
     ).toBe(false);
+  });
+
+  it("rejects a duplicate labelled runner even with an explicit token", async () => {
+    const base = makeAdapters();
+    const adapters: RunnerInstallAdapters = {
+      ...base.adapters,
+      run: async (command, args, options) => {
+        if (
+          command === "gh" &&
+          args.some((arg) => arg.endsWith("/actions/runners"))
+        ) {
+          return { stdout: "shipyard-existing-mac\n", stderr: "" };
+        }
+        return base.adapters.run(command, args, options);
+      },
+    };
+
+    await expect(
+      installRepositoryRunner(
+        { repoDir, registrationToken: "supplied-once" },
+        adapters,
+      ),
+    ).rejects.toThrow("already registered");
+    expect(base.calls.some(({ command }) => command === "./config.sh")).toBe(
+      false,
+    );
   });
 
   it("rejects a digest mismatch before creating runner files", async () => {
@@ -432,6 +462,11 @@ describe("installRepositoryRunner", () => {
     ).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).not.toContain("supplied-secret");
-    expect((error as Error).message).toContain("retained");
+    expect((error as Error).message).toContain("removed");
+    expect((error as Error).message).toContain("orphan registration");
+    expect(base.removes).toContain(join(repoDir, ".shipyard", "runner"));
+    expect(base.removes).toContain(
+      join(repoDir, ".shipyard", "runner-sandbox-mask"),
+    );
   });
 });

@@ -31,7 +31,10 @@ import {
   assertNoSymlinkComponents,
   resolveSafeRelativePath,
 } from "./pathSecurity.js";
-import { assertExcludesRepositoryRunner } from "./runnerSecurity.js";
+import {
+  assertExcludesRepositoryRunner,
+  assertSafeRepositoryRunnerDirectories,
+} from "./runnerSecurity.js";
 import {
   CONFIG_DIR,
   RUNNER_DIR,
@@ -144,17 +147,22 @@ const startBindMountSandbox = (
 > =>
   Effect.tryPromise({
     try: () => {
+      const usesRunnerMask =
+        options.worktreeOrRepoPath === options.hostRepoDir &&
+        existsSync(join(options.hostRepoDir, CONFIG_DIR, RUNNER_DIR)) &&
+        existsSync(
+          join(options.hostRepoDir, CONFIG_DIR, RUNNER_SANDBOX_MASK_DIR),
+        );
+      if (usesRunnerMask) {
+        assertSafeRepositoryRunnerDirectories(options.hostRepoDir);
+      }
       const rawMounts = [
         {
           hostPath: options.worktreeOrRepoPath,
           sandboxPath: options.repoDir,
         },
         ...options.gitMounts,
-        ...(options.worktreeOrRepoPath === options.hostRepoDir &&
-        existsSync(join(options.hostRepoDir, CONFIG_DIR, RUNNER_DIR)) &&
-        existsSync(
-          join(options.hostRepoDir, CONFIG_DIR, RUNNER_SANDBOX_MASK_DIR),
-        )
+        ...(usesRunnerMask
           ? [
               {
                 hostPath: join(

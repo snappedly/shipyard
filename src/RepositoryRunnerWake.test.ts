@@ -53,6 +53,16 @@ describe("repository runner wake workflow", () => {
     expect(REPOSITORY_RUNNER_WAKE_SCRIPT).toContain(
       '! kill -0 "$controller_pid"',
     );
+    expect(REPOSITORY_RUNNER_WAKE_SCRIPT).toContain('"processStartedAt"');
+    expect(REPOSITORY_RUNNER_WAKE_SCRIPT).toContain(
+      'ps -p "$controller_pid" -o lstart=',
+    );
+    expect(REPOSITORY_RUNNER_WAKE_SCRIPT).toContain(
+      "awk '{$1=$1; print}' || true",
+    );
+    expect(REPOSITORY_RUNNER_WAKE_SCRIPT).toContain(
+      '[[ "$current_started_at" != "$controller_started_at" ]]',
+    );
     expect(REPOSITORY_RUNNER_WAKE_SCRIPT).toContain(
       "repository runner controller is unavailable",
     );

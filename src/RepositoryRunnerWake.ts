@@ -56,7 +56,13 @@ if [[ ! -r "$lock_path" ]]; then
 fi
 
 controller_pid="$(sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p' "$lock_path" | head -n 1)"
-if [[ -z "$controller_pid" ]] || ! kill -0 "$controller_pid" 2>/dev/null; then
+controller_started_at="$(sed -n 's/.*"processStartedAt"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' "$lock_path" | head -n 1)"
+if [[ -z "$controller_pid" ]] || [[ -z "$controller_started_at" ]]; then
+  echo "::error::The Shipyard repository runner controller is unavailable. Start it with npx shipyard runner start."
+  exit 1
+fi
+current_started_at="$(ps -p "$controller_pid" -o lstart= 2>/dev/null | awk '{$1=$1; print}' || true)"
+if [[ "$current_started_at" != "$controller_started_at" ]] || ! kill -0 "$controller_pid" 2>/dev/null; then
   echo "::error::The Shipyard repository runner controller is unavailable. Start it with npx shipyard runner start."
   exit 1
 fi

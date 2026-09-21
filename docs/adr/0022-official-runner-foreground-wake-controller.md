@@ -56,8 +56,10 @@ dispatch or restart after GitHub's queue lifetime. GitHub may remove an extended
 offline registration, so start repairs a missing registration using current
 administrative authority.
 
-The official runner retains its update behavior and GitHub's self-hosted minute
-pricing. Shipyard owns controller state, no-progress safety, diagnostics, and
-cleanup. Public repositories inherit GitHub's elevated self-hosted runner risk.
+The official runner retains its update behavior. GitHub does not charge Actions
+minutes for the self-hosted wake job, but the brief `ubuntu-latest` exact-case
+gate may consume hosted minutes for private repositories. Shipyard owns
+controller state, no-progress safety, diagnostics, and cleanup. Public
+repositories inherit GitHub's elevated self-hosted runner risk.
 The design is intentionally repository-scoped and does not preclude a future
 hosted coordinator.

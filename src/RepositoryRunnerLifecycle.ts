@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { constants } from "node:fs";
-import { access, mkdir, readFile, rm } from "node:fs/promises";
+import { access, lstat, mkdir, readFile, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import {
@@ -9,13 +9,20 @@ import {
   RUNNER_DIR,
   RUNNER_SANDBOX_MASK_DIR,
 } from "./runtimeNames.js";
-import { repositoryRunnerEnvironment } from "./runnerSecurity.js";
+import {
+  assertProtectedDirectoryIdentities,
+  repositoryRunnerEnvironment,
+  type ProtectedDirectoryIdentity,
+} from "./runnerSecurity.js";
 
 const execFileAsync = promisify(execFile);
 
 export const RUNNER_INSTALL_METADATA = ".shipyard-install.json";
 export const RUNNER_CONTROLLER_LOCK = ".shipyard-controller.lock";
-const RUNNER_WORK_DIR = "_work";
+export const RUNNER_WORK_DIR = "_work";
+export const REPOSITORY_RUNNER_OWNER_LABEL =
+  "com.snappedly.shipyard.repository-runner-owner";
+export const REPOSITORY_RUNNER_OWNER_ENV = "SHIPYARD_RUNNER_OWNER";
 const REGISTRATION_FILES = [
   ".credentials",
   ".credentials_rsaparams",
@@ -45,6 +52,7 @@ interface RunnerControllerLock {
   readonly schemaVersion: 1;
   readonly pid: number;
   readonly repository: string;
+  readonly processStartedAt: string;
 }
 
 export class RunnerLifecycleError extends Error {
@@ -57,6 +65,9 @@ export interface RunnerInstallValidationAdapters {
   readonly exists: (path: string) => Promise<boolean>;
   readonly readText: (path: string) => Promise<string>;
   readonly makeDirectory: (path: string) => Promise<void>;
+  readonly inspectDirectory?: (
+    path: string,
+  ) => Promise<ProtectedDirectoryIdentity>;
   readonly run: (
     command: string,
     args: readonly string[],
@@ -70,6 +81,7 @@ export interface RunnerLifecycleAdapters extends RunnerInstallValidationAdapters
   readonly isProcessRunning: (pid: number) => boolean;
   readonly signalProcess: (pid: number, signal: NodeJS.Signals) => void;
   readonly pause: (milliseconds: number) => Promise<void>;
+  readonly processIdentity: (pid: number) => Promise<string | undefined>;
 }
 
 const defaultAdapters: RunnerLifecycleAdapters = {
@@ -86,6 +98,14 @@ const defaultAdapters: RunnerLifecycleAdapters = {
   makeDirectory: async (path) => {
     await mkdir(path, { recursive: true, mode: 0o700 });
   },
+  inspectDirectory: async (path) => {
+    const [stat, resolved] = await Promise.all([lstat(path), realpath(path)]);
+    return {
+      realPath: resolved,
+      directory: stat.isDirectory(),
+      symbolicLink: stat.isSymbolicLink(),
+    };
+  },
   remove: (path) => rm(path, { recursive: true, force: true }),
   run: async (command, args, options) => {
     const result = await execFileAsync(command, [...args], {
@@ -94,6 +114,20 @@ const defaultAdapters: RunnerLifecycleAdapters = {
       maxBuffer: 10 * 1024 * 1024,
     });
     return { stdout: result.stdout, stderr: result.stderr };
+  },
+  processIdentity: async (pid) => {
+    try {
+      const result = await execFileAsync("ps", [
+        "-p",
+        String(pid),
+        "-o",
+        "lstart=",
+      ]);
+      const identity = result.stdout.trim().replace(/\s+/g, " ");
+      return identity.length > 0 ? identity : undefined;
+    } catch {
+      return undefined;
+    }
   },
   isProcessRunning: (pid) => {
     try {
@@ -107,6 +141,20 @@ const defaultAdapters: RunnerLifecycleAdapters = {
   pause: (milliseconds) =>
     new Promise((resolve) => setTimeout(resolve, milliseconds)),
 };
+
+const lockOwnsProcess = async (
+  lock: RunnerControllerLock | undefined,
+  adapters: Pick<
+    RunnerLifecycleAdapters,
+    "isProcessRunning" | "processIdentity"
+  >,
+): Promise<boolean> =>
+  lock !== undefined &&
+  Number.isInteger(lock.pid) &&
+  typeof lock.processStartedAt === "string" &&
+  lock.processStartedAt.length > 0 &&
+  adapters.isProcessRunning(lock.pid) &&
+  (await adapters.processIdentity(lock.pid)) === lock.processStartedAt;
 
 const lifecycleFailure = (
   purpose: string,
@@ -218,6 +266,16 @@ export const validateExistingRepositoryRunner = async (
   },
   adapters: RunnerInstallValidationAdapters = defaultAdapters,
 ): Promise<RunnerInstallMetadata> => {
+  if (!(await adapters.exists(options.maskDir))) {
+    await adapters.makeDirectory(options.maskDir);
+  }
+  await assertProtectedDirectoryIdentities(
+    options.runnerDir,
+    options.maskDir,
+    adapters.inspectDirectory,
+  ).catch((error) => {
+    throw lifecycleFailure("Validating protected runner directories", error);
+  });
   const metadata = await requireInstallMetadata(options.runnerDir, adapters);
   if (metadata.repository !== options.repository) {
     throw new RunnerLifecycleError(
@@ -243,6 +301,14 @@ export const validateExistingRepositoryRunner = async (
     adapters.environment(),
     adapters,
   );
+  const labelled = remoteRunners.filter(({ labels }) =>
+    labels.has(ACTIVATION_LABEL),
+  );
+  if (labelled.length > 1) {
+    throw new RunnerLifecycleError(
+      `Multiple repository runners carry the ${ACTIVATION_LABEL} label (${labelled.map(({ name }) => name).join(", ")}). Remove duplicates before continuing.`,
+    );
+  }
   const matching = remoteRunners.find(({ name }) => name === metadata.name);
   if (!matching) {
     throw new RunnerLifecycleError(
@@ -255,9 +321,6 @@ export const validateExistingRepositoryRunner = async (
     );
   }
 
-  if (!(await adapters.exists(options.maskDir))) {
-    await adapters.makeDirectory(options.maskDir);
-  }
   return metadata;
 };
 
@@ -323,13 +386,9 @@ export const recoverRepositoryRunner = async (
 ): Promise<{ readonly reRegistered: boolean }> => {
   const lockPath = join(options.runnerDir, RUNNER_CONTROLLER_LOCK);
   const lock = await readJson<RunnerControllerLock>(lockPath, adapters);
-  if (
-    lock &&
-    Number.isInteger(lock.pid) &&
-    adapters.isProcessRunning(lock.pid)
-  ) {
+  if (await lockOwnsProcess(lock, adapters)) {
     throw new RunnerLifecycleError(
-      `The repository runner is already running with process ${lock.pid}.`,
+      `The repository runner is already running with process ${lock!.pid}.`,
     );
   }
   if (lock) await adapters.remove(lockPath);
@@ -339,6 +398,36 @@ export const recoverRepositoryRunner = async (
   if (await adapters.exists(options.maskDir))
     await adapters.remove(options.maskDir);
   await adapters.makeDirectory(options.maskDir);
+  await assertProtectedDirectoryIdentities(
+    options.runnerDir,
+    options.maskDir,
+    adapters.inspectDirectory,
+  ).catch((error) => {
+    throw lifecycleFailure("Validating protected runner directories", error);
+  });
+
+  const ownedContainers = await runCommand(
+    adapters,
+    "Finding stale repository-runner containers",
+    "docker",
+    [
+      "ps",
+      "-aq",
+      "--filter",
+      `label=${REPOSITORY_RUNNER_OWNER_LABEL}=${options.metadata.repository}`,
+    ],
+    { cwd: options.repoDir, env: options.runnerEnvironment },
+  );
+  const containerIds = ownedContainers.stdout.split(/\s+/).filter(Boolean);
+  if (containerIds.length > 0) {
+    await runCommand(
+      adapters,
+      "Removing stale repository-runner containers",
+      "docker",
+      ["rm", "-f", ...containerIds],
+      { cwd: options.repoDir, env: options.runnerEnvironment },
+    );
+  }
 
   const adminEnvironment = adapters.environment();
   const remoteRunners = await listRemoteRunners(
@@ -347,6 +436,14 @@ export const recoverRepositoryRunner = async (
     adminEnvironment,
     adapters,
   );
+  const labelled = remoteRunners.filter(({ labels }) =>
+    labels.has(ACTIVATION_LABEL),
+  );
+  if (labelled.length > 1) {
+    throw new RunnerLifecycleError(
+      `Multiple repository runners carry the ${ACTIVATION_LABEL} label (${labelled.map(({ name }) => name).join(", ")}). Remove duplicates before continuing.`,
+    );
+  }
   const matching = remoteRunners.find(
     ({ name }) => name === options.metadata.name,
   );
@@ -364,9 +461,7 @@ export const recoverRepositoryRunner = async (
     return { reRegistered: false };
   }
 
-  const collision = remoteRunners.find(({ labels }) =>
-    labels.has(ACTIVATION_LABEL),
-  );
+  const collision = labelled[0];
   if (collision) {
     throw new RunnerLifecycleError(
       `Repository runner ${collision.name} already carries the ${ACTIVATION_LABEL} label. Refusing to create a conflicting registration.`,
@@ -399,8 +494,9 @@ export const recoverRepositoryRunner = async (
       { cwd: options.runnerDir, env: options.runnerEnvironment },
     );
   } catch {
+    await removeRegistrationFiles(options.runnerDir, adapters);
     throw new RunnerLifecycleError(
-      `Re-registering ${options.metadata.name} failed. The runner remains stopped; verify repository administration access and retry \`shipyard runner start\`. The one-time token was not stored.`,
+      `Re-registering ${options.metadata.name} failed. Partial local registration files were removed; check GitHub Settings > Actions > Runners for an orphan registration, then retry \`shipyard runner start\`. The one-time token was not stored.`,
     );
   }
   return { reRegistered: true };
@@ -478,17 +574,26 @@ export const removeRepositoryRunner = async (
       `No repository runner is installed at ${runnerDir}.`,
     );
   }
-  const metadata = await requireInstallMetadata(runnerDir, adapters);
+  let metadata: RunnerInstallMetadata;
+  try {
+    metadata = await requireInstallMetadata(runnerDir, adapters);
+  } catch (error) {
+    if (!options.force) throw error;
+    await adapters.remove(runnerDir);
+    if (await adapters.exists(maskDir)) await adapters.remove(maskDir);
+    return {
+      removed: true,
+      forced: true,
+      manualCleanup:
+        "Check GitHub Settings > Actions > Runners and manually remove any orphan repository runner registration.",
+    };
+  }
   const lock = await readJson<RunnerControllerLock>(
     join(runnerDir, RUNNER_CONTROLLER_LOCK),
     adapters,
   );
-  if (
-    lock &&
-    Number.isInteger(lock.pid) &&
-    adapters.isProcessRunning(lock.pid)
-  ) {
-    await waitForProcessToStop(lock.pid, adapters);
+  if (await lockOwnsProcess(lock, adapters)) {
+    await waitForProcessToStop(lock!.pid, adapters);
   }
 
   try {

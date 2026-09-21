@@ -1,13 +1,24 @@
 import { execFile, spawn } from "node:child_process";
 import { constants } from "node:fs";
-import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  lstat,
+  mkdir,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { NodeFileSystem } from "@effect/platform-node";
 import { Effect } from "effect";
 import { resolveEnv } from "./EnvResolver.js";
 import { parseGitHubRepository } from "./RepositoryRunner.js";
-import { repositoryRunnerEnvironment } from "./runnerSecurity.js";
+import {
+  repositoryRunnerEnvironment,
+  type ProtectedDirectoryIdentity,
+} from "./runnerSecurity.js";
 import {
   createRepositoryRunnerWakeSubscription,
   requirePublishedRepositoryRunnerWorkflow,
@@ -16,7 +27,9 @@ import {
   recoverRepositoryRunner,
   RUNNER_CONTROLLER_LOCK,
   RUNNER_INSTALL_METADATA,
+  RUNNER_WORK_DIR,
   RunnerLifecycleError,
+  REPOSITORY_RUNNER_OWNER_ENV,
   type RunnerInstallMetadata,
   type RunnerLifecycleAdapters,
 } from "./RepositoryRunnerLifecycle.js";
@@ -60,7 +73,11 @@ export interface RunnerControlAdapters {
   readonly arch: () => string;
   readonly environment: () => NodeJS.ProcessEnv;
   readonly currentPid: () => number;
+  readonly processIdentity: (pid: number) => Promise<string | undefined>;
   readonly exists: (path: string) => Promise<boolean>;
+  readonly inspectDirectory?: (
+    path: string,
+  ) => Promise<ProtectedDirectoryIdentity>;
   readonly readText: (path: string) => Promise<string>;
   readonly writeText: (path: string, content: string) => Promise<void>;
   readonly writeExclusive: (path: string, content: string) => Promise<void>;
@@ -86,21 +103,35 @@ export interface RunnerControlAdapters {
   readonly onShutdown: (handler: () => Promise<void>) => () => void;
   readonly onWake?: (handler: () => void) => () => void;
   readonly pause: (milliseconds: number) => Promise<void>;
+  readonly now: () => Date;
+  readonly report: (message: string) => void;
 }
 
 interface RunnerControllerLock {
   readonly schemaVersion: 1;
   readonly pid: number;
   readonly repository: string;
+  readonly processStartedAt: string;
 }
 
-type RunnerControllerStateName = "idle" | "processing" | "stopping" | "stopped";
+type RunnerControllerStateName =
+  | "idle"
+  | "processing"
+  | "stalled"
+  | "stopping"
+  | "stopped";
+
+interface RunnerWakeRecord {
+  readonly source: "startup" | "signal";
+  readonly recordedAt: string;
+}
 
 interface RunnerControllerState {
   readonly schemaVersion: 1;
   readonly repository: string;
   readonly state: RunnerControllerStateName;
   readonly lastOutcome: string;
+  readonly lastWake?: RunnerWakeRecord;
 }
 
 export interface RepositoryRunnerStartResult {
@@ -116,6 +147,7 @@ export interface RepositoryRunnerStatus {
   readonly repository?: string;
   readonly state: RunnerControllerStateName | "not-installed";
   readonly lastOutcome: string;
+  readonly lastWake?: RunnerWakeRecord;
 }
 
 const spawnForegroundChild = (
@@ -186,6 +218,20 @@ const defaultAdapters: RunnerControlAdapters = {
   arch: () => process.arch,
   environment: () => process.env,
   currentPid: () => process.pid,
+  processIdentity: async (pid) => {
+    try {
+      const result = await execFileAsync("ps", [
+        "-p",
+        String(pid),
+        "-o",
+        "lstart=",
+      ]);
+      const identity = result.stdout.trim().replace(/\s+/g, " ");
+      return identity.length > 0 ? identity : undefined;
+    } catch {
+      return undefined;
+    }
+  },
   exists: async (path) => {
     try {
       await access(path, constants.F_OK);
@@ -193,6 +239,14 @@ const defaultAdapters: RunnerControlAdapters = {
     } catch {
       return false;
     }
+  },
+  inspectDirectory: async (path) => {
+    const [stat, resolved] = await Promise.all([lstat(path), realpath(path)]);
+    return {
+      realPath: resolved,
+      directory: stat.isDirectory(),
+      symbolicLink: stat.isSymbolicLink(),
+    };
   },
   readText: (path) => readFile(path, "utf8"),
   writeText: (path, content) => writeFile(path, content, { mode: 0o600 }),
@@ -236,6 +290,8 @@ const defaultAdapters: RunnerControlAdapters = {
   onShutdown: registerRunnerShutdown,
   pause: (milliseconds) =>
     new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  now: () => new Date(),
+  report: (message) => console.log(message),
 };
 
 const readJson = async <T>(
@@ -324,6 +380,21 @@ const requireRunnerContext = async (
       `No repository runner is installed at ${runnerDir}. Run \`shipyard runner install\` first.`,
     );
   }
+  if (adapters.inspectDirectory) {
+    const runnerIdentity = await adapters
+      .inspectDirectory(runnerDir)
+      .catch((error) => {
+        throw controlFailure(
+          "Inspecting the protected runner directory",
+          error,
+        );
+      });
+    if (!runnerIdentity.directory || runnerIdentity.symbolicLink) {
+      throw new RunnerControlError(
+        `The protected repository runner path must be a real directory: ${runnerDir}`,
+      );
+    }
+  }
 
   const metadata = await readJson<RunnerInstallMetadata>(
     join(runnerDir, RUNNER_INSTALL_METADATA),
@@ -360,7 +431,11 @@ const requireRunnerContext = async (
     .catch((error) => {
       throw controlFailure("Resolving repository credentials", error);
     });
-  const runtimeEnvironment = { ...hostEnvironment, ...resolvedEnvironment };
+  const runtimeEnvironment = {
+    ...hostEnvironment,
+    ...resolvedEnvironment,
+    [REPOSITORY_RUNNER_OWNER_ENV]: metadata.repository,
+  };
   const remote = await runCommand(
     adapters,
     "Reading the origin remote",
@@ -490,6 +565,25 @@ const stopChildBounded = async (
   if (!stopped) child.terminate("SIGKILL");
 };
 
+const lockOwnsProcess = async (
+  lock: RunnerControllerLock | undefined,
+  adapters: Pick<RunnerControlAdapters, "isProcessRunning" | "processIdentity">,
+): Promise<boolean> =>
+  lock !== undefined &&
+  Number.isInteger(lock.pid) &&
+  typeof lock.processStartedAt === "string" &&
+  lock.processStartedAt.length > 0 &&
+  adapters.isProcessRunning(lock.pid) &&
+  (await adapters.processIdentity(lock.pid)) === lock.processStartedAt;
+
+const bestEffort = async (operation: () => Promise<unknown>): Promise<void> => {
+  try {
+    await operation();
+  } catch {
+    // Cleanup and diagnostic persistence must not hide the triggering failure.
+  }
+};
+
 export const startRepositoryRunner = async (
   options: { readonly repoDir: string },
   adapters: RunnerControlAdapters = defaultAdapters,
@@ -500,11 +594,13 @@ export const startRepositoryRunner = async (
     exists: adapters.exists,
     readText: adapters.readText,
     makeDirectory: adapters.makeDirectory,
+    inspectDirectory: adapters.inspectDirectory,
     remove: adapters.removeTree,
     run: adapters.run,
     isProcessRunning: adapters.isProcessRunning,
     signalProcess: adapters.signalProcess,
     pause: adapters.pause,
+    processIdentity: adapters.processIdentity,
   };
   await recoverRepositoryRunner(
     {
@@ -526,13 +622,9 @@ export const startRepositoryRunner = async (
   const statePath = join(context.runnerDir, CONTROLLER_STATE);
   const failurePath = join(context.runnerDir, LAST_FAILURE);
   const existingLock = await readJson<RunnerControllerLock>(lockPath, adapters);
-  if (
-    existingLock &&
-    Number.isInteger(existingLock.pid) &&
-    adapters.isProcessRunning(existingLock.pid)
-  ) {
+  if (await lockOwnsProcess(existingLock, adapters)) {
     throw new RunnerControlError(
-      `The repository runner is already running with process ${existingLock.pid}.`,
+      `The repository runner is already running with process ${existingLock!.pid}.`,
     );
   }
   if (existingLock) {
@@ -541,10 +633,18 @@ export const startRepositoryRunner = async (
     );
   }
 
+  const controllerPid = adapters.currentPid();
+  const processStartedAt = await adapters.processIdentity(controllerPid);
+  if (!processStartedAt) {
+    throw new RunnerControlError(
+      "Could not establish the repository runner controller process identity.",
+    );
+  }
   const lock: RunnerControllerLock = {
     schemaVersion: 1,
-    pid: adapters.currentPid(),
+    pid: controllerPid,
     repository: context.repository,
+    processStartedAt,
   };
   try {
     await adapters.writeExclusive(lockPath, `${JSON.stringify(lock)}\n`);
@@ -555,33 +655,48 @@ export const startRepositoryRunner = async (
   let listenerChild: RepositoryRunnerChild | undefined;
   let shipyardChild: RepositoryRunnerChild | undefined;
   let stopping = false;
+  let lastWake: RunnerWakeRecord | undefined;
   let shutdownPromise: Promise<void> | undefined;
-  const saveState = (state: RunnerControllerStateName, lastOutcome: string) =>
-    writeJson(
+  const saveState = async (
+    state: RunnerControllerStateName,
+    lastOutcome: string,
+  ): Promise<void> => {
+    adapters.report(`[repository runner] ${state}: ${lastOutcome}`);
+    await writeJson(
       statePath,
       {
         schemaVersion: 1,
         repository: context.repository,
         state,
         lastOutcome,
+        ...(lastWake ? { lastWake } : {}),
       } satisfies RunnerControllerState,
       adapters,
     );
+  };
+  const removeTransientWork = () =>
+    adapters.removeTree(join(context.runnerDir, RUNNER_WORK_DIR));
   const shutdown = (): Promise<void> => {
     if (shutdownPromise) return shutdownPromise;
     shutdownPromise = (async () => {
       stopping = true;
-      await saveState("stopping", "Stopping repository runner");
-      if (listenerChild) {
-        await stopChildBounded(listenerChild);
+      try {
+        const children = [listenerChild, shipyardChild].filter(
+          (child): child is RepositoryRunnerChild => child !== undefined,
+        );
         listenerChild = undefined;
-      }
-      if (shipyardChild) {
-        await stopChildBounded(shipyardChild);
         shipyardChild = undefined;
+        await Promise.all(
+          children.map((child) => bestEffort(() => stopChildBounded(child))),
+        );
+        await bestEffort(() =>
+          saveState("stopping", "Stopping repository runner"),
+        );
+        await bestEffort(removeTransientWork);
+        await bestEffort(() => saveState("stopped", "Stopped by signal"));
+      } finally {
+        await bestEffort(() => adapters.remove(lockPath));
       }
-      await saveState("stopped", "Stopped by signal");
-      await adapters.remove(lockPath);
     })();
     return shutdownPromise;
   };
@@ -598,20 +713,19 @@ export const startRepositoryRunner = async (
         "Checking for eligible GitHub issues",
         "gh",
         [
-          "issue",
-          "list",
-          "--repo",
-          context.repository,
-          "--state",
-          "open",
-          "--label",
-          ACTIVATION_LABEL,
-          "--limit",
-          "100",
-          "--json",
-          "number",
+          "api",
+          "--method",
+          "GET",
+          "--paginate",
+          `repos/${context.repository}/issues`,
+          "-f",
+          "state=open",
+          "-f",
+          `labels=${ACTIVATION_LABEL}`,
+          "-f",
+          "per_page=100",
           "--jq",
-          ".[].number",
+          ".[] | select(.pull_request == null) | .number",
         ],
         { cwd: options.repoDir, env: context.runtimeEnvironment },
       );
@@ -649,7 +763,7 @@ export const startRepositoryRunner = async (
               schemaVersion: 1,
               repository: context.repository,
               message: failure.message,
-              recordedAt: new Date().toISOString(),
+              recordedAt: adapters.now().toISOString(),
             },
             adapters,
           );
@@ -664,7 +778,7 @@ export const startRepositoryRunner = async (
         }
         if (sameIssueNumbers(issueNumbers, nextIssueNumbers)) {
           await saveState(
-            "idle",
+            "stalled",
             "Shipyard made no progress; eligible issues are unchanged",
           );
           break;
@@ -675,6 +789,10 @@ export const startRepositoryRunner = async (
       return workFound;
     };
 
+    lastWake = {
+      source: "startup",
+      recordedAt: adapters.now().toISOString(),
+    };
     initialWorkFound = await processEligibleWork();
     if (stopping) {
       await shutdownPromise;
@@ -708,6 +826,10 @@ export const startRepositoryRunner = async (
         break;
       }
       if (stopping) break;
+      lastWake = {
+        source: "signal",
+        recordedAt: adapters.now().toISOString(),
+      };
       const workFound = await processEligibleWork();
       if (!workFound && !stopping) {
         await saveState("idle", "Wake-up delivered; no eligible issues");
@@ -734,7 +856,7 @@ export const startRepositoryRunner = async (
           schemaVersion: 1,
           repository: context.repository,
           message: failure.message,
-          recordedAt: new Date().toISOString(),
+          recordedAt: adapters.now().toISOString(),
         },
         adapters,
       );
@@ -743,12 +865,29 @@ export const startRepositoryRunner = async (
     }
     await saveState("stopped", "Repository runner listener exited");
     return { repository: context.repository, initialWorkFound };
+  } catch (error) {
+    const failure = controlFailure("Repository runner controller", error);
+    await bestEffort(() =>
+      writeJson(
+        failurePath,
+        {
+          schemaVersion: 1,
+          repository: context.repository,
+          message: failure.message,
+          recordedAt: adapters.now().toISOString(),
+        },
+        adapters,
+      ),
+    );
+    await bestEffort(() => saveState("stopped", failure.message));
+    throw failure;
   } finally {
     wakeSubscription.close();
     unregisterShutdown();
-    if (listenerChild) await stopChildBounded(listenerChild);
-    if (shipyardChild) await stopChildBounded(shipyardChild);
-    await adapters.remove(lockPath);
+    if (listenerChild) await bestEffort(() => stopChildBounded(listenerChild!));
+    if (shipyardChild) await bestEffort(() => stopChildBounded(shipyardChild!));
+    await bestEffort(removeTransientWork);
+    await bestEffort(() => adapters.remove(lockPath));
   }
 };
 
@@ -779,10 +918,7 @@ export const getRepositoryRunnerStatus = async (
     join(runnerDir, CONTROLLER_STATE),
     adapters,
   );
-  const running =
-    lock !== undefined &&
-    Number.isInteger(lock.pid) &&
-    adapters.isProcessRunning(lock.pid);
+  const running = await lockOwnsProcess(lock, adapters);
   let github: RepositoryRunnerStatus["github"] = "unreachable";
   try {
     const resolvedEnvironment = await adapters.resolveEnvironment(
@@ -814,6 +950,7 @@ export const getRepositoryRunnerStatus = async (
     repository: metadata.repository,
     state: state?.state ?? (running ? "idle" : "stopped"),
     lastOutcome: state?.lastOutcome ?? "No repository runner outcome recorded",
+    ...(state?.lastWake ? { lastWake: state.lastWake } : {}),
   };
 };
 
@@ -831,9 +968,9 @@ export const stopRepositoryRunner = async (
   if (!lock || !Number.isInteger(lock.pid)) {
     throw new RunnerControlError("The repository runner is not running.");
   }
-  if (!adapters.isProcessRunning(lock.pid)) {
+  if (!(await lockOwnsProcess(lock, adapters))) {
     throw new RunnerControlError(
-      `The repository runner process ${lock.pid} is no longer running; recovery is required.`,
+      `The repository runner process ${lock.pid} no longer matches the recorded controller identity; recovery is required.`,
     );
   }
   try {

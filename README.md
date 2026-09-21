@@ -145,10 +145,11 @@ offline; the next start automatically re-registers with the current
 administrative `gh` login. A Mac rename does not rename an existing
 registration—remove and reinstall it explicitly.
 
-GitHub does not charge Actions minutes for self-hosted runner execution. Model
-costs apply only when a preflight finds eligible issues and starts Shipyard;
-the host owner still pays for hardware, electricity, network, Docker, and model
-usage. GitHub warns that self-hosted runners on public repositories can be
+GitHub does not charge Actions minutes for the self-hosted wake job. The brief
+exact-case gate runs on `ubuntu-latest` and may consume hosted Actions minutes
+for private repositories. Model costs apply only when a preflight finds eligible
+issues and starts Shipyard; the host owner still pays for hardware, electricity,
+network, Docker, and model usage. GitHub warns that self-hosted runners on public repositories can be
 exposed to untrusted repository activity. Use this deployment only where label
 authority, workflows, collaborators, and agent credentials have an acceptable
 trust boundary. See GitHub's

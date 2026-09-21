@@ -109,6 +109,7 @@ const makeAdapters = (overrides: Partial<RunnerLifecycleAdapters> = {}) => {
     isProcessRunning: () => false,
     signalProcess: (pid, signal) => signals.push({ pid, signal }),
     pause: async () => undefined,
+    processIdentity: async (pid) => `started-${pid}`,
     ...overrides,
   };
 
@@ -165,6 +166,54 @@ describe("validateExistingRepositoryRunner", () => {
     await expect(
       validateExistingRepositoryRunner(installOptions, base.adapters),
     ).rejects.toThrow("does not carry the shipyard label");
+  });
+
+  it("refuses duplicate shipyard-labelled registrations even when the expected runner exists", async () => {
+    const base = makeAdapters({
+      run: async () => ({
+        stdout:
+          "shipyard-shipyard-test-mac\tonline\tself-hosted,macOS,shipyard\nshipyard-other-mac\toffline\tself-hosted,macOS,shipyard\n",
+        stderr: "",
+      }),
+    });
+
+    await expect(
+      validateExistingRepositoryRunner(installOptions, base.adapters),
+    ).rejects.toThrow("Multiple repository runners carry the shipyard label");
+  });
+
+  it("rejects a symlinked protected sandbox mask", async () => {
+    const base = makeAdapters({
+      inspectDirectory: async (path) => ({
+        realPath:
+          path === maskDir
+            ? "/REPO/.SHIPYARD/RUNNER"
+            : "/repo/.shipyard/runner",
+        directory: true,
+        symbolicLink: path === maskDir,
+      }),
+    });
+
+    await expect(
+      validateExistingRepositoryRunner(installOptions, base.adapters),
+    ).rejects.toThrow("must be a real directory");
+  });
+
+  it("rejects protected directories that alias after macOS case folding", async () => {
+    const base = makeAdapters({
+      inspectDirectory: async (path) => ({
+        realPath:
+          path === maskDir
+            ? "/REPO/.SHIPYARD/RUNNER"
+            : "/repo/.shipyard/runner",
+        directory: true,
+        symbolicLink: false,
+      }),
+    });
+
+    await expect(
+      validateExistingRepositoryRunner(installOptions, base.adapters),
+    ).rejects.toThrow("must be distinct directories");
   });
 });
 
@@ -317,8 +366,54 @@ describe("recoverRepositoryRunner", () => {
     ).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toContain("runner remains stopped");
+    expect((error as Error).message).toContain(
+      "Partial local registration files were removed",
+    );
+    expect((error as Error).message).toContain("orphan registration");
     expect((error as Error).message).not.toContain("secret-repair-token");
+  });
+
+  it("removes only containers with this repository runner owner label during recovery", async () => {
+    const base = makeAdapters();
+    const adapters: RunnerLifecycleAdapters = {
+      ...base.adapters,
+      run: async (command, args, options) => {
+        base.calls.push({ command, args, env: options.env });
+        if (command === "docker" && args[0] === "ps") {
+          return { stdout: "owned-a\nowned-b\n", stderr: "" };
+        }
+        return base.adapters.run(command, args, options);
+      },
+    };
+
+    await recoverRepositoryRunner(
+      {
+        repoDir,
+        runnerDir,
+        maskDir,
+        metadata,
+        runnerEnvironment: { PATH: "/usr/bin:/bin" },
+      },
+      adapters,
+    );
+
+    expect(base.calls).toContainEqual(
+      expect.objectContaining({
+        command: "docker",
+        args: [
+          "ps",
+          "-aq",
+          "--filter",
+          "label=com.snappedly.shipyard.repository-runner-owner=snappedly/shipyard",
+        ],
+      }),
+    );
+    expect(base.calls).toContainEqual(
+      expect.objectContaining({
+        command: "docker",
+        args: ["rm", "-f", "owned-a", "owned-b"],
+      }),
+    );
   });
 });
 
@@ -331,6 +426,7 @@ describe("removeRepositoryRunner", () => {
         schemaVersion: 1,
         pid: 777,
         repository: metadata.repository,
+        processStartedAt: "started-777",
       }),
     );
     let running = true;
@@ -408,5 +504,24 @@ describe("removeRepositoryRunner", () => {
     expect(base.files.get(join(configDir, ".env"))).toBe(
       "GH_TOKEN=runtime-token\n",
     );
+  });
+
+  it("force-removes an incomplete installation without trusting invalid metadata", async () => {
+    const base = makeAdapters();
+    base.files.set(metadataPath, "not-json");
+
+    const result = await removeRepositoryRunner(
+      { repoDir, force: true },
+      base.adapters,
+    );
+
+    expect(result).toEqual({
+      removed: true,
+      forced: true,
+      manualCleanup:
+        "Check GitHub Settings > Actions > Runners and manually remove any orphan repository runner registration.",
+    });
+    expect(base.directories.has(runnerDir)).toBe(false);
+    expect(base.files.has(join(configDir, ".env"))).toBe(true);
   });
 });

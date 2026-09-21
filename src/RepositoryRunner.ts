@@ -4,6 +4,8 @@ import {
   access,
   chmod,
   mkdir,
+  lstat,
+  realpath,
   readFile,
   rm,
   writeFile,
@@ -18,7 +20,11 @@ import {
   RUNNER_DIR,
   RUNNER_SANDBOX_MASK_DIR,
 } from "./runtimeNames.js";
-import { repositoryRunnerEnvironment } from "./runnerSecurity.js";
+import {
+  assertProtectedDirectoryIdentities,
+  repositoryRunnerEnvironment,
+  type ProtectedDirectoryIdentity,
+} from "./runnerSecurity.js";
 import {
   assertRepositoryRunnerWorkflowCanBeInstalled,
   installRepositoryRunnerWakeFiles,
@@ -75,6 +81,9 @@ export interface RunnerInstallAdapters {
   readonly remove: (path: string) => Promise<void>;
   readonly chmod: (path: string, mode: number) => Promise<void>;
   readonly commandExists: (command: string) => Promise<boolean>;
+  readonly inspectDirectory?: (
+    path: string,
+  ) => Promise<ProtectedDirectoryIdentity>;
   readonly fetchJson: (url: string) => Promise<unknown>;
   readonly fetchBytes: (url: string) => Promise<Uint8Array>;
   readonly run: (
@@ -121,6 +130,14 @@ const defaultAdapters: RunnerInstallAdapters = {
     } catch {
       return false;
     }
+  },
+  inspectDirectory: async (path) => {
+    const [stat, resolved] = await Promise.all([lstat(path), realpath(path)]);
+    return {
+      realPath: resolved,
+      directory: stat.isDirectory(),
+      symbolicLink: stat.isSymbolicLink(),
+    };
   },
   fetchJson: async (url) => {
     const response = await fetch(url, {
@@ -285,9 +302,7 @@ export const installRepositoryRunner = async (
   if (!runnerExists) {
     await requireCommand(adapters, "tar", "extracting the runner archive");
   }
-  if (!options.registrationToken || runnerExists) {
-    await requireCommand(adapters, "gh", "requesting repository runner access");
-  }
+  await requireCommand(adapters, "gh", "checking repository runner uniqueness");
 
   const hostEnv = adapters.environment();
   const gitRemote = await adapters
@@ -303,19 +318,17 @@ export const installRepositoryRunner = async (
   const repoUrl = `https://github.com/${repository}`;
   const runnerName = `shipyard-${normalizeNamePart(identity.repository)}-${normalizeNamePart(adapters.hostname())}`;
 
-  if (!options.registrationToken || runnerExists) {
-    await adapters
-      .run("gh", ["auth", "status", "--hostname", "github.com"], {
-        cwd: options.repoDir,
-        env: hostEnv,
-      })
-      .catch((error) => {
-        throw commandFailure(
-          "GitHub CLI authentication (repository administration is required)",
-          error,
-        );
-      });
-  }
+  await adapters
+    .run("gh", ["auth", "status", "--hostname", "github.com"], {
+      cwd: options.repoDir,
+      env: hostEnv,
+    })
+    .catch((error) => {
+      throw commandFailure(
+        "GitHub CLI authentication (repository administration is required)",
+        error,
+      );
+    });
 
   if (runnerExists) {
     let metadata;
@@ -340,6 +353,13 @@ export const installRepositoryRunner = async (
     await appendRunnerIgnores(join(configDir, ".gitignore"), adapters);
     await adapters.chmod(runnerDir, 0o700);
     await adapters.chmod(maskDir, 0o700);
+    await assertProtectedDirectoryIdentities(
+      runnerDir,
+      maskDir,
+      adapters.inspectDirectory,
+    ).catch((error) => {
+      throw commandFailure("Validating protected runner directories", error);
+    });
     try {
       await installRepositoryRunnerWakeFiles(
         { repoDir: options.repoDir, runnerDir },
@@ -358,30 +378,28 @@ export const installRepositoryRunner = async (
     };
   }
 
-  if (!options.registrationToken) {
-    const existing = await adapters
-      .run(
-        "gh",
-        [
-          "api",
-          "--paginate",
-          `repos/${repository}/actions/runners`,
-          "--jq",
-          `.runners[] | select(any(.labels[]; .name == \"${ACTIVATION_LABEL}\")) | .name`,
-        ],
-        { cwd: options.repoDir, env: hostEnv },
-      )
-      .catch((error) => {
-        throw commandFailure(
-          "Checking existing repository runners (repository administration is required)",
-          error,
-        );
-      });
-    if (existing.stdout.trim().length > 0) {
-      throw new RunnerInstallError(
-        `A repository runner labeled \`${ACTIVATION_LABEL}\` is already registered for ${repository}. Remove it before installing another.`,
+  const existing = await adapters
+    .run(
+      "gh",
+      [
+        "api",
+        "--paginate",
+        `repos/${repository}/actions/runners`,
+        "--jq",
+        `.runners[] | select(any(.labels[]; .name == \"${ACTIVATION_LABEL}\")) | .name`,
+      ],
+      { cwd: options.repoDir, env: hostEnv },
+    )
+    .catch((error) => {
+      throw commandFailure(
+        "Checking existing repository runners (repository administration is required)",
+        error,
       );
-    }
+    });
+  if (existing.stdout.trim().length > 0) {
+    throw new RunnerInstallError(
+      `A repository runner labeled \`${ACTIVATION_LABEL}\` is already registered for ${repository}. Remove it before installing another.`,
+    );
   }
 
   let registrationToken = options.registrationToken;
@@ -441,10 +459,17 @@ export const installRepositoryRunner = async (
   await adapters.makeDirectory(runnerDir).catch((error) => {
     throw commandFailure("Creating the protected runner directory", error);
   });
-  await adapters.chmod(runnerDir, 0o700);
   if (!(await adapters.exists(maskDir))) {
     await adapters.makeDirectory(maskDir);
   }
+  await assertProtectedDirectoryIdentities(
+    runnerDir,
+    maskDir,
+    adapters.inspectDirectory,
+  ).catch((error) => {
+    throw commandFailure("Validating protected runner directories", error);
+  });
+  await adapters.chmod(runnerDir, 0o700);
   await adapters.chmod(maskDir, 0o700);
 
   const archivePath = join(runnerDir, RUNNER_ARCHIVE);
@@ -480,8 +505,17 @@ export const installRepositoryRunner = async (
       { cwd: runnerDir, env: repositoryRunnerEnvironment(hostEnv) },
     );
   } catch {
+    const cleanup = await Promise.allSettled([
+      adapters.remove(runnerDir),
+      adapters.remove(maskDir),
+    ]);
+    const cleanupSucceeded = cleanup.every(
+      (result) => result.status === "fulfilled",
+    );
     throw new RunnerInstallError(
-      `Registering ${runnerName} failed. Runner files were retained at ${runnerDir} for recovery; the one-time token was not stored.`,
+      cleanupSucceeded
+        ? `Registering ${runnerName} failed. Partial local runner files were removed so installation can be retried. Check GitHub Settings > Actions > Runners for an orphan registration; the one-time token was not stored.`
+        : `Registering ${runnerName} failed and partial local runner files could not be fully removed. Remove only ${runnerDir} and ${maskDir}, check GitHub Settings > Actions > Runners for an orphan registration, then retry. The one-time token was not stored.`,
     );
   }
 

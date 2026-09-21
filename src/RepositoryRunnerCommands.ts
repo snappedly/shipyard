@@ -105,6 +105,9 @@ const statusRunnerCommand = Command.make("status", {}, () =>
       Repository: status.repository ?? "unknown",
       State: status.state,
       "Last outcome": status.lastOutcome,
+      "Last wake": status.lastWake
+        ? `${status.lastWake.source} at ${status.lastWake.recordedAt}`
+        : "none recorded",
     });
   }),
 );

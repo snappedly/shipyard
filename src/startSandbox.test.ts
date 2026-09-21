@@ -1,6 +1,6 @@
 import { Duration, Effect, Exit, TestClock, TestContext } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { exec } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -150,6 +150,37 @@ describe("startSandbox", () => {
           sandboxPath: `${SANDBOX_REPO_DIR}/.shipyard/runner`,
           readonly: true,
         });
+      } finally {
+        await rm(hostDir, { recursive: true, force: true });
+      }
+    });
+
+    it("rejects a symlinked runner mask before constructing a bind mount", async () => {
+      const hostDir = await mkdtemp(join(tmpdir(), "shipyard-runner-mask-"));
+      const runnerDir = join(hostDir, ".shipyard", "runner");
+      const maskDir = join(hostDir, ".shipyard", "runner-sandbox-mask");
+      await mkdir(runnerDir, { recursive: true });
+      await symlink(runnerDir, maskDir);
+      const provider = createBindMountSandboxProvider({
+        name: "test",
+        create: async () => {
+          throw new Error("must not create sandbox");
+        },
+      });
+
+      try {
+        await expect(
+          Effect.runPromise(
+            startSandbox({
+              provider,
+              hostRepoDir: hostDir,
+              env: {},
+              worktreeOrRepoPath: hostDir,
+              gitMounts: [],
+              repoDir: SANDBOX_REPO_DIR,
+            }),
+          ),
+        ).rejects.toThrow("must be a real directory");
       } finally {
         await rm(hostDir, { recursive: true, force: true });
       }
