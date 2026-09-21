@@ -15,6 +15,7 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+      statuses: write
     outputs:
       mode: ${{ steps.changesets.outputs.mode }}
     steps:
@@ -31,6 +32,20 @@ jobs:
       - name: Select Changesets mode
         id: changesets
         uses: changesets/action/select-mode@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+      - name: Mark release candidate CI as pending
+        if: steps.changesets.outputs.mode == 'publish'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/statuses/${CANDIDATE_SHA}" \
+            -f state=pending \
+            -f context=ci \
+            -f description="Release candidate CI is running" \
+            -f target_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
 
   version:
     name: Version and merge release pull request
@@ -188,12 +203,6 @@ jobs:
           PACKAGE_FILE=$(npm pack --silent | tail -n 1)
           mv "$PACKAGE_FILE" shipyard.tgz
           sha256sum shipyard.tgz > shipyard.tgz.sha256
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 20.18.1
-          package-manager-cache: false
-      - name: Smoke exact package at minimum Node version
-        run: node scripts/smoke-packed-package.mjs shipyard.tgz
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: npm-package-${{ github.sha }}
@@ -203,12 +212,35 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  smoke-package:
+    name: Smoke exact package
+    if: needs.select-mode.outputs.mode == 'publish'
+    needs:
+      - select-mode
+      - build-package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: npm-package-${{ github.sha }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20.18.1
+          package-manager-cache: false
+      - name: Smoke exact package at minimum Node version
+        run: node scripts/smoke-packed-package.mjs shipyard.tgz
+
   record-release-ci-status:
     name: Record release candidate CI status
     if: always() && needs.select-mode.result == 'success' && needs.select-mode.outputs.mode == 'publish'
     needs:
       - select-mode
       - build-package
+      - smoke-package
+      - publish
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -217,21 +249,31 @@ jobs:
       # The version pull request is merged with GITHUB_TOKEN, so its push
       # event does not start ci.yml. Record the exact-candidate result as the
       # required commit status so the merged release commit has the same
-      # visible CI signal as a normal main push.
-      - name: Publish exact candidate CI status
+      # visible CI signal as a normal main push. The pending status is posted
+      # by select-mode before the candidate build starts; publish the final
+      # result only after the package has also been published.
+      - name: Publish final exact candidate CI status
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_SHA: ${{ github.sha }}
           BUILD_RESULT: ${{ needs.build-package.result }}
+          SMOKE_RESULT: ${{ needs.smoke-package.result }}
+          PUBLISH_RESULT: ${{ needs.publish.result }}
           RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
-          if [[ "$BUILD_RESULT" == "success" ]]; then
+          if [[ "$BUILD_RESULT" == "success" && "$SMOKE_RESULT" == "success" && "$PUBLISH_RESULT" == "success" ]]; then
             STATE=success
-            DESCRIPTION="Release candidate CI passed"
+            DESCRIPTION="Build, smoke checks, and publication passed"
           else
             STATE=failure
-            DESCRIPTION="Release candidate CI failed"
+            if [[ "$BUILD_RESULT" != "success" ]]; then
+              DESCRIPTION="Release candidate build failed"
+            elif [[ "$SMOKE_RESULT" != "success" ]]; then
+              DESCRIPTION="Release candidate smoke checks failed"
+            else
+              DESCRIPTION="Release candidate publication failed"
+            fi
           fi
 
           gh api --method POST \
@@ -247,6 +289,7 @@ jobs:
     needs:
       - select-mode
       - build-package
+      - smoke-package
     runs-on: ubuntu-latest
     timeout-minutes: 15
     concurrency:
