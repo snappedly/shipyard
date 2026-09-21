@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.3
+
+### Patch Changes
+
+- a1dcb11: Allow blank declared environment placeholders to fall back to host process environment variables, so GitHub CLI authentication can be forwarded with `GH_TOKEN="$(gh auth token)" npx shipyard run` without storing the token.
+
 ## 0.4.2
 
 ### Patch Changes
