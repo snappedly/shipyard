@@ -214,12 +214,14 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
     await initRepo(hostDir);
 
-    try {
-      await runCli("init --agent claude-code --template nonexistent", hostDir);
-      expect.fail("Expected command to fail");
-    } catch (err: unknown) {
-      const { stdout, stderr } = err as { stdout: string; stderr: string };
-      const output = stdout + stderr;
+    const result = await runCliInProcessAt(
+      ["init", "--agent", "claude-code", "--template", "nonexistent"],
+      hostDir,
+    );
+
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
+      const output = Cause.pretty(result.cause);
       expect(output).toContain("nonexistent");
       expect(output).toContain("blank");
       expect(output).toContain("simple-loop");

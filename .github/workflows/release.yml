@@ -19,6 +19,19 @@ jobs:
     outputs:
       mode: ${{ steps.changesets.outputs.mode }}
     steps:
+      - name: Mark release CI as pending
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/statuses/${CANDIDATE_SHA}" \
+            -f state=pending \
+            -f context=ci \
+            -f description="Release CI is running" \
+            -f target_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -32,20 +45,6 @@ jobs:
       - name: Select Changesets mode
         id: changesets
         uses: changesets/action/select-mode@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
-      - name: Mark release candidate CI as pending
-        if: steps.changesets.outputs.mode == 'publish'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CANDIDATE_SHA: ${{ github.sha }}
-          RUN_ID: ${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          gh api --method POST \
-            "repos/${GITHUB_REPOSITORY}/statuses/${CANDIDATE_SHA}" \
-            -f state=pending \
-            -f context=ci \
-            -f description="Release candidate CI is running" \
-            -f target_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
 
   version:
     name: Version and merge release pull request
@@ -240,9 +239,10 @@ jobs:
 
   record-release-ci-status:
     name: Record release candidate CI status
-    if: always() && needs.select-mode.result == 'success' && needs.select-mode.outputs.mode == 'publish'
+    if: always()
     needs:
       - select-mode
+      - version
       - build-package
       - smoke-package
       - publish
@@ -255,21 +255,38 @@ jobs:
       # event does not start ci.yml. Record the exact-candidate result as the
       # required commit status so the merged release commit has the same
       # visible CI signal as a normal main push. The pending status is posted
-      # by select-mode before the candidate build starts; publish the final
-      # result only after the package has also been published.
+      # before the repository check starts; this finalizer also runs when an
+      # earlier job fails so the status cannot disappear without a result.
       - name: Publish final exact candidate CI status
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_SHA: ${{ github.sha }}
+          SELECT_RESULT: ${{ needs.select-mode.result }}
+          MODE: ${{ needs.select-mode.outputs.mode }}
+          VERSION_RESULT: ${{ needs.version.result }}
           BUILD_RESULT: ${{ needs.build-package.result }}
           SMOKE_RESULT: ${{ needs.smoke-package.result }}
           PUBLISH_RESULT: ${{ needs.publish.result }}
           RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
-          if [[ "$BUILD_RESULT" == "success" && "$SMOKE_RESULT" == "success" && "$PUBLISH_RESULT" == "success" ]]; then
+          if [[ "$SELECT_RESULT" != "success" ]]; then
+            STATE=failure
+            DESCRIPTION="Release mode selection or repository check failed"
+          elif [[ "$MODE" == "version" ]]; then
+            if [[ "$VERSION_RESULT" == "success" ]]; then
+              STATE=success
+              DESCRIPTION="Version pull request CI and merge passed"
+            else
+              STATE=failure
+              DESCRIPTION="Version pull request workflow failed"
+            fi
+          elif [[ "$MODE" == "publish" && "$BUILD_RESULT" == "success" && "$SMOKE_RESULT" == "success" && "$PUBLISH_RESULT" == "success" ]]; then
             STATE=success
             DESCRIPTION="Build, smoke checks, and publication passed"
+          elif [[ "$MODE" != "publish" ]]; then
+            STATE=success
+            DESCRIPTION="Repository checks passed; no release required"
           else
             STATE=failure
             if [[ "$BUILD_RESULT" != "success" ]]; then
