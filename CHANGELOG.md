@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.2
+
+### Patch Changes
+
+- c6a4446: Ask Codex users to choose ChatGPT sign-in or API-key authentication during interactive init.
+
 ## 0.4.1
 
 ### Patch Changes
