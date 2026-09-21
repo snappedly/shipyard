@@ -50,13 +50,13 @@ repository check:
    request to merge, and dispatches a release run for the resulting `main`
    commit. No manual review or merge of the generated version pull request is
    required.
-3. The release run identifies the unpublished version and marks the exact
-   `main` candidate's `ci` status as pending before building it. The Actions
-   run exposes separate **Build npm package**, **Smoke exact package**, and
-   **Publish npm package** checks, each with its own pending/success/failure
-   state.
-4. After publication completes through the `production` environment, the
-   workflow records the final aggregate `ci` status for the candidate.
+3. The release run marks the exact `main` revision's `ci` status as pending
+   before the repository check starts. The Actions run exposes separate
+   **Build npm package**, **Smoke exact package**, and **Publish npm package**
+   checks, each with its own pending/success/failure state.
+4. An always-running finalizer records the aggregate `ci` result, including
+   failures during repository checks, versioning, build, smoke checks, or
+   publication.
 
 The publish job rejects a candidate superseded by a newer `main`, verifies the
 artifact checksum and version, publishes that tarball with public access and
