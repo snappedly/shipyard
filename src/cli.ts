@@ -37,7 +37,12 @@ import {
   type CodexAuthMode,
 } from "./CodexAuth.js";
 import { requireCanonicalConfigDir } from "./runtimeConfig.js";
-import { CONFIG_DIR, CLI_NAME, PRODUCT_NAME } from "./runtimeNames.js";
+import {
+  ACTIVATION_LABEL,
+  CONFIG_DIR,
+  CLI_NAME,
+  PRODUCT_NAME,
+} from "./runtimeNames.js";
 import { VERSION } from "./version.js";
 
 // --- Shared options ---
@@ -279,16 +284,6 @@ const issueTrackerOption = Options.text("issue-tracker").pipe(
 // Tri-state booleans (Some(true) / Some(false) / None) so we can tell "user
 // chose false" from "user didn't pass the flag at all" — only the latter
 // triggers the interactive prompt.
-const createLabelOption = Options.choice("create-label", [
-  "true",
-  "false",
-]).pipe(
-  Options.withDescription(
-    `Whether to create the "${PRODUCT_NAME}" GitHub label (only meaningful with --issue-tracker github-issues)`,
-  ),
-  Options.optional,
-);
-
 const buildImageOption = Options.choice("build-image", ["true", "false"]).pipe(
   Options.withDescription("Whether to build the sandbox image now"),
   Options.optional,
@@ -323,7 +318,6 @@ const initCommand = Command.make(
     model: initModelOption,
     sandbox: sandboxOption,
     issueTracker: issueTrackerOption,
-    createLabel: createLabelOption,
     buildImage: buildImageOption,
     installTemplateDeps: installTemplateDepsOption,
   },
@@ -335,7 +329,6 @@ const initCommand = Command.make(
     model: modelFlag,
     sandbox: sandboxFlag,
     issueTracker: issueTrackerFlag,
-    createLabel: createLabelFlag,
     buildImage: buildImageFlag,
     installTemplateDeps: installTemplateDepsFlag,
   }) =>
@@ -386,7 +379,6 @@ const initCommand = Command.make(
         }
       }
 
-      const createLabelChoice = choiceToTriBool(createLabelFlag);
       const buildImageChoice = choiceToTriBool(buildImageFlag);
       const installTemplateDepsChoice = choiceToTriBool(
         installTemplateDepsFlag,
@@ -608,27 +600,18 @@ const initCommand = Command.make(
         selectedTemplate = selected as string;
       }
 
-      // Offer to create the "Shipyard" label on the repo (skip for non-GitHub issue trackers).
-      // CLI flag > interactive confirm. The flag is only meaningful for the github-issues tracker.
-      let shouldCreateLabel = false;
+      // The GitHub Issues integration has one fixed activation-label contract.
+      // Label creation remains best-effort so init can still scaffold when gh
+      // is unavailable or the current identity cannot manage labels.
       if (selectedIssueTracker.name === "github-issues") {
-        shouldCreateLabel = yield* resolveConfirmFlag({
-          choice: createLabelChoice,
-          flag: "--create-label",
-          promptMessage: `Create a "${PRODUCT_NAME}" GitHub label? (Templates filter issues by this label)`,
-          cancelMessage: "Label selection cancelled.",
-        });
-
-        if (shouldCreateLabel) {
-          yield* Effect.try({
-            try: () =>
-              execSync(
-                `gh label create "${PRODUCT_NAME}" --description "Issues for ${PRODUCT_NAME} to work on" --color "F9A825" 2>/dev/null`,
-                { cwd, stdio: "ignore" },
-              ),
-            catch: () => undefined,
-          }).pipe(Effect.ignore);
-        }
+        yield* Effect.try({
+          try: () =>
+            execSync(
+              `gh label create "${ACTIVATION_LABEL}" --description "Issues for ${PRODUCT_NAME} to work on" --color "F9A825" --force 2>/dev/null`,
+              { cwd, stdio: "ignore" },
+            ),
+          catch: () => undefined,
+        }).pipe(Effect.ignore);
       }
 
       const scaffoldResult = yield* d.spinner(
@@ -637,7 +620,6 @@ const initCommand = Command.make(
           agent: selectedAgent,
           model: selectedModel,
           templateName: selectedTemplate,
-          createLabel: shouldCreateLabel,
           issueTracker: selectedIssueTracker,
           sandboxProvider: selectedSandboxProvider,
           codexAuth: selectedCodexAuth,

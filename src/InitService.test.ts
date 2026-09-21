@@ -779,56 +779,36 @@ describe("InitService scaffold", () => {
     expect(mainTs).not.toMatch(/gpt-5\.6/);
   });
 
-  // --- createLabel option ---
-
-  it("simple-loop prompt.md retains --label Shipyard when createLabel is true", async () => {
-    const dir = await makeDir();
-    await runScaffold(dir, { templateName: "simple-loop", createLabel: true });
-
-    const prompt = await readFile(join(dir, ".shipyard", "prompt.md"), "utf-8");
-    expect(prompt).toContain("--label Shipyard");
-  });
-
-  it("simple-loop prompt.md strips --label Shipyard when createLabel is false", async () => {
-    const dir = await makeDir();
-    await runScaffold(dir, { templateName: "simple-loop", createLabel: false });
-
-    const prompt = await readFile(join(dir, ".shipyard", "prompt.md"), "utf-8");
-    expect(prompt).not.toContain("--label Shipyard");
-    // The gh issue list command should still be valid
-    expect(prompt).toContain("gh issue list");
-    // No double spaces in gh commands from removal
-    expect(prompt).not.toMatch(/gh issue list {2}/);
-  });
-
-  it("parallel-planner plan-prompt.md strips --label Shipyard when createLabel is false", async () => {
-    const dir = await makeDir();
-    await runScaffold(dir, {
-      templateName: "parallel-planner",
-      createLabel: false,
-    });
-
-    const prompt = await readFile(
-      join(dir, ".shipyard", "plan-prompt.md"),
-      "utf-8",
-    );
-    expect(prompt).not.toContain("--label Shipyard");
-    expect(prompt).toContain("gh issue list");
-  });
-
-  it("sequential-reviewer implement-prompt.md strips --label Shipyard when createLabel is false", async () => {
-    const dir = await makeDir();
-    await runScaffold(dir, {
+  it.each([
+    { templateName: "blank", promptFilename: "prompt.md" },
+    { templateName: "simple-loop", promptFilename: "prompt.md" },
+    {
       templateName: "sequential-reviewer",
-      createLabel: false,
-    });
+      promptFilename: "implement-prompt.md",
+    },
+    { templateName: "parallel-planner", promptFilename: "plan-prompt.md" },
+    {
+      templateName: "parallel-planner-with-review",
+      promptFilename: "plan-prompt.md",
+    },
+  ])(
+    "$templateName selects only open issues with the lowercase shipyard label",
+    async ({ templateName, promptFilename }) => {
+      const dir = await makeDir();
+      await runScaffold(dir, { templateName });
 
-    const prompt = await readFile(
-      join(dir, ".shipyard", "implement-prompt.md"),
-      "utf-8",
-    );
-    expect(prompt).not.toContain("--label Shipyard");
-    expect(prompt).toContain("gh issue list");
+      const prompt = await readFile(
+        join(dir, ".shipyard", promptFilename),
+        "utf-8",
+      );
+      expect(prompt).toContain("gh issue list --state open --label shipyard");
+      expect(prompt).not.toContain("--label Shipyard");
+    },
+  );
+
+  it("uses the lowercase shipyard label in the skeleton prompt example", () => {
+    expect(SKELETON_PROMPT).toContain("gh issue list --label shipyard");
+    expect(SKELETON_PROMPT).not.toContain("--label Shipyard");
   });
 
   it("scaffolded prompts that lack a runtime TASK_ID do not contain {{TASK_ID}}", async () => {
@@ -849,14 +829,6 @@ describe("InitService scaffold", () => {
       const prompt = await readFile(join(dir, ".shipyard", file), "utf-8");
       expect(prompt, `${template}/${file}`).not.toContain("{{TASK_ID}}");
     }
-  });
-
-  it("createLabel defaults to true (label retained when not specified)", async () => {
-    const dir = await makeDir();
-    await runScaffold(dir, { templateName: "simple-loop" });
-
-    const prompt = await readFile(join(dir, ".shipyard", "prompt.md"), "utf-8");
-    expect(prompt).toContain("--label Shipyard");
   });
 
   it("unknown template name throws a clear error", async () => {
@@ -1234,6 +1206,12 @@ describe("InitService scaffold", () => {
       expect(manager!.templateArgs.LIST_TASKS_COMMAND).toContain(
         "gh issue list",
       );
+      expect(manager!.templateArgs.LIST_TASKS_COMMAND).toContain(
+        "--state open --label shipyard",
+      );
+      expect(manager!.templateArgs.LIST_TASKS_COMMAND).not.toContain(
+        "--label Shipyard",
+      );
       expect(manager!.templateArgs.LIST_TASKS_COMMAND).toContain("labels");
       expect(manager!.templateArgs.LIST_TASKS_COMMAND).toContain("comments");
       expect(manager!.templateArgs.LIST_TASKS_COMMAND).toContain("--limit 100");
@@ -1270,37 +1248,6 @@ describe("InitService scaffold", () => {
       expect(prompt).toContain("gh issue close");
       expect(prompt).not.toContain("{{LIST_TASKS_COMMAND}}");
       expect(prompt).not.toContain("{{CLOSE_TASK_COMMAND}}");
-    });
-
-    it("simple-loop with github-issues retains --label Shipyard when createLabel is true", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, {
-        templateName: "simple-loop",
-        issueTracker: getIssueTracker("github-issues"),
-        createLabel: true,
-      });
-
-      const prompt = await readFile(
-        join(dir, ".shipyard", "prompt.md"),
-        "utf-8",
-      );
-      expect(prompt).toContain("--label Shipyard");
-    });
-
-    it("simple-loop with github-issues strips --label Shipyard when createLabel is false", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, {
-        templateName: "simple-loop",
-        issueTracker: getIssueTracker("github-issues"),
-        createLabel: false,
-      });
-
-      const prompt = await readFile(
-        join(dir, ".shipyard", "prompt.md"),
-        "utf-8",
-      );
-      expect(prompt).not.toContain("--label Shipyard");
-      expect(prompt).toContain("gh issue list");
     });
 
     it("scaffold without issueTracker defaults to github-issues", async () => {

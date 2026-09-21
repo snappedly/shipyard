@@ -2,6 +2,7 @@
 export const PRODUCT_NAME = "Shipyard";
 export const CLI_NAME = "shipyard";
 export const RUNTIME_NAMESPACE = "shipyard";
+export const ACTIVATION_LABEL = "shipyard";
 
 export const CONFIG_DIR = ".shipyard";
 export const LOGS_DIR = "logs";

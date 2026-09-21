@@ -6,6 +6,7 @@ import { SANDBOX_REPO_DIR } from "./SandboxFactory.js";
 import type { CodexAuthMode } from "./CodexAuth.js";
 import { assertConfigDirAvailable } from "./runtimeConfig.js";
 import {
+  ACTIVATION_LABEL,
   CONFIG_DIR,
   PRODUCT_NAME,
   CLI_NAME,
@@ -341,7 +342,7 @@ const ISSUE_TRACKER_REGISTRY: IssueTrackerEntry[] = [
     name: "github-issues",
     label: "GitHub Issues",
     templateArgs: {
-      LIST_TASKS_COMMAND: `gh issue list --state open --label ${PRODUCT_NAME} --limit 100 --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'`,
+      LIST_TASKS_COMMAND: `gh issue list --state open --label ${ACTIVATION_LABEL} --limit 100 --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'`,
       VIEW_TASK_COMMAND: "gh issue view <ID>",
       CLOSE_TASK_COMMAND: `gh issue close <ID> --comment "Completed by ${PRODUCT_NAME}"`,
       ISSUE_TRACKER_TOOLS: GITHUB_CLI_TOOLS,
@@ -626,42 +627,6 @@ const rewriteMainTs = (
       .pipe(Effect.mapError((e) => new Error(e.message)));
   });
 
-/**
- * When the user opted out of the Shipyard label, strip the corresponding label
- * from all `.md` files in the scaffolded config directory so that `gh issue list`
- * commands work without a label filter.
- */
-const rewritePromptFiles = (
-  configDir: string,
-): Effect.Effect<void, Error, FileSystem.FileSystem> =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const files = yield* fs
-      .readDirectory(configDir)
-      .pipe(Effect.mapError((e) => new Error(e.message)));
-    const mdFiles = files.filter((f) => f.endsWith(".md"));
-    yield* Effect.all(
-      mdFiles.map((f) =>
-        Effect.gen(function* () {
-          const filePath = join(configDir, f);
-          const content = yield* fs
-            .readFileString(filePath)
-            .pipe(Effect.mapError((e) => new Error(e.message)));
-          const updated = content.replace(
-            new RegExp(` --label ${PRODUCT_NAME}`, "g"),
-            "",
-          );
-          if (updated !== content) {
-            yield* fs
-              .writeFileString(filePath, updated)
-              .pipe(Effect.mapError((e) => new Error(e.message)));
-          }
-        }),
-      ),
-      { concurrency: "unbounded" },
-    );
-  });
-
 /** Text file extensions eligible for `{{KEY}}` template argument substitution. */
 const TEXT_FILE_EXTENSIONS = new Set([
   ".md",
@@ -732,7 +697,6 @@ export interface ScaffoldOptions {
   agent: AgentEntry;
   model: string;
   templateName?: string;
-  createLabel?: boolean;
   issueTracker?: IssueTrackerEntry;
   sandboxProvider?: SandboxProviderEntry;
   codexAuth?: CodexAuthMode;
@@ -776,7 +740,6 @@ export const scaffold = (
       agent,
       model,
       templateName = "blank",
-      createLabel = true,
       issueTracker = ISSUE_TRACKER_REGISTRY[0]!, // default: github-issues
       sandboxProvider = SANDBOX_PROVIDER_REGISTRY[0]!, // default: docker
       codexAuth = "api-key",
@@ -840,13 +803,8 @@ export const scaffold = (
       codexAuth,
     );
 
-    // Replace issue tracker template arguments in all text files (must run before label stripping)
+    // Replace issue tracker template arguments in all text files.
     yield* substituteTemplateArgs(configDir, issueTracker);
-
-    // Strip the Shipyard label from prompt files when the user declined label creation
-    if (!createLabel) {
-      yield* rewritePromptFiles(configDir);
-    }
 
     return { mainFilename };
   });

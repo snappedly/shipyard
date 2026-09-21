@@ -34,10 +34,12 @@ cp .shipyard/.env.example .shipyard/.env
 ```
 
 `init` asks which agent, sandbox provider, and starter template to use. Its
-issue-based templates use GitHub Issues. When you select Codex, it also asks
-whether to sign in with ChatGPT or use an API key. Start with the `blank`
-template. Put any requested credentials in `.shipyard/.env`, then write one
-concrete task in `.shipyard/prompt.md`.
+issue-based templates use GitHub Issues. Init always attempts to create or
+update the lowercase `shipyard` label, and built-in issue workflows select only
+open issues carrying that label. When you select Codex, init also asks whether
+to sign in with ChatGPT or use an API key. Start with the `blank` template. Put
+any requested credentials in `.shipyard/.env`, then write one concrete task in
+`.shipyard/prompt.md`.
 
 Use a subscription first when the selected agent supports it. If subscription
 authentication does not work in your environment, use the API-key fallback:
