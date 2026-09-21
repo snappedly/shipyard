@@ -7,6 +7,7 @@ import {
   type RepositoryRunnerChild,
   type RunnerControlAdapters,
 } from "./RepositoryRunnerControl.js";
+import { REPOSITORY_RUNNER_WORKFLOW } from "./RepositoryRunnerWake.js";
 
 const repoDir = "/repo";
 const runnerDir = join(repoDir, ".shipyard", "runner");
@@ -113,6 +114,19 @@ const makeAdapters = (
       }
       if (
         command === "gh" &&
+        args[0] === "api" &&
+        args.includes(".default_branch")
+      ) {
+        return { stdout: "main\n", stderr: "" };
+      }
+      if (
+        command === "gh" &&
+        args.some((arg) => arg.includes("shipyard-wake.yml"))
+      ) {
+        return { stdout: REPOSITORY_RUNNER_WORKFLOW, stderr: "" };
+      }
+      if (
+        command === "gh" &&
         args.some((arg) => arg.endsWith("/actions/runners"))
       ) {
         return { stdout: "online\n", stderr: "" };
@@ -158,6 +172,15 @@ describe("startRepositoryRunner", () => {
         }
         if (command === "gh" && args[0] === "label" && args[1] === "list") {
           return { stdout: "", stderr: "" };
+        }
+        if (command === "gh" && args.includes(".default_branch")) {
+          return { stdout: "main\n", stderr: "" };
+        }
+        if (
+          command === "gh" &&
+          args.some((arg) => arg.includes("shipyard-wake.yml"))
+        ) {
+          return { stdout: REPOSITORY_RUNNER_WORKFLOW, stderr: "" };
         }
         return { stdout: "", stderr: "" };
       },
@@ -212,6 +235,15 @@ describe("startRepositoryRunner", () => {
         if (command === "gh" && args[0] === "issue") {
           return { stdout: "42\n", stderr: "" };
         }
+        if (command === "gh" && args.includes(".default_branch")) {
+          return { stdout: "main\n", stderr: "" };
+        }
+        if (
+          command === "gh" &&
+          args.some((arg) => arg.includes("shipyard-wake.yml"))
+        ) {
+          return { stdout: REPOSITORY_RUNNER_WORKFLOW, stderr: "" };
+        }
         return { stdout: "", stderr: "" };
       },
     };
@@ -224,6 +256,148 @@ describe("startRepositoryRunner", () => {
       ["./run.sh", []],
     ]);
     expect(base.spawns[0]!.env).toMatchObject({ GH_TOKEN: "repo-token" });
+  });
+
+  it("checks eligibility and invokes Shipyard after a delivered wake-up", async () => {
+    let deliverWake!: () => void;
+    let resolveListener!: (result: {
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }) => void;
+    let listenerStarted!: () => void;
+    let shipyardStarted!: () => void;
+    const listenerStartedPromise = new Promise<void>(
+      (resolve) => (listenerStarted = resolve),
+    );
+    const shipyardStartedPromise = new Promise<void>(
+      (resolve) => (shipyardStarted = resolve),
+    );
+    const listenerExit = new Promise<{
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }>((resolve) => (resolveListener = resolve));
+    const base = makeAdapters();
+    let issueChecks = 0;
+    const adapters: RunnerControlAdapters = {
+      ...base.adapters,
+      onWake: (handler) => {
+        deliverWake = handler;
+        return () => undefined;
+      },
+      run: async (command, args, options) => {
+        if (command === "gh" && args[0] === "issue") {
+          issueChecks += 1;
+          return {
+            stdout: issueChecks === 1 ? "" : "42\n",
+            stderr: "",
+          };
+        }
+        return base.adapters.run(command, args, options);
+      },
+      spawn: (command, args, options) => {
+        base.spawns.push({ command, args, env: options.env });
+        if (command === "./run.sh") {
+          listenerStarted();
+          return {
+            pid: 200,
+            wait: () => listenerExit,
+            terminate: () => undefined,
+          };
+        }
+        shipyardStarted();
+        return makeChild(201);
+      },
+    };
+
+    const started = startRepositoryRunner({ repoDir }, adapters);
+    await listenerStartedPromise;
+    deliverWake();
+    await shipyardStartedPromise;
+    resolveListener({ code: 0, signal: null });
+    await started;
+
+    expect(issueChecks).toBe(2);
+    expect(base.spawns.map(({ command, args }) => [command, args])).toEqual([
+      ["./run.sh", []],
+      ["npx", ["shipyard", "run"]],
+    ]);
+  });
+
+  it("acknowledges an empty stale wake-up without invoking Shipyard", async () => {
+    let deliverWake!: () => void;
+    let resolveListener!: (result: {
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }) => void;
+    let listenerStarted!: () => void;
+    let secondIssueCheck!: () => void;
+    const listenerStartedPromise = new Promise<void>(
+      (resolve) => (listenerStarted = resolve),
+    );
+    const secondIssueCheckPromise = new Promise<void>(
+      (resolve) => (secondIssueCheck = resolve),
+    );
+    const listenerExit = new Promise<{
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }>((resolve) => (resolveListener = resolve));
+    const base = makeAdapters();
+    let issueChecks = 0;
+    const adapters: RunnerControlAdapters = {
+      ...base.adapters,
+      onWake: (handler) => {
+        deliverWake = handler;
+        return () => undefined;
+      },
+      run: async (command, args, options) => {
+        if (command === "gh" && args[0] === "issue") {
+          issueChecks += 1;
+          if (issueChecks === 2) secondIssueCheck();
+          return { stdout: "", stderr: "" };
+        }
+        return base.adapters.run(command, args, options);
+      },
+      spawn: (command, args, options) => {
+        base.spawns.push({ command, args, env: options.env });
+        listenerStarted();
+        return {
+          pid: 200,
+          wait: () => listenerExit,
+          terminate: () => undefined,
+        };
+      },
+    };
+
+    const started = startRepositoryRunner({ repoDir }, adapters);
+    await listenerStartedPromise;
+    deliverWake();
+    await secondIssueCheckPromise;
+    resolveListener({ code: 0, signal: null });
+    await started;
+
+    expect(issueChecks).toBe(2);
+    expect(base.spawns.map(({ command }) => command)).toEqual(["./run.sh"]);
+  });
+
+  it("refuses to start until the exact workflow is on the default branch", async () => {
+    const base = makeAdapters();
+    const adapters: RunnerControlAdapters = {
+      ...base.adapters,
+      run: async (command, args, options) => {
+        if (
+          command === "gh" &&
+          args.some((arg) => arg.includes("shipyard-wake.yml"))
+        ) {
+          throw new Error("HTTP 404");
+        }
+        return base.adapters.run(command, args, options);
+      },
+    };
+
+    await expect(startRepositoryRunner({ repoDir }, adapters)).rejects.toThrow(
+      "Commit and push .github/workflows/shipyard-wake.yml",
+    );
+    expect(base.spawns).toHaveLength(0);
   });
 
   it("preserves a failure diagnostic and refuses to listen after a failed Shipyard run", async () => {
@@ -243,6 +417,15 @@ describe("startRepositoryRunner", () => {
         }
         if (command === "gh" && args[0] === "issue") {
           return { stdout: "42\n", stderr: "" };
+        }
+        if (command === "gh" && args.includes(".default_branch")) {
+          return { stdout: "main\n", stderr: "" };
+        }
+        if (
+          command === "gh" &&
+          args.some((arg) => arg.includes("shipyard-wake.yml"))
+        ) {
+          return { stdout: REPOSITORY_RUNNER_WORKFLOW, stderr: "" };
         }
         return { stdout: "", stderr: "" };
       },

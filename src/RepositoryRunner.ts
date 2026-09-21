@@ -18,6 +18,10 @@ import {
   RUNNER_DIR,
   RUNNER_SANDBOX_MASK_DIR,
 } from "./runtimeNames.js";
+import {
+  assertRepositoryRunnerWorkflowCanBeInstalled,
+  installRepositoryRunnerWakeFiles,
+} from "./RepositoryRunnerWake.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -287,6 +291,16 @@ export const installRepositoryRunner = async (
       `A repository runner is already installed at ${runnerDir}. Remove it before installing another.`,
     );
   }
+  try {
+    await assertRepositoryRunnerWorkflowCanBeInstalled(
+      options.repoDir,
+      adapters,
+    );
+  } catch (error) {
+    throw new RunnerInstallError(
+      error instanceof Error ? error.message : String(error),
+    );
+  }
 
   await requireCommand(adapters, "git", "reading the repository remote");
   await requireCommand(adapters, "tar", "extracting the runner archive");
@@ -461,6 +475,17 @@ export const installRepositoryRunner = async (
       2,
     )}\n`,
   );
+
+  try {
+    await installRepositoryRunnerWakeFiles(
+      { repoDir: options.repoDir, runnerDir },
+      adapters,
+    );
+  } catch (error) {
+    throw new RunnerInstallError(
+      `The runner was registered, but its wake-up files could not be installed. Runner files were retained at ${runnerDir}; fix the error and retry: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 
   return { name: runnerName, repository, version, runnerDir };
 };

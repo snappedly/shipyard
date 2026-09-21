@@ -5,6 +5,10 @@ import {
   installRepositoryRunner,
   type RunnerInstallAdapters,
 } from "./RepositoryRunner.js";
+import {
+  REPOSITORY_RUNNER_WAKE_SCRIPT,
+  REPOSITORY_RUNNER_WORKFLOW,
+} from "./RepositoryRunnerWake.js";
 
 const repoDir = "/repo";
 const archive = Buffer.from("official runner archive");
@@ -120,6 +124,12 @@ describe("installRepositoryRunner", () => {
     expect(writes.has(join(repoDir, ".shipyard", "runner", "runner.tgz"))).toBe(
       false,
     );
+    expect(
+      writes.get(join(repoDir, ".github", "workflows", "shipyard-wake.yml")),
+    ).toBe(REPOSITORY_RUNNER_WORKFLOW);
+    expect(
+      writes.get(join(repoDir, ".shipyard", "runner", "shipyard-wake")),
+    ).toBe(REPOSITORY_RUNNER_WAKE_SCRIPT);
 
     const configCall = calls.find((call) => call.command === "./config.sh");
     expect(configCall?.args).toEqual([
@@ -225,6 +235,34 @@ describe("installRepositoryRunner", () => {
     await expect(
       installRepositoryRunner({ repoDir }, adapters),
     ).rejects.toThrow("already installed");
+    expect(base.calls).toHaveLength(0);
+  });
+
+  it("refuses a differing wake workflow before registering a runner", async () => {
+    const base = makeAdapters();
+    const workflowPath = join(
+      repoDir,
+      ".github",
+      "workflows",
+      "shipyard-wake.yml",
+    );
+    const adapters: RunnerInstallAdapters = {
+      ...base.adapters,
+      exists: async (path) =>
+        path === workflowPath || base.adapters.exists(path),
+      readText: async (path) =>
+        path === workflowPath
+          ? "name: Existing workflow\n"
+          : base.adapters.readText(path),
+    };
+
+    const error = await installRepositoryRunner({ repoDir }, adapters).catch(
+      (caught: unknown) => caught,
+    );
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("Refusing to overwrite");
+    expect((error as Error).message).toContain(REPOSITORY_RUNNER_WORKFLOW);
     expect(base.calls).toHaveLength(0);
   });
 

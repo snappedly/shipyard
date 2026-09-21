@@ -10,6 +10,10 @@ import {
   parseGitHubRepository,
   repositoryRunnerEnvironment,
 } from "./RepositoryRunner.js";
+import {
+  createRepositoryRunnerWakeSubscription,
+  requirePublishedRepositoryRunnerWorkflow,
+} from "./RepositoryRunnerWake.js";
 import { ACTIVATION_LABEL, CONFIG_DIR, RUNNER_DIR } from "./runtimeNames.js";
 
 const execFileAsync = promisify(execFile);
@@ -69,6 +73,7 @@ export interface RunnerControlAdapters {
   readonly isProcessRunning: (pid: number) => boolean;
   readonly signalProcess: (pid: number, signal: NodeJS.Signals) => void;
   readonly onShutdown: (handler: () => Promise<void>) => () => void;
+  readonly onWake?: (handler: () => void) => () => void;
 }
 
 interface RunnerInstallMetadata {
@@ -430,6 +435,19 @@ const requireRunnerContext = async (
     );
   }
 
+  await requirePublishedRepositoryRunnerWorkflow(
+    {
+      repoDir,
+      repository,
+      environment: runtimeEnvironment,
+    },
+    adapters,
+  ).catch((error) => {
+    throw new RunnerControlError(
+      error instanceof Error ? error.message : String(error),
+    );
+  });
+
   return {
     runnerDir,
     repository,
@@ -498,7 +516,8 @@ export const startRepositoryRunner = async (
     throw controlFailure("Claiming the repository runner process", error);
   }
 
-  let activeChild: RepositoryRunnerChild | undefined;
+  let listenerChild: RepositoryRunnerChild | undefined;
+  let shipyardChild: RepositoryRunnerChild | undefined;
   let stopping = false;
   let shutdownPromise: Promise<void> | undefined;
   const saveState = (state: RunnerControllerStateName, lastOutcome: string) =>
@@ -517,55 +536,62 @@ export const startRepositoryRunner = async (
     shutdownPromise = (async () => {
       stopping = true;
       await saveState("stopping", "Stopping repository runner");
-      if (activeChild) await stopChildBounded(activeChild);
+      if (listenerChild) {
+        await stopChildBounded(listenerChild);
+        listenerChild = undefined;
+      }
+      if (shipyardChild) {
+        await stopChildBounded(shipyardChild);
+        shipyardChild = undefined;
+      }
       await saveState("stopped", "Stopped by signal");
       await adapters.remove(lockPath);
     })();
     return shutdownPromise;
   };
   const unregisterShutdown = adapters.onShutdown(shutdown);
+  const wakeSubscription = createRepositoryRunnerWakeSubscription(
+    adapters.onWake,
+  );
 
   let initialWorkFound = false;
   try {
-    const issues = await runCommand(
-      adapters,
-      "Checking for eligible GitHub issues",
-      "gh",
-      [
-        "issue",
-        "list",
-        "--repo",
-        context.repository,
-        "--state",
-        "open",
-        "--label",
-        ACTIVATION_LABEL,
-        "--limit",
-        "1",
-        "--json",
-        "number",
-        "--jq",
-        ".[].number",
-      ],
-      { cwd: options.repoDir, env: context.runtimeEnvironment },
-    );
-    initialWorkFound = issues.stdout.trim().length > 0;
-    if (stopping) {
-      await shutdownPromise;
-      return { repository: context.repository, initialWorkFound };
-    }
+    const processEligibleWork = async (): Promise<boolean> => {
+      const issues = await runCommand(
+        adapters,
+        "Checking for eligible GitHub issues",
+        "gh",
+        [
+          "issue",
+          "list",
+          "--repo",
+          context.repository,
+          "--state",
+          "open",
+          "--label",
+          ACTIVATION_LABEL,
+          "--limit",
+          "1",
+          "--json",
+          "number",
+          "--jq",
+          ".[].number",
+        ],
+        { cwd: options.repoDir, env: context.runtimeEnvironment },
+      );
+      const workFound = issues.stdout.trim().length > 0;
+      if (stopping || !workFound) return workFound;
 
-    if (initialWorkFound) {
       await saveState("processing", "Shipyard is processing eligible issues");
-      activeChild = adapters.spawn("npx", ["shipyard", "run"], {
+      shipyardChild = adapters.spawn("npx", ["shipyard", "run"], {
         cwd: options.repoDir,
         env: context.runtimeEnvironment,
       });
-      const runResult = await activeChild.wait();
-      activeChild = undefined;
+      const runResult = await shipyardChild.wait();
+      shipyardChild = undefined;
       if (stopping) {
         await shutdownPromise;
-        return { repository: context.repository, initialWorkFound };
+        return workFound;
       }
       if (runResult.code !== 0) {
         const failure = childFailure("npx shipyard run", runResult);
@@ -583,19 +609,56 @@ export const startRepositoryRunner = async (
         throw failure;
       }
       await saveState("idle", "Shipyard completed successfully");
-    } else {
-      await saveState("idle", "No eligible issues; listening");
-    }
+      return workFound;
+    };
 
-    activeChild = adapters.spawn("./run.sh", [], {
-      cwd: context.runnerDir,
-      env: repositoryRunnerEnvironment(context.hostEnvironment),
-    });
-    const listenerResult = await activeChild.wait();
-    activeChild = undefined;
+    initialWorkFound = await processEligibleWork();
     if (stopping) {
       await shutdownPromise;
       return { repository: context.repository, initialWorkFound };
+    }
+
+    if (!initialWorkFound) {
+      await saveState("idle", "No eligible issues; listening");
+    }
+
+    listenerChild = adapters.spawn("./run.sh", [], {
+      cwd: context.runnerDir,
+      env: repositoryRunnerEnvironment(context.hostEnvironment),
+    });
+    const listenerExit = listenerChild.wait().then((result) => ({
+      type: "listener" as const,
+      result,
+    }));
+
+    let listenerResult:
+      | { readonly code: number | null; readonly signal: NodeJS.Signals | null }
+      | undefined;
+    while (!listenerResult && !stopping) {
+      const event = await Promise.race([
+        listenerExit,
+        wakeSubscription.next().then(() => ({ type: "wake" as const })),
+      ]);
+      if (event.type === "listener") {
+        listenerResult = event.result;
+        listenerChild = undefined;
+        break;
+      }
+      if (stopping) break;
+      const workFound = await processEligibleWork();
+      if (!workFound && !stopping) {
+        await saveState("idle", "Wake-up delivered; no eligible issues");
+      }
+    }
+
+    if (stopping) {
+      await shutdownPromise;
+      return { repository: context.repository, initialWorkFound };
+    }
+    if (!listenerResult) {
+      throw new RunnerControlError(
+        "The repository runner listener stopped without an exit result.",
+      );
     }
     if (listenerResult.code !== 0) {
       const failure = childFailure(
@@ -618,7 +681,10 @@ export const startRepositoryRunner = async (
     await saveState("stopped", "Repository runner listener exited");
     return { repository: context.repository, initialWorkFound };
   } finally {
+    wakeSubscription.close();
     unregisterShutdown();
+    if (listenerChild) await stopChildBounded(listenerChild);
+    if (shipyardChild) await stopChildBounded(shipyardChild);
     await adapters.remove(lockPath);
   }
 };
