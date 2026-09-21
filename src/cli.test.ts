@@ -298,6 +298,22 @@ describe("shipyard CLI", () => {
     expect(entries).toContain("prompt.md");
   });
 
+  it("init requires --codex-auth for Codex in a non-TTY env", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
+    await initRepo(hostDir);
+
+    try {
+      await runCli(
+        "init --agent codex --template blank --sandbox docker --issue-tracker beads --build-image false",
+        hostDir,
+      );
+      expect.fail("Expected command to fail");
+    } catch (err: unknown) {
+      const { stdout, stderr } = err as { stdout: string; stderr: string };
+      expect(stdout + stderr).toContain("--codex-auth");
+    }
+  });
+
   it("init --codex-auth chatgpt scaffolds the subscription auth mount", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
     await initRepo(hostDir);

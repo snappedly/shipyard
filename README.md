@@ -34,8 +34,9 @@ cp .shipyard/.env.example .shipyard/.env
 ```
 
 `init` asks which agent, sandbox provider, issue tracker, and starter template
-to use. Start with the `blank` template. Put the requested credentials in
-`.shipyard/.env`, then write one concrete task in `.shipyard/prompt.md`.
+to use. When you select Codex, it also asks whether to sign in with ChatGPT or
+use an API key. Start with the `blank` template. Put any requested credentials
+in `.shipyard/.env`, then write one concrete task in `.shipyard/prompt.md`.
 
 Run it:
 
@@ -126,11 +127,14 @@ patches private.
 
 For Codex, choose either:
 
-- ChatGPT authentication: select `chatgpt` during init and complete the
-  browser login. The generated configuration mounts `~/.codex/auth.json`
-  read-only.
-- API authentication: select `api-key` and put `OPENAI_API_KEY` in
+- ChatGPT authentication: choose **Sign in with ChatGPT** during interactive
+  init and complete the browser login. The generated configuration mounts
+  `~/.codex/auth.json` read-only.
+- API authentication: choose **OpenAI API key** and put `OPENAI_API_KEY` in
   `.shipyard/.env`.
+
+For non-interactive init, pass `--codex-auth chatgpt` or
+`--codex-auth api-key` explicitly.
 
 For Claude Code, run `claude setup-token` and put the resulting value in the
 generated `CLAUDE_CODE_OAUTH_TOKEN` entry.
