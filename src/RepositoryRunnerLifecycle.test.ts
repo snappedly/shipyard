@@ -393,6 +393,10 @@ describe("recoverRepositoryRunner", () => {
         maskDir,
         metadata,
         runnerEnvironment: { PATH: "/usr/bin:/bin" },
+        dockerEnvironment: {
+          PATH: "/usr/bin:/bin",
+          DOCKER_HOST: "unix:///custom/docker.sock",
+        },
       },
       adapters,
     );
@@ -412,6 +416,9 @@ describe("recoverRepositoryRunner", () => {
       expect.objectContaining({
         command: "docker",
         args: ["rm", "-f", "owned-a", "owned-b"],
+        env: expect.objectContaining({
+          DOCKER_HOST: "unix:///custom/docker.sock",
+        }),
       }),
     );
   });

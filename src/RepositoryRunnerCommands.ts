@@ -19,7 +19,7 @@ import {
 
 const registrationTokenOption = Options.text("registration-token").pipe(
   Options.withDescription(
-    "one-time GitHub repository runner registration token (not stored)",
+    "one-time runner registration token (not stored; administrative gh access is still required for uniqueness checks)",
   ),
   Options.optional,
 );

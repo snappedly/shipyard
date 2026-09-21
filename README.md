@@ -95,6 +95,10 @@ git push
 npx shipyard runner start
 ```
 
+`--registration-token` can supply the one-time registration credential, but it
+does not replace administrative `gh` access: Shipyard still uses that access to
+verify that the repository has no conflicting `shipyard` runner.
+
 Interactive `shipyard init` also offers installation after it creates a valid
 scaffold, defaulting to No. Non-interactive init skips installation unless
 `--install-runner true` is passed. Installation creates the workflow locally;

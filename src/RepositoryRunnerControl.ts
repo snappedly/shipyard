@@ -24,6 +24,7 @@ import {
   requirePublishedRepositoryRunnerWorkflow,
 } from "./RepositoryRunnerWake.js";
 import {
+  removeOwnedRepositoryRunnerContainers,
   recoverRepositoryRunner,
   RUNNER_CONTROLLER_LOCK,
   RUNNER_INSTALL_METADATA,
@@ -57,6 +58,8 @@ interface CommandOptions {
 export class RunnerControlError extends Error {
   readonly name = "RunnerControlError";
 }
+
+const retainedFailures = new WeakSet<RunnerControlError>();
 
 export interface RepositoryRunnerChild {
   readonly pid: number;
@@ -552,17 +555,24 @@ const childFailure = (
 
 const stopChildBounded = async (
   child: RepositoryRunnerChild,
+  pause: (milliseconds: number) => Promise<void>,
 ): Promise<void> => {
   child.terminate("SIGTERM");
-  let timeout: ReturnType<typeof setTimeout> | undefined;
   const stopped = await Promise.race([
     child.wait().then(() => true),
-    new Promise<false>((resolve) => {
-      timeout = setTimeout(() => resolve(false), 5_000);
-    }),
+    pause(5_000).then(() => false),
   ]);
-  if (timeout) clearTimeout(timeout);
-  if (!stopped) child.terminate("SIGKILL");
+  if (stopped) return;
+  child.terminate("SIGKILL");
+  const killed = await Promise.race([
+    child.wait().then(() => true),
+    pause(1_000).then(() => false),
+  ]);
+  if (!killed) {
+    throw new RunnerControlError(
+      `Process ${child.pid} did not exit after SIGKILL.`,
+    );
+  }
 };
 
 const lockOwnsProcess = async (
@@ -584,7 +594,7 @@ const bestEffort = async (operation: () => Promise<unknown>): Promise<void> => {
   }
 };
 
-export const startRepositoryRunner = async (
+const startRepositoryRunnerManaged = async (
   options: { readonly repoDir: string },
   adapters: RunnerControlAdapters = defaultAdapters,
 ): Promise<RepositoryRunnerStartResult> => {
@@ -609,6 +619,7 @@ export const startRepositoryRunner = async (
       maskDir: context.maskDir,
       metadata: context.metadata,
       runnerEnvironment: repositoryRunnerEnvironment(context.hostEnvironment),
+      dockerEnvironment: context.runtimeEnvironment,
     },
     lifecycleAdapters,
   ).catch((error) => {
@@ -657,11 +668,11 @@ export const startRepositoryRunner = async (
   let stopping = false;
   let lastWake: RunnerWakeRecord | undefined;
   let shutdownPromise: Promise<void> | undefined;
+  let primaryFailure: RunnerControlError | undefined;
   const saveState = async (
     state: RunnerControllerStateName,
     lastOutcome: string,
   ): Promise<void> => {
-    adapters.report(`[repository runner] ${state}: ${lastOutcome}`);
     await writeJson(
       statePath,
       {
@@ -673,30 +684,96 @@ export const startRepositoryRunner = async (
       } satisfies RunnerControllerState,
       adapters,
     );
+    adapters.report(`[repository runner] ${state}: ${lastOutcome}`);
   };
   const removeTransientWork = () =>
     adapters.removeTree(join(context.runnerDir, RUNNER_WORK_DIR));
+  const removeOwnedContainers = () =>
+    removeOwnedRepositoryRunnerContainers(
+      {
+        repoDir: options.repoDir,
+        repository: context.repository,
+        environment: context.runtimeEnvironment,
+      },
+      lifecycleAdapters,
+    );
+  const attemptCleanup = async (
+    failures: string[],
+    purpose: string,
+    operation: () => Promise<unknown>,
+  ): Promise<void> => {
+    try {
+      await operation();
+    } catch (error) {
+      const message = `${purpose} failed: ${error instanceof Error ? error.message : String(error)}`;
+      failures.push(message);
+      adapters.report(`[repository runner] cleanup error: ${message}`);
+    }
+  };
+  const persistCleanupFailures = async (
+    failures: readonly string[],
+  ): Promise<void> => {
+    if (failures.length === 0) return;
+    const cleanupMessage = `Repository runner cleanup failed: ${failures.join("; ")}`;
+    const message = primaryFailure
+      ? `${primaryFailure.message} ${cleanupMessage}`
+      : cleanupMessage;
+    await bestEffort(() =>
+      writeJson(
+        failurePath,
+        {
+          schemaVersion: 1,
+          repository: context.repository,
+          message,
+          recordedAt: adapters.now().toISOString(),
+        },
+        adapters,
+      ).then(() => {
+        if (primaryFailure) retainedFailures.add(primaryFailure);
+      }),
+    );
+    await bestEffort(() => saveState("stopped", cleanupMessage));
+  };
   const shutdown = (): Promise<void> => {
     if (shutdownPromise) return shutdownPromise;
     shutdownPromise = (async () => {
       stopping = true;
-      try {
-        const children = [listenerChild, shipyardChild].filter(
-          (child): child is RepositoryRunnerChild => child !== undefined,
-        );
-        listenerChild = undefined;
-        shipyardChild = undefined;
-        await Promise.all(
-          children.map((child) => bestEffort(() => stopChildBounded(child))),
-        );
-        await bestEffort(() =>
-          saveState("stopping", "Stopping repository runner"),
-        );
-        await bestEffort(removeTransientWork);
-        await bestEffort(() => saveState("stopped", "Stopped by signal"));
-      } finally {
-        await bestEffort(() => adapters.remove(lockPath));
+      const failures: string[] = [];
+      const children = [listenerChild, shipyardChild].filter(
+        (child): child is RepositoryRunnerChild => child !== undefined,
+      );
+      listenerChild = undefined;
+      shipyardChild = undefined;
+      await Promise.all(
+        children.map((child) =>
+          attemptCleanup(failures, `Stopping process ${child.pid}`, () =>
+            stopChildBounded(child, adapters.pause),
+          ),
+        ),
+      );
+      await attemptCleanup(
+        failures,
+        "Removing repository-runner containers",
+        removeOwnedContainers,
+      );
+      await attemptCleanup(
+        failures,
+        "Removing transient runner work",
+        removeTransientWork,
+      );
+      await attemptCleanup(failures, "Removing controller lock", () =>
+        adapters.remove(lockPath),
+      );
+      if (failures.length === 0) {
+        try {
+          await saveState("stopped", "Stopped by signal");
+        } catch (error) {
+          const message = `Persisting stopped state failed: ${error instanceof Error ? error.message : String(error)}`;
+          failures.push(message);
+          adapters.report(`[repository runner] cleanup error: ${message}`);
+        }
       }
+      await persistCleanupFailures(failures);
     })();
     return shutdownPromise;
   };
@@ -867,6 +944,7 @@ export const startRepositoryRunner = async (
     return { repository: context.repository, initialWorkFound };
   } catch (error) {
     const failure = controlFailure("Repository runner controller", error);
+    primaryFailure = failure;
     await bestEffort(() =>
       writeJson(
         failurePath,
@@ -877,17 +955,105 @@ export const startRepositoryRunner = async (
           recordedAt: adapters.now().toISOString(),
         },
         adapters,
-      ),
+      ).then(() => retainedFailures.add(failure)),
     );
     await bestEffort(() => saveState("stopped", failure.message));
     throw failure;
   } finally {
     wakeSubscription.close();
     unregisterShutdown();
-    if (listenerChild) await bestEffort(() => stopChildBounded(listenerChild!));
-    if (shipyardChild) await bestEffort(() => stopChildBounded(shipyardChild!));
-    await bestEffort(removeTransientWork);
-    await bestEffort(() => adapters.remove(lockPath));
+    if (shutdownPromise) {
+      await shutdownPromise;
+    } else {
+      const failures: string[] = [];
+      if (listenerChild) {
+        await attemptCleanup(
+          failures,
+          `Stopping process ${listenerChild.pid}`,
+          () => stopChildBounded(listenerChild!, adapters.pause),
+        );
+      }
+      if (shipyardChild) {
+        await attemptCleanup(
+          failures,
+          `Stopping process ${shipyardChild.pid}`,
+          () => stopChildBounded(shipyardChild!, adapters.pause),
+        );
+      }
+      await attemptCleanup(
+        failures,
+        "Removing repository-runner containers",
+        removeOwnedContainers,
+      );
+      await attemptCleanup(
+        failures,
+        "Removing transient runner work",
+        removeTransientWork,
+      );
+      await attemptCleanup(failures, "Removing controller lock", () =>
+        adapters.remove(lockPath),
+      );
+      await persistCleanupFailures(failures);
+    }
+  }
+};
+
+export const startRepositoryRunner = async (
+  options: { readonly repoDir: string },
+  adapters: RunnerControlAdapters = defaultAdapters,
+): Promise<RepositoryRunnerStartResult> => {
+  try {
+    return await startRepositoryRunnerManaged(options, adapters);
+  } catch (error) {
+    const failure = controlFailure("Repository runner startup", error);
+    if (retainedFailures.has(failure)) throw failure;
+    const runnerDir = join(options.repoDir, CONFIG_DIR, RUNNER_DIR);
+    if (await adapters.exists(runnerDir)) {
+      const metadata = await readJson<RunnerInstallMetadata>(
+        join(runnerDir, RUNNER_INSTALL_METADATA),
+        adapters,
+      ).catch(() => undefined);
+      const repository = metadata?.repository ?? "unknown";
+      for (const [purpose, operation] of [
+        [
+          "failure diagnostics",
+          () =>
+            writeJson(
+              join(runnerDir, LAST_FAILURE),
+              {
+                schemaVersion: 1,
+                repository,
+                message: failure.message,
+                recordedAt: adapters.now().toISOString(),
+              },
+              adapters,
+            ),
+        ],
+        [
+          "stopped state",
+          () =>
+            writeJson(
+              join(runnerDir, CONTROLLER_STATE),
+              {
+                schemaVersion: 1,
+                repository,
+                state: "stopped",
+                lastOutcome: failure.message,
+              } satisfies RunnerControllerState,
+              adapters,
+            ),
+        ],
+      ] as const) {
+        try {
+          await operation();
+        } catch (persistenceError) {
+          adapters.report(
+            `[repository runner] Could not persist ${purpose}: ${persistenceError instanceof Error ? persistenceError.message : String(persistenceError)}`,
+          );
+        }
+      }
+    }
+    throw failure;
   }
 };
 

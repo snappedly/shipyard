@@ -934,6 +934,147 @@ describe("startRepositoryRunner", () => {
     expect(base.files.has(lockPath)).toBe(false);
     expect(base.files.has(transientPath)).toBe(false);
   });
+
+  it("forces a stuck child down and removes its owned sandbox before reporting stopped", async () => {
+    let shutdown!: () => Promise<void>;
+    let childStarted!: () => void;
+    let resolveExit!: (result: {
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }) => void;
+    const startedChild = new Promise<void>(
+      (resolve) => (childStarted = resolve),
+    );
+    const childExit = new Promise<{
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }>((resolve) => (resolveExit = resolve));
+    const terminations: NodeJS.Signals[] = [];
+    const base = makeAdapters();
+    let containerQueries = 0;
+    const adapters: RunnerControlAdapters = {
+      ...base.adapters,
+      run: async (command, args, options) => {
+        if (command === "docker" && args[0] === "ps") {
+          containerQueries += 1;
+          return {
+            stdout: containerQueries === 1 ? "" : "owned-container\n",
+            stderr: "",
+          };
+        }
+        return base.adapters.run(command, args, options);
+      },
+      spawn: () => {
+        childStarted();
+        return {
+          pid: 200,
+          wait: () => childExit,
+          terminate: (signal) => {
+            terminations.push(signal);
+            if (signal === "SIGKILL") resolveExit({ code: null, signal });
+          },
+        };
+      },
+      onShutdown: (handler) => {
+        shutdown = handler;
+        return () => undefined;
+      },
+    };
+
+    const running = startRepositoryRunner({ repoDir }, adapters);
+    await startedChild;
+    await shutdown();
+    await running;
+
+    expect(terminations).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(base.commands).toContainEqual(
+      expect.objectContaining({
+        command: "docker",
+        args: ["rm", "-f", "owned-container"],
+      }),
+    );
+    expect(JSON.parse(base.files.get(statePath)!)).toMatchObject({
+      state: "stopped",
+      lastOutcome: "Stopped by signal",
+    });
+  });
+
+  it("retains cleanup failures instead of reporting a clean stop", async () => {
+    let shutdown!: () => Promise<void>;
+    let childStarted!: () => void;
+    let resolveExit!: (result: {
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }) => void;
+    const startedChild = new Promise<void>(
+      (resolve) => (childStarted = resolve),
+    );
+    const childExit = new Promise<{
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }>((resolve) => (resolveExit = resolve));
+    const reports: string[] = [];
+    const base = makeAdapters();
+    const adapters: RunnerControlAdapters = {
+      ...base.adapters,
+      spawn: () => {
+        childStarted();
+        return {
+          pid: 200,
+          wait: () => childExit,
+          terminate: (signal) => resolveExit({ code: null, signal }),
+        };
+      },
+      removeTree: async (path) => {
+        if (path.endsWith("/_work")) throw new Error("work cleanup denied");
+        await base.adapters.removeTree(path);
+      },
+      onShutdown: (handler) => {
+        shutdown = handler;
+        return () => undefined;
+      },
+      report: (message) => reports.push(message),
+    };
+
+    const running = startRepositoryRunner({ repoDir }, adapters);
+    await startedChild;
+    await shutdown();
+    await running;
+
+    expect(reports.join("\n")).toContain("work cleanup denied");
+    expect(
+      base.files.get(join(runnerDir, ".shipyard-last-failure.json")),
+    ).toContain("work cleanup denied");
+    expect(JSON.parse(base.files.get(statePath)!)).toMatchObject({
+      state: "stopped",
+      lastOutcome: expect.stringContaining("cleanup failed"),
+    });
+  });
+
+  it("retains startup failures after installation metadata is available", async () => {
+    const base = makeAdapters();
+    const adapters: RunnerControlAdapters = {
+      ...base.adapters,
+      run: async (command, args, options) => {
+        if (command === "docker" && args[0] === "info") {
+          throw new Error("Docker Desktop is unavailable");
+        }
+        return base.adapters.run(command, args, options);
+      },
+    };
+
+    await expect(startRepositoryRunner({ repoDir }, adapters)).rejects.toThrow(
+      "Docker Desktop is unavailable",
+    );
+
+    expect(
+      base.files.get(join(runnerDir, ".shipyard-last-failure.json")),
+    ).toContain("Docker Desktop is unavailable");
+    expect(JSON.parse(base.files.get(statePath)!)).toMatchObject({
+      state: "stopped",
+      lastOutcome: expect.stringContaining("Docker Desktop is unavailable"),
+    });
+  });
 });
 
 describe("getRepositoryRunnerStatus", () => {

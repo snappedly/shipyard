@@ -27,6 +27,10 @@ git push
 npx shipyard runner start
 ```
 
+`--registration-token` can supply the one-time registration credential. It
+does not replace administrative `gh` access, which is required to verify that
+the repository has no conflicting `shipyard` runner.
+
 Installation never commits or pushes. Start requires the exact generated
 workflow on the default branch. It validates the platform, repository,
 installation, local Shipyard package, Docker, GitHub access, activation label,

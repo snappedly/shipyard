@@ -28,7 +28,9 @@ and observation boundary; Ctrl-C, terminal closure, and explicit stop share the
 shutdown path. Each repository has its own registration and protected runtime
 directory. Installation and recovery obtain one-time tokens through the current
 administrative `gh` login, while repository and agent runtime credentials remain
-separate.
+separate. An operator-supplied one-time token can replace token issuance, but
+not the administrative runner-list access used to enforce the one-runner
+invariant.
 
 ## Alternatives
 

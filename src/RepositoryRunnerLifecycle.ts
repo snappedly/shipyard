@@ -167,7 +167,7 @@ const lifecycleFailure = (
       );
 
 const runCommand = async (
-  adapters: RunnerInstallValidationAdapters,
+  adapters: Pick<RunnerInstallValidationAdapters, "run">,
   purpose: string,
   command: string,
   args: readonly string[],
@@ -381,6 +381,7 @@ export const recoverRepositoryRunner = async (
     readonly maskDir: string;
     readonly metadata: RunnerInstallMetadata;
     readonly runnerEnvironment: NodeJS.ProcessEnv;
+    readonly dockerEnvironment?: NodeJS.ProcessEnv;
   },
   adapters: RunnerLifecycleAdapters = defaultAdapters,
 ): Promise<{ readonly reRegistered: boolean }> => {
@@ -406,28 +407,14 @@ export const recoverRepositoryRunner = async (
     throw lifecycleFailure("Validating protected runner directories", error);
   });
 
-  const ownedContainers = await runCommand(
+  await removeOwnedRepositoryRunnerContainers(
+    {
+      repoDir: options.repoDir,
+      repository: options.metadata.repository,
+      environment: options.dockerEnvironment ?? options.runnerEnvironment,
+    },
     adapters,
-    "Finding stale repository-runner containers",
-    "docker",
-    [
-      "ps",
-      "-aq",
-      "--filter",
-      `label=${REPOSITORY_RUNNER_OWNER_LABEL}=${options.metadata.repository}`,
-    ],
-    { cwd: options.repoDir, env: options.runnerEnvironment },
   );
-  const containerIds = ownedContainers.stdout.split(/\s+/).filter(Boolean);
-  if (containerIds.length > 0) {
-    await runCommand(
-      adapters,
-      "Removing stale repository-runner containers",
-      "docker",
-      ["rm", "-f", ...containerIds],
-      { cwd: options.repoDir, env: options.runnerEnvironment },
-    );
-  }
 
   const adminEnvironment = adapters.environment();
   const remoteRunners = await listRemoteRunners(
@@ -500,6 +487,37 @@ export const recoverRepositoryRunner = async (
     );
   }
   return { reRegistered: true };
+};
+
+export const removeOwnedRepositoryRunnerContainers = async (
+  options: {
+    readonly repoDir: string;
+    readonly repository: string;
+    readonly environment: NodeJS.ProcessEnv;
+  },
+  adapters: Pick<RunnerLifecycleAdapters, "run"> = defaultAdapters,
+): Promise<void> => {
+  const ownedContainers = await runCommand(
+    adapters,
+    "Finding stale repository-runner containers",
+    "docker",
+    [
+      "ps",
+      "-aq",
+      "--filter",
+      `label=${REPOSITORY_RUNNER_OWNER_LABEL}=${options.repository}`,
+    ],
+    { cwd: options.repoDir, env: options.environment },
+  );
+  const containerIds = ownedContainers.stdout.split(/\s+/).filter(Boolean);
+  if (containerIds.length === 0) return;
+  await runCommand(
+    adapters,
+    "Removing stale repository-runner containers",
+    "docker",
+    ["rm", "-f", ...containerIds],
+    { cwd: options.repoDir, env: options.environment },
+  );
 };
 
 const waitForProcessToStop = async (
