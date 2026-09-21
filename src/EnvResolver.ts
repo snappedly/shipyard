@@ -86,11 +86,12 @@ export const resolveEnv = (
 
     const result: Record<string, string> = {};
     for (const key of Object.keys(shipyardEnv)) {
-      // An explicitly empty value is an intentional override. Falling back on
-      // a host secret for `KEY=` would silently leak that secret into the
-      // sandbox.
-      const value = shipyardEnv[key] ?? process.env[key];
-      if (value !== undefined) {
+      // A blank placeholder falls back to process.env, so callers can source
+      // credentials from a host login for one invocation, e.g.
+      // `GH_TOKEN="$(gh auth token)" npx shipyard run`. Only keys declared in
+      // .shipyard/.env are eligible for this fallback.
+      const value = shipyardEnv[key] || process.env[key];
+      if (value) {
         result[key] = value;
       }
     }

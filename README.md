@@ -140,6 +140,9 @@ authentication does not work in your environment, use the API-key fallback:
   host and put the result in `CLAUDE_CODE_OAUTH_TOKEN` in `.shipyard/.env`.
 - Claude Code API authentication: uncomment `ANTHROPIC_API_KEY` in
   `.shipyard/.env` and put your API key there.
+- GitHub Issues authentication: set `GH_TOKEN` in `.shipyard/.env`. To use the
+  token from a host-side `gh auth login` without storing it in the file, leave
+  `GH_TOKEN=` blank and run `GH_TOKEN="$(gh auth token)" npx shipyard run`.
 
 ## Generated files
 

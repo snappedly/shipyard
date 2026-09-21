@@ -55,7 +55,7 @@ describe("resolveEnv", () => {
     expect(env["SHARED"]).toBe("sc"); // only .shipyard/.env is used
   });
 
-  it("does not leak a host secret through an explicitly empty value", async () => {
+  it("falls back to process.env for a key declared with an empty value", async () => {
     const dir = await makeDir();
     await mkdir(join(dir, ".shipyard"));
     // .shipyard/.env declares the key but with empty value
@@ -65,7 +65,7 @@ describe("resolveEnv", () => {
     try {
       process.env["MY_TOKEN"] = "from-process";
       const env = await runResolveEnv(dir);
-      expect(env["MY_TOKEN"]).toBe("");
+      expect(env["MY_TOKEN"]).toBe("from-process");
     } finally {
       if (orig === undefined) delete process.env["MY_TOKEN"];
       else process.env["MY_TOKEN"] = orig;
@@ -193,10 +193,10 @@ describe("resolveEnv", () => {
     await writeFile(join(dir, ".shipyard", ".env"), 'KEY=""\n');
 
     const env = await runResolveEnv(dir);
-    expect(env).toEqual({ KEY: "" });
+    expect(env).toEqual({});
   });
 
-  it("preserves an empty declared value when the host has the same key", async () => {
+  it("falls back to process.env when the declared value is empty", async () => {
     const dir = await makeDir();
     await mkdir(join(dir, ".shipyard"));
     await writeFile(join(dir, ".shipyard", ".env"), "FALLBACK_KEY=\n");
@@ -205,7 +205,7 @@ describe("resolveEnv", () => {
     try {
       process.env["FALLBACK_KEY"] = "from-env";
       const env = await runResolveEnv(dir);
-      expect(env["FALLBACK_KEY"]).toBe("");
+      expect(env["FALLBACK_KEY"]).toBe("from-env");
     } finally {
       if (orig === undefined) delete process.env["FALLBACK_KEY"];
       else process.env["FALLBACK_KEY"] = orig;

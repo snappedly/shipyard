@@ -349,6 +349,7 @@ const ISSUE_TRACKER_REGISTRY: IssueTrackerEntry[] = [
     envExample: `# GitHub personal access token — the agent uses it to read and manage GitHub Issues
 # Create a fine-grained token: https://github.com/settings/personal-access-tokens/new
 # Required repository permissions: Issues (Read and write) and Metadata (Read)
+# Or leave blank and run: GH_TOKEN="$(gh auth token)" npx shipyard run
 GH_TOKEN=`,
   },
 ];
