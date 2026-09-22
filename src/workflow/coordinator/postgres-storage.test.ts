@@ -1,10 +1,24 @@
 import { describe, expect, it, vi } from "vitest";
+import { readFile } from "node:fs/promises";
 import {
   PostgresCoordinatorStorage,
   type PostgresQueryClient,
 } from "./index.js";
 
 describe("PostgresCoordinatorStorage", () => {
+  it("backfills a delivery record for pending pre-upgrade jobs", async () => {
+    const migration = await readFile(
+      new URL("./migrations/001_initial.sql", import.meta.url),
+      "utf8",
+    );
+    expect(migration).toMatch(
+      /INSERT INTO shipyard_deliveries[\s\S]*FROM shipyard_jobs/,
+    );
+    expect(migration).toContain(
+      "'mode', CASE WHEN j.item_kind = 'planning-spec'",
+    );
+    expect(migration).toContain("ON CONFLICT (repository, item_id) DO NOTHING");
+  });
   it("wraps coordinator operations in a transaction and releases pooled clients", async () => {
     const query = vi.fn(
       async (_text: string, _values?: readonly unknown[]) => ({

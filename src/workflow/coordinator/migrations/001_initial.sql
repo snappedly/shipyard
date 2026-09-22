@@ -79,6 +79,36 @@ CREATE TABLE IF NOT EXISTS shipyard_deliveries (
   PRIMARY KEY (repository, item_id)
 );
 
+-- Pre-delivery-schema jobs were standalone. Give pending dispatches a durable
+-- owner before the coordinator attempts to claim their delivery lease.
+INSERT INTO shipyard_deliveries (
+  repository, item_id, delivery, created_at, updated_at, version
+)
+SELECT
+  j.delivery_repository,
+  j.delivery_item_id,
+  jsonb_build_object(
+    'key', jsonb_build_object('repository', j.delivery_repository, 'itemId', j.delivery_item_id),
+    'id', j.delivery_repository || '#' || j.delivery_item_id,
+    'mode', CASE WHEN j.item_kind = 'planning-spec' THEN 'planning-spec' ELSE 'standalone' END,
+    'root', jsonb_build_object('repository', j.repository, 'itemId', j.item_id, 'kind', j.item_kind),
+    'graph', jsonb_build_object(
+      'root', jsonb_build_object('repository', j.repository, 'itemId', j.item_id, 'kind', j.item_kind),
+      'children', '[]'::jsonb,
+      'dependencies', '[]'::jsonb
+    ),
+    'createdAt', to_char(j.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+    'updatedAt', to_char(j.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+    'version', 1
+  ),
+  j.created_at,
+  j.updated_at,
+  1
+FROM shipyard_jobs j
+WHERE j.delivery_repository = j.repository
+  AND j.delivery_item_id = j.item_id
+ON CONFLICT (repository, item_id) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS shipyard_delivery_leases (
   resource_key TEXT PRIMARY KEY,
   lease_id TEXT NOT NULL UNIQUE,

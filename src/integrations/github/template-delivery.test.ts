@@ -217,6 +217,79 @@ describe("generated GitHub delivery", () => {
     expect(calls).not.toContain("gh pr edit");
   });
 
+  it("withdraws handoff before pushing a changed ready candidate", async () => {
+    const prior = "a".repeat(40);
+    const next = "b".repeat(40);
+    const metadata = {
+      version: 1 as const,
+      repository: "example/repo",
+      itemId: "42",
+      kind: "executable-issue" as const,
+      briefRevision: 1,
+      briefHash: "f".repeat(64),
+      baseBranch: "staging",
+      baseSha: "0".repeat(40),
+      branch: "shipyard/issue-42",
+    };
+    let remote = {
+      number: 12,
+      title: "Issue 42",
+      body: "<!-- shipyard:template-delivery:example%2Frepo:42 -->",
+      headRefOid: prior,
+      headRefName: "shipyard/issue-42",
+      baseRefName: "staging",
+      state: "OPEN",
+      isDraft: false,
+      labels: [{ name: "ready-for-human" }],
+      url: "https://github.com/example/repo/pull/12",
+    };
+    const calls: string[] = [];
+    await publishTemplateDelivery({
+      repository: "example/repo",
+      itemId: "42",
+      kind: "executable-issue",
+      branch: "shipyard/issue-42",
+      baseBranch: "staging",
+      headSha: next,
+      title: "Issue 42",
+      body: "New evidence",
+      metadata,
+      run: async (file, args) => {
+        calls.push(`${file} ${args.slice(0, 2).join(" ")}`);
+        if (file === "gh" && args[1] === "list")
+          return JSON.stringify([remote]);
+        if (file === "gh" && args[1] === "ready") {
+          remote = { ...remote, isDraft: true };
+          return "";
+        }
+        if (file === "gh" && args[1] === "edit") {
+          if (args.includes("--remove-label")) {
+            remote = { ...remote, labels: [] };
+          } else {
+            remote = {
+              ...remote,
+              body: args[args.indexOf("--body") + 1]!,
+            };
+          }
+          return "";
+        }
+        if (file === "git" && args[0] === "push") {
+          expect(remote.isDraft).toBe(true);
+          expect(remote.labels).toEqual([]);
+          remote = { ...remote, headRefOid: next };
+          return "";
+        }
+        if (file === "gh" && args[1] === "view") return JSON.stringify(remote);
+        if (file === "gh" && args[0] === "issue") return "";
+        throw new Error(`unexpected command: ${file} ${args.join(" ")}`);
+      },
+    });
+    expect(calls.indexOf("gh pr ready")).toBeLessThan(
+      calls.indexOf("git push origin"),
+    );
+    expect(calls.filter((call) => call === "gh pr edit")).toHaveLength(2);
+  });
+
   it("does not move a branch after its delivery PR was merged", async () => {
     const calls: string[] = [];
     await expect(

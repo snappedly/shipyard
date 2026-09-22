@@ -304,7 +304,11 @@ const pullRequestHead = (payload: JsonRecord, fallback: string): string =>
 
 const issueKind = (issue: GitHubIssueSnapshot): WorkItemKind => {
   const normalized = new Set(issue.labels.map((label) => label.toLowerCase()));
-  if (normalized.has("planning-spec") || normalized.has("planning")) {
+  if (
+    normalized.has("planning-spec") ||
+    normalized.has("planning") ||
+    /^\s*(?:\*\*)?work item type:(?:\*\*)?\s*planning spec\b/im.test(issue.body)
+  ) {
     return "planning-spec";
   }
   if (normalized.has("pr-repair") || normalized.has("repair")) {
@@ -1070,6 +1074,7 @@ export class GitHubIntegration {
             receivedAt: this.now(),
           },
           true,
+          input.transport,
         ),
       );
     }
@@ -1091,6 +1096,7 @@ export class GitHubIntegration {
         receivedAt: this.now(),
       },
       true,
+      input.transport,
     );
     const baseResult = this.toReconciliationResult(receipt);
     const tracked = this.options.trackingStore
@@ -1126,6 +1132,7 @@ export class GitHubIntegration {
   private async processEnvelope(
     envelope: GitHubWebhookEnvelope & { readonly body?: string },
     trustedReconciliation = false,
+    readTransport = this.options.readTransport,
   ): Promise<GitHubWebhookReceipt> {
     const payload = record(envelope.payload);
     const repository = payload
@@ -1255,6 +1262,25 @@ export class GitHubIntegration {
       };
     }
     const trackedPlanningSpec = normalized.event.trackedPullRequest;
+    if (trackedPlanningSpec !== undefined) {
+      const pullRequest = record(
+        record(effectiveEnvelope.payload)?.pull_request,
+      );
+      const mergedSha = requiredStringValue(pullRequest?.merge_commit_sha);
+      if (
+        pullRequest?.state === "closed" &&
+        pullRequest.merged === true &&
+        mergedSha !== undefined
+      ) {
+        await this.options.coordinator.markDeliveryMerged(
+          {
+            repository: trackedPlanningSpec.repository,
+            itemId: trackedPlanningSpec.itemId,
+          },
+          mergedSha,
+        );
+      }
+    }
     if (
       trackedPlanningSpec !== undefined &&
       trackedPlanningSpec.brief.identity.kind === "planning-spec"
@@ -1283,9 +1309,57 @@ export class GitHubIntegration {
         "blocked-publication-unconfigured",
       );
     }
+    const key = normalized.event.workflowEvent.delivery?.key ?? {
+      repository: normalized.event.repository,
+      itemId: String(normalized.event.issueNumber),
+    };
+    const existing =
+      await this.options.coordinator.getDeliveryWorkflowState(key);
+    if (
+      normalized.event.trackedPullRequest === undefined &&
+      existing?.delivery.mergedAt === undefined
+    ) {
+      for (const job of existing?.jobs ?? []) {
+        const tracked =
+          await this.options.trackingStore?.findTrackedPullRequestByJob?.(
+            job.id,
+          );
+        if (tracked === undefined) continue;
+        if (readTransport === undefined) {
+          throw new Error(
+            "Current pull request state is required for tracked issue intake",
+          );
+        }
+        const current = await readTransport.fetchPullRequest({
+          repository: tracked.repository,
+          pullRequestNumber: tracked.pullRequestNumber,
+        });
+        if (current === undefined) {
+          throw new Error("Tracked delivery pull request is missing");
+        }
+        if (current.merged !== true) continue;
+        if (
+          current.state !== "closed" ||
+          requiredStringValue(current.mergedSha) === undefined
+        ) {
+          throw new Error("Merged delivery has no verified merge revision");
+        }
+        await this.options.coordinator.markDeliveryMerged(
+          key,
+          current.mergedSha!,
+        );
+        break;
+      }
+    }
     const ingest = await this.options.coordinator.ingest(
       normalized.event.workflowEvent,
     );
+    if (
+      ingest.job?.blocked !== undefined &&
+      this.options.publication !== undefined
+    ) {
+      await this.projectBlockedJob(ingest.job.id);
+    }
     if (
       resumeProjection &&
       ingest.job !== undefined &&

@@ -37,3 +37,6 @@ planning spec, and `Shipyard-Depends-On: #101` on a child. Configure the
 relationship reader so intake can fetch and validate every referenced issue.
 Hosts using `gh` can pass `createGitHubCliRelationshipReader()` as the
 `GitHubIntegration` `relationships` option.
+After a pull request is tracked, configure `GitHubIntegration.readTransport`
+to verify current merge state before further issue intake. Without a reader,
+tracked issue intake fails closed until explicit reconciliation supplies one.

@@ -338,6 +338,8 @@ export interface GitHubIntegrationOptions {
   readonly deliveryStore: GitHubDeliveryStore;
   readonly webhookSecret: string | Uint8Array;
   readonly trackingStore?: GitHubTrackingStore;
+  /** Current provider state used to fence issue scope before a delayed merge webhook. */
+  readonly readTransport?: GitHubReadTransport;
   readonly publication?: import("./publication.js").GitHubPublication;
   readonly relationships?: GitHubIssueRelationshipReader;
   /** Review events fail closed unless the caller wires candidate-bound handoff handling. */

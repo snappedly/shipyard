@@ -224,6 +224,39 @@ describe("GitHub webhook intake", () => {
     ).toEqual(["42", "43"]);
   });
 
+  it("recognizes a planning-spec parent declared in its body without a label", async () => {
+    const parent = {
+      number: 100,
+      title: "Planning spec",
+      body: "**Work item type:** planning spec, not executable",
+      state: "open" as const,
+      updatedAt: "2026-09-17T12:00:00.000Z",
+      labels: [] as string[],
+    };
+    const child = {
+      number: 42,
+      title: "Child",
+      body: "Implement child",
+      state: "open" as const,
+      updatedAt: "2026-09-17T12:00:00.000Z",
+      labels: [] as string[],
+    };
+    const relationships: GitHubIssueRelationshipReader = {
+      fetchIssue: async () => parent,
+      fetchParentIssue: async () => parent,
+      fetchSubIssues: async () => [child],
+    };
+    const { integration } = createIntegration(
+      new InMemoryGitHubStore(),
+      undefined,
+      relationships,
+    );
+    const receipt = await integration.receiveWebhook(
+      webhook("issues", "unlabelled-spec-parent", issuePayload()),
+    );
+    expect(receipt.ingest?.job?.deliveryKey.itemId).toBe("100");
+  });
+
   it("uses documented parent and child body references when native links are absent", async () => {
     const parent = {
       number: 100,
@@ -384,6 +417,51 @@ describe("GitHub webhook intake", () => {
     expect(
       (await coordinator.getJob(received.ingest!.job!.id))?.blocked,
     ).toBeUndefined();
+  });
+
+  it("replays a blocked projection after publication fails", async () => {
+    const coordinator = new WorkflowCoordinator({
+      storage: new InMemoryCoordinatorStorage(),
+      infrastructureRetryLimit: 0,
+    });
+    const store = new InMemoryGitHubStore();
+    const publishBlockedDelivery = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("GitHub unavailable"))
+      .mockResolvedValue({});
+    const integration = new GitHubIntegration({
+      coordinator,
+      policy: policy(),
+      base: { branch: "main", sha: "a".repeat(40) },
+      authorization: {
+        allowedRepositories: [repository],
+        allowedSenders: ["maintainer"],
+        allowedReviewers: ["maintainer"],
+      },
+      deliveryStore: store,
+      trackingStore: store,
+      publication: { publishBlockedDelivery } as unknown as GitHubPublication,
+      webhookSecret: secret,
+    });
+    const received = await integration.receiveWebhook(
+      webhook("issues", "blocked-intake-replay", issuePayload()),
+    );
+    const dispatched = await coordinator.dispatchNext({
+      repository,
+      workerId: "worker",
+    });
+    await expect(
+      integration.recordInfrastructureFailure({
+        jobId: received.ingest!.job!.id,
+        assignmentId: dispatched.assignment!.id,
+        error: "worker unavailable",
+        branch: "shipyard/issue-42",
+      }),
+    ).rejects.toThrow("GitHub unavailable");
+    await integration.receiveWebhook(
+      webhook("issues", "blocked-projection-replay", issuePayload()),
+    );
+    expect(publishBlockedDelivery).toHaveBeenCalledTimes(2);
   });
 
   it("reprocesses a delivery left in received state after a coordinator failure", async () => {
@@ -750,6 +828,200 @@ describe("GitHub webhook intake", () => {
     expect(reply.ingest?.job?.brief.source.originalBody).toBe(
       "authorization: approved",
     );
+  });
+
+  it("freezes a planning delivery on a merge webhook before child intake", async () => {
+    const { integration, coordinator, store } = createIntegration(
+      new InMemoryGitHubStore(),
+      undefined,
+      {
+        fetchIssue: async () => undefined,
+        fetchParentIssue: async () => ({
+          number: 100,
+          title: "Planning spec",
+          body: "**Work item type:** planning spec",
+          state: "open",
+          updatedAt: "2026-09-17T12:00:00.000Z",
+          labels: [],
+        }),
+        fetchSubIssues: async () => [
+          {
+            number: 42,
+            title: "Child",
+            body: "Implement child",
+            state: "open",
+            updatedAt: "2026-09-17T12:00:00.000Z",
+            labels: [],
+          },
+          {
+            number: 43,
+            title: "New child",
+            body: "Implement new child",
+            state: "open",
+            updatedAt: "2026-09-17T12:01:00.000Z",
+            labels: [],
+          },
+        ],
+      },
+    );
+    const brief = createWorkBrief({
+      identity: { repository, itemId: "100", kind: "planning-spec" },
+      source: {
+        provider: "github",
+        repository,
+        itemId: "100",
+        originalBody: "Planning spec",
+      },
+      problem: "Planning spec",
+      evidence: ["Authorized"],
+      acceptanceCriteria: ["Done"],
+      exclusions: [],
+      risk: "low",
+      verification: { checks: ["npm run typecheck"], artifacts: [] },
+      unresolvedQuestions: [],
+      authorization: {
+        status: "approved",
+        actor: "maintainer",
+        actorRole: "maintainer",
+        approvedAt: "2026-09-17T12:00:00.000Z",
+      },
+      base: { branch: "main", sha: "a".repeat(40) },
+      policyRevision: policy().revision,
+      skillRevision: policy().worker.skillRevision,
+      createdAt: "2026-09-17T12:00:00.000Z",
+    });
+    const initial = resolveDeliveryGroup({
+      issue: brief.identity,
+      children: [{ repository, itemId: "42", kind: "executable-issue" }],
+    });
+    const received = await coordinator.ingest({
+      deliveryId: "spec-before-merge",
+      brief,
+      policy: policy(),
+      phase: "triage",
+      relevantRevision: brief.base.sha,
+      observedAt: "2026-09-17T12:00:00.000Z",
+      delivery: initial,
+      sourceState: "open",
+    });
+    const headSha = "b".repeat(40);
+    await store.saveTrackedPullRequest({
+      repository,
+      pullRequestNumber: 200,
+      jobId: received.job!.id,
+      itemId: "100",
+      branch: "shipyard/spec-100",
+      headSha,
+      marker: "<!-- tracked -->",
+      brief,
+      policy: policy(),
+      createdAt: "2026-09-17T12:00:00.000Z",
+    });
+    await integration.receiveWebhook(
+      webhook("pull_request", "spec-merged", {
+        action: "closed",
+        pull_request: {
+          number: 200,
+          title: "Planning spec",
+          body: "Planning spec",
+          state: "closed",
+          merged: true,
+          merge_commit_sha: "d".repeat(40),
+          updated_at: "2026-09-17T12:01:00.000Z",
+          head: { ref: "shipyard/spec-100", sha: headSha },
+          base: { ref: "main" },
+        },
+        repository: { full_name: repository },
+        sender: { login: "maintainer", type: "User" },
+      }),
+    );
+    await expect(
+      integration.receiveWebhook(
+        webhook("issues", "new-child-after-merge", issuePayload()),
+      ),
+    ).rejects.toThrow("Merged delivery graph is immutable");
+    expect(
+      (
+        await coordinator.getDeliveryWorkflowState({
+          repository,
+          itemId: "100",
+        })
+      )?.delivery.graph.children.map((entry) => entry.itemId),
+    ).toEqual(["42"]);
+  });
+
+  it("reads the current PR merge state before issue reconciliation", async () => {
+    const { integration, coordinator, store } = createIntegration();
+    const first = await integration.receiveWebhook(
+      webhook("issues", "standalone-before-merge", issuePayload()),
+    );
+    const job = first.ingest!.job!;
+    await store.saveTrackedPullRequest({
+      repository,
+      pullRequestNumber: 200,
+      jobId: job.id,
+      itemId: "42",
+      branch: "shipyard/issue-42",
+      headSha: "b".repeat(40),
+      marker: "<!-- tracked -->",
+      brief: job.brief,
+      policy: job.policy,
+      createdAt: "2026-09-17T12:00:00.000Z",
+    });
+    await integration.reconcile({
+      repository,
+      issueNumber: 42,
+      transport: {
+        fetchIssue: async () => ({
+          number: 42,
+          title: "Fix the intake path",
+          body: "authorization: approved",
+          state: "open",
+          updatedAt: "2026-09-17T12:01:00.000Z",
+          labels: [],
+        }),
+        fetchPullRequest: async () => ({
+          number: 200,
+          title: "Issue 42",
+          body: "Candidate",
+          state: "closed",
+          merged: true,
+          mergedSha: "d".repeat(40),
+          branch: "shipyard/issue-42",
+          baseBranch: "main",
+          headSha: "b".repeat(40),
+          updatedAt: "2026-09-17T12:01:00.000Z",
+        }),
+      } as unknown as GitHubReadTransport,
+    });
+    expect(
+      (await coordinator.getDelivery({ repository, itemId: "42" }))?.mergedSha,
+    ).toBe("d".repeat(40));
+  });
+
+  it("fails closed when tracked PR state cannot be read during issue intake", async () => {
+    const { integration, store } = createIntegration();
+    const first = await integration.receiveWebhook(
+      webhook("issues", "tracked-without-reader", issuePayload()),
+    );
+    const job = first.ingest!.job!;
+    await store.saveTrackedPullRequest({
+      repository,
+      pullRequestNumber: 200,
+      jobId: job.id,
+      itemId: "42",
+      branch: "shipyard/issue-42",
+      headSha: "b".repeat(40),
+      marker: "<!-- tracked -->",
+      brief: job.brief,
+      policy: job.policy,
+      createdAt: "2026-09-17T12:00:00.000Z",
+    });
+    await expect(
+      integration.receiveWebhook(
+        webhook("issues", "unverified-pr-state", issuePayload()),
+      ),
+    ).rejects.toThrow("Current pull request state is required");
   });
 
   it("reconciles a manually merged planning-spec PR from current provider state and replays safely", async () => {

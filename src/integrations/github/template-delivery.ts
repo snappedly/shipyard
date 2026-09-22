@@ -30,6 +30,7 @@ interface TemplatePullRequest {
   readonly baseRefName: string;
   readonly state: "OPEN" | "CLOSED" | "MERGED";
   readonly isDraft: boolean;
+  readonly labels?: readonly { readonly name: string }[];
   readonly url: string;
 }
 
@@ -130,7 +131,7 @@ export const integrateTemplateDelivery = async (
 };
 
 const fields =
-  "number,title,body,headRefOid,headRefName,baseRefName,state,isDraft,url";
+  "number,title,body,headRefOid,headRefName,baseRefName,state,isDraft,labels,url";
 
 const parsePullRequest = (raw: string): TemplatePullRequest => {
   const parsed: unknown = JSON.parse(raw);
@@ -215,6 +216,34 @@ export const publishTemplateDelivery = async (
   ) {
     throw new Error("Existing delivery PR is closed or targets another branch");
   }
+  const candidateChanged =
+    pullRequest !== undefined &&
+    (pullRequest.title !== input.title ||
+      pullRequest.body !== body ||
+      pullRequest.headRefOid !== input.headSha);
+  if (pullRequest !== undefined && candidateChanged) {
+    if (!pullRequest.isDraft) {
+      await run("gh", [
+        "pr",
+        "ready",
+        String(pullRequest.number),
+        "--undo",
+        "--repo",
+        input.repository,
+      ]);
+    }
+    if (pullRequest.labels?.some((label) => label.name === "ready-for-human")) {
+      await run("gh", [
+        "pr",
+        "edit",
+        String(pullRequest.number),
+        "--repo",
+        input.repository,
+        "--remove-label",
+        "ready-for-human",
+      ]);
+    }
+  }
   if (pullRequest === undefined || pullRequest.headRefOid !== input.headSha) {
     await run("git", [
       "push",
@@ -240,21 +269,7 @@ export const publishTemplateDelivery = async (
       body,
     ]);
   } else {
-    const candidateChanged =
-      pullRequest.title !== input.title ||
-      pullRequest.body !== body ||
-      pullRequest.headRefOid !== input.headSha;
     requiresDraft = candidateChanged || pullRequest.isDraft;
-    if (!pullRequest.isDraft && candidateChanged) {
-      await run("gh", [
-        "pr",
-        "ready",
-        String(pullRequest.number),
-        "--undo",
-        "--repo",
-        input.repository,
-      ]);
-    }
     if (candidateChanged) {
       await run("gh", [
         "pr",
@@ -286,6 +301,8 @@ export const publishTemplateDelivery = async (
     pullRequest.headRefName !== input.branch ||
     pullRequest.baseRefName !== input.baseBranch ||
     (requiresDraft && !pullRequest.isDraft) ||
+    (candidateChanged &&
+      pullRequest.labels?.some((label) => label.name === "ready-for-human")) ||
     pullRequest.body !== body
   ) {
     throw new Error("Published PR does not match the exact draft candidate");
