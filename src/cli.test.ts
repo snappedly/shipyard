@@ -136,12 +136,11 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     await commitFile(hostDir, "hello.txt", "hello", "initial commit");
     await mkdir(join(hostDir, ".shipyard"));
 
-    try {
-      await runCli("run --skip-build", hostDir);
-      expect.fail("Expected command to fail");
-    } catch (err: unknown) {
-      const { stdout, stderr } = err as { stdout: string; stderr: string };
-      const output = stdout + stderr;
+    const result = await runCliInProcessAt(["run", "--skip-build"], hostDir);
+
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
+      const output = Cause.pretty(result.cause);
       expect(output).toContain("No Shipyard entrypoint found");
       expect(output).toContain("main.ts");
       expect(output).toContain("main.mts");
