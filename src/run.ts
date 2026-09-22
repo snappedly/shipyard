@@ -155,6 +155,28 @@ export const buildLogFilename = (
   return `${sanitized}${nameSuffix}.log`;
 };
 
+/** Build the local calendar date directory used for default run logs. */
+export const buildLogDirectoryName = (date: Date = new Date()): string => {
+  const pad = (value: number): string => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+};
+
+/** Build the default date-organized path for a run log. */
+export const buildDefaultLogPath = (
+  hostRepoDir: string,
+  resolvedBranch: string,
+  targetBranch?: string,
+  name?: string,
+  date: Date = new Date(),
+): string =>
+  join(
+    hostRepoDir,
+    CONFIG_DIR,
+    LOGS_DIR,
+    buildLogDirectoryName(date),
+    buildLogFilename(resolvedBranch, targetBranch, name),
+  );
+
 export interface RunSummaryRowsOptions {
   readonly name?: string;
   readonly agentName: string;
@@ -350,7 +372,7 @@ export interface RunOptions<A extends AgentProvider = AgentProvider> {
   readonly sandbox: SandboxProvider;
   /**
    * Host repo directory. Replaces `process.cwd()` as the anchor for
-   * `.shipyard/worktrees/`, `.shipyard/.env`, `.shipyard/logs/`,
+   * `.shipyard/worktrees/`, `.shipyard/.env`, `.shipyard/logs/YYYY-MM-DD/`,
    * `.shipyard/patches/`, and git operations.
    *
    * - Relative paths are resolved against `process.cwd()`.
@@ -374,7 +396,7 @@ export interface RunOptions<A extends AgentProvider = AgentProvider> {
   readonly hooks?: SandboxHooks;
   /** Key-value map for {{KEY}} placeholder substitution in prompts */
   readonly promptArgs?: PromptArgs;
-  /** Logging mode (default: { type: 'file' } with auto-generated path under .shipyard/logs/) */
+  /** Logging mode (default: { type: 'file' } with auto-generated path under .shipyard/logs/YYYY-MM-DD/) */
   readonly logging?: LoggingOption;
   /** Substring(s) the agent emits to stop the iteration loop early. Matched via `includes` against agent output. (default: `"<promise>COMPLETE</promise>"`) */
   readonly completionSignal?: string | string[];
@@ -663,11 +685,11 @@ export async function run(
   // Resolve logging option
   const resolvedLogging: LoggingOption = options.logging ?? {
     type: "file",
-    path: join(
+    path: buildDefaultLogPath(
       hostRepoDir,
-      CONFIG_DIR,
-      LOGS_DIR,
-      buildLogFilename(resolvedBranch, targetBranch, options.name),
+      resolvedBranch,
+      targetBranch,
+      options.name,
     ),
   };
   if (options.logging === undefined && resolvedLogging.type === "file") {

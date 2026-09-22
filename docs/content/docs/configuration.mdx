@@ -81,13 +81,16 @@ untrusted runs.
 | `promptFile` / `prompt` | Supply one                                               | File template or inline instructions                        |
 | `maxIterations`         | `1`                                                      | Maximum agent invocations                                   |
 | `branchStrategy`        | `merge-to-head` for Docker/Vercel; `head` for no-sandbox | Direct host access, temporary merge, or explicit branch     |
-| `logging`               | File under `.shipyard/logs/`                             | File logging or terminal progress with `{ type: "stdout" }` |
+| `logging`               | File under `.shipyard/logs/YYYY-MM-DD/`                  | File logging or terminal progress with `{ type: "stdout" }` |
 | `completionSignal`      | `<promise>COMPLETE</promise>`                            | Agent output that ends the loop early                       |
 | `cwd`                   | `process.cwd()`                                          | Host repository to operate on                               |
 
 `promptFile` is resolved against the calling process's working directory, even
 when `cwd` points at another repository. Runtime files such as `.shipyard/.env`
 follow `cwd`.
+
+Default run logs are placed in a folder named for the local calendar date, such
+as `.shipyard/logs/2026-09-22/`. Explicit `logging.path` values are unchanged.
 
 Docker and Vercel Sandbox do not support `head` or automatically mount your checkout.
 They start from committed Git history. Use `copyToWorktree` for selected ignored

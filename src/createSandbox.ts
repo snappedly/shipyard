@@ -28,7 +28,7 @@ import {
   buildAgentStreamHandler,
   buildCompletionMessage,
   buildContextWindowLines,
-  buildLogFilename,
+  buildDefaultLogPath,
   printFileDisplayStartup,
 } from "./run.js";
 import {
@@ -63,7 +63,7 @@ import { resolveCwd } from "./resolveCwd.js";
 import { patchGitMountsForWindows } from "./mountUtils.js";
 import { assertResumeSessionExists } from "./resumePrecheck.js";
 import { registerShutdown } from "./shutdownRegistry.js";
-import { CLI_NAME, CONFIG_DIR, LOGS_DIR } from "./runtimeNames.js";
+import { CLI_NAME } from "./runtimeNames.js";
 
 export interface CreateSandboxOptions {
   /** Explicit branch for the worktree (required). */
@@ -409,11 +409,11 @@ const buildSandboxHandle = (
 
       const resolvedLogging: LoggingOption = runOptions.logging ?? {
         type: "file",
-        path: join(
+        path: buildDefaultLogPath(
           hostRepoDir,
-          CONFIG_DIR,
-          LOGS_DIR,
-          buildLogFilename(branch, undefined, runOptions.name),
+          branch,
+          undefined,
+          runOptions.name,
         ),
       };
       if (runOptions.logging === undefined && resolvedLogging.type === "file") {

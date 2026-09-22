@@ -35,7 +35,7 @@ import {
   buildAgentStreamHandler,
   buildCompletionMessage,
   buildContextWindowLines,
-  buildLogFilename,
+  buildDefaultLogPath,
   printFileDisplayStartup,
 } from "./run.js";
 import type { LoggingOption } from "./run.js";
@@ -60,7 +60,7 @@ import { noSandbox } from "./sandboxes/no-sandbox.js";
 import { raceAbortSignal } from "./raceAbortSignal.js";
 import { validateMaxIterations } from "./validateMaxIterations.js";
 import type { Timeouts } from "./run.js";
-import { CLI_NAME, CONFIG_DIR, LOGS_DIR } from "./runtimeNames.js";
+import { CLI_NAME } from "./runtimeNames.js";
 
 /** Branch strategies valid for createWorktree — head is excluded. */
 export type WorktreeBranchStrategy =
@@ -611,11 +611,11 @@ export const createWorktree = async (
       // 5. Resolve logging
       const resolvedLogging: LoggingOption = opts.logging ?? {
         type: "file",
-        path: join(
+        path: buildDefaultLogPath(
           hostRepoDir,
-          CONFIG_DIR,
-          LOGS_DIR,
-          buildLogFilename(worktreeInfo.branch, undefined, opts.name),
+          worktreeInfo.branch,
+          undefined,
+          opts.name,
         ),
       };
       if (opts.logging === undefined && resolvedLogging.type === "file") {
