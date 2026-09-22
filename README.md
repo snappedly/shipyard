@@ -89,7 +89,9 @@ by the selected agent in `.shipyard/.env`. Install from the repository root:
 
 The `GH_TOKEN` in `.shipyard/.env` is the issue-agent credential and may be
 limited to Issues and Metadata. Runner startup uses the host `gh` login for
-administrative checks, including reading the published wake workflow.
+administrative checks, including reading the published wake workflow. When
+Shipyard runs in Docker, the runtime token is passed into that sandbox for
+its GitHub issue operations; it is not the runner's administrative login.
 
 ```sh
 npx shipyard runner install

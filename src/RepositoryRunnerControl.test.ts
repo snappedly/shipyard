@@ -637,6 +637,21 @@ describe("startRepositoryRunner", () => {
     expect(workflowCheck?.env).not.toMatchObject({ GH_TOKEN: "repo-token" });
   });
 
+  it("keeps all runner-control GitHub checks on the host login", async () => {
+    const base = makeAdapters();
+
+    await startRepositoryRunner({ repoDir }, base.adapters);
+
+    const runnerControlChecks = base.commands.filter(
+      ({ command, args }) =>
+        command === "gh" && !args.some((arg) => arg.endsWith("/issues")),
+    );
+    expect(runnerControlChecks.length).toBeGreaterThan(0);
+    for (const check of runnerControlChecks) {
+      expect(check.env).toMatchObject({ GH_TOKEN: "host-token" });
+    }
+  });
+
   it("preserves a failure diagnostic and refuses to listen after a failed Shipyard run", async () => {
     const base = makeAdapters();
     const adapters: RunnerControlAdapters = {

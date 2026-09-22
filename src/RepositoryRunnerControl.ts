@@ -480,7 +480,7 @@ const requireRunnerContext = async (
     "Checking GitHub authentication",
     "gh",
     ["auth", "status", "--hostname", "github.com"],
-    { cwd: repoDir, env: runtimeEnvironment },
+    { cwd: repoDir, env: hostEnvironment },
   );
 
   const label = await runCommand(
@@ -497,7 +497,7 @@ const requireRunnerContext = async (
       "--jq",
       `.[] | select(.name == "${ACTIVATION_LABEL}") | .name`,
     ],
-    { cwd: repoDir, env: runtimeEnvironment },
+    { cwd: repoDir, env: hostEnvironment },
   );
   if (label.stdout.trim() !== ACTIVATION_LABEL) {
     await runCommand(
@@ -516,7 +516,7 @@ const requireRunnerContext = async (
         "Tasks available to the Shipyard repository runner",
         "--force",
       ],
-      { cwd: repoDir, env: runtimeEnvironment },
+      { cwd: repoDir, env: hostEnvironment },
     );
   }
 
