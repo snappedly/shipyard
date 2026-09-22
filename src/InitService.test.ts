@@ -117,6 +117,17 @@ describe("InitService scaffold", () => {
     );
   });
 
+  it("creates .env from the generated .env.example", async () => {
+    const dir = await makeDir();
+    await runScaffold(dir);
+
+    const configDir = join(dir, ".shipyard");
+    const envExample = await readFile(join(configDir, ".env.example"), "utf-8");
+    const env = await readFile(join(configDir, ".env"), "utf-8");
+
+    expect(env).toBe(envExample);
+  });
+
   it("does not scaffold config.json for blank template", async () => {
     const dir = await makeDir();
     await runScaffold(dir);
@@ -520,9 +531,7 @@ describe("InitService scaffold", () => {
     it("shows environment setup, subscription login, and both start commands", () => {
       expect(getNextStepsLines()).toEqual([
         "Next steps:",
-        "1. Create your env file:",
-        "   cp .shipyard/.env.example .shipyard/.env",
-        "   Fill in the values you need.",
+        "1. Fill in the values you need in `.shipyard/.env`.",
         "2. If using a model subscription, sign in. For Codex:",
         `   codex --config 'cli_auth_credentials_store="file"' login`,
         "   test -f ~/.codex/auth.json",

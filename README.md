@@ -30,15 +30,15 @@ Run these commands inside the Git repository the agent should change:
 ```sh
 npm install --save-dev @snappedly-tools/shipyard
 npx shipyard init
-cp .shipyard/.env.example .shipyard/.env
 ```
 
 `init` asks which agent, sandbox provider, and starter template to use. Its
 issue-based templates use GitHub Issues. Init always attempts to create or
 update the lowercase `shipyard` label, and built-in issue workflows select only
 open issues carrying that label. When you select Codex, init also asks whether
-to sign in with ChatGPT or use an API key. Start with the `blank` template. Put
-any requested credentials in `.shipyard/.env`, then write one concrete task in
+to sign in with ChatGPT or use an API key. Start with the `blank` template. Init
+creates `.shipyard/.env` from the generated example; put any requested
+credentials there, then write one concrete task in
 `.shipyard/prompt.md`.
 
 Use a subscription first when the selected agent supports it. If subscription
