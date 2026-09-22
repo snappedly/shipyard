@@ -147,7 +147,7 @@ after 24 hours, so after a long sleep use manual workflow dispatch or restart
 the controller. GitHub removes self-hosted runner registrations after 14 days
 offline; the next start automatically re-registers with the current
 administrative `gh` login. A Mac rename does not rename an existing
-registration—remove and reinstall it explicitly.
+registration. Remove and reinstall it explicitly.
 
 GitHub does not charge Actions minutes for the self-hosted wake job. The brief
 exact-case gate runs on `ubuntu-latest` and may consume hosted Actions minutes
