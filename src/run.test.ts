@@ -11,6 +11,8 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
   buildCompletionMessage,
   buildContextWindowLines,
+  buildDefaultLogPath,
+  buildLogDirectoryName,
   buildLogFilename,
   buildRunSummaryRows,
   buildStructuredOutputRetryFeedback,
@@ -673,6 +675,34 @@ describe("buildLogFilename", () => {
   it("sanitizes run name for filename use", () => {
     expect(buildLogFilename("main", undefined, "my review agent")).toBe(
       "main-my-review-agent.log",
+    );
+  });
+});
+
+describe("date-based log paths", () => {
+  it("formats the local run date as an ISO date directory", () => {
+    expect(buildLogDirectoryName(new Date(2026, 8, 22, 23, 59, 59))).toBe(
+      "2026-09-22",
+    );
+  });
+
+  it("places the default run log beneath its date directory", () => {
+    expect(
+      buildDefaultLogPath(
+        "/project",
+        "shipyard/20260922-142719",
+        "main",
+        "planner",
+        new Date(2026, 8, 22),
+      ),
+    ).toBe(
+      join(
+        "/project",
+        ".shipyard",
+        "logs",
+        "2026-09-22",
+        "main-shipyard-20260922-142719-planner.log",
+      ),
     );
   });
 });

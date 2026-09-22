@@ -199,7 +199,7 @@ it only with trusted repositories and prompts.
 | `.shipyard/prompt.md`             | Task given to the agent                                      |
 | `.shipyard/Dockerfile`            | Sandbox image definition                                     |
 | `.shipyard/.env`                  | Untracked credentials passed into the sandbox                |
-| `.shipyard/logs/`                 | Run logs                                                     |
+| `.shipyard/logs/YYYY-MM-DD/`      | Run logs organized by calendar day                           |
 | `.shipyard/worktrees/`            | Worktrees for separate-branch runs                           |
 | `.shipyard/patches/`              | Recovery artifacts preserved after some failures             |
 | `.shipyard/runner/`               | Protected self-hosted runner files and diagnostics           |
