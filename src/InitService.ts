@@ -351,7 +351,9 @@ const ISSUE_TRACKER_REGISTRY: IssueTrackerEntry[] = [
 # Create a fine-grained token: https://github.com/settings/personal-access-tokens/new
 # Required repository permissions: Issues (Read and write) and Metadata (Read)
 # Or leave blank and run: GH_TOKEN="$(gh auth token)" npx shipyard run
-GH_TOKEN=`,
+GH_TOKEN=
+# GitHub repository (owner/repository)
+GH_REPO=`,
   },
 ];
 
@@ -398,78 +400,17 @@ export const getSandboxProvider = (
 // Next steps
 // ---------------------------------------------------------------------------
 
-export function getNextStepsLines(
-  template: string,
-  mainFilename: string,
-  agent: AgentEntry,
-  packageManager: PackageManager,
-  codexAuth: CodexAuthMode = "api-key",
-): string[] {
-  const getAuthLines = (step: number): string[] => {
-    if (agent.name === "codex") {
-      if (codexAuth === "chatgpt") {
-        return [
-          `${step}. Use your ChatGPT subscription with Codex: run \`codex login\` on the host and make sure \`~/.codex/auth.json\` exists`,
-          '   If it does not exist, set `cli_auth_credentials_store = "file"` in `~/.codex/config.toml`, then run the login again',
-          "   Shipyard mounts this credential read-only; use this mode only with trusted repositories.",
-          `   If subscription auth does not work, rerun init with \`--codex-auth api-key\` and set \`OPENAI_API_KEY\` in ${CONFIG_DIR}/.env instead.`,
-          `   Also set any issue-tracker variables shown in ${CONFIG_DIR}/.env.example.`,
-        ];
-      }
-      return [
-        `${step}. Use your ChatGPT subscription with Codex (recommended): run \`codex login\` on the host, then initialize with \`--codex-auth chatgpt\` so Shipyard can mount \`~/.codex/auth.json\` read-only`,
-        `   If subscription auth does not work, use API-key billing instead by setting \`OPENAI_API_KEY\` in ${CONFIG_DIR}/.env (see ${CONFIG_DIR}/.env.example).`,
-        `   Also set any issue-tracker variables shown in ${CONFIG_DIR}/.env.example.`,
-      ];
-    }
-
-    if (agent.name === "claude-code") {
-      return [
-        `${step}. Use your Claude subscription (recommended): run \`claude setup-token\` on the host and paste the result into \`CLAUDE_CODE_OAUTH_TOKEN\` in ${CONFIG_DIR}/.env`,
-        `   If subscription auth does not work, use API-key billing instead by uncommenting \`ANTHROPIC_API_KEY\` in ${CONFIG_DIR}/.env and setting it to your key.`,
-        `   Also set any issue-tracker variables shown in ${CONFIG_DIR}/.env.example.`,
-      ];
-    }
-
-    return [
-      `${step}. Set the required env vars in ${CONFIG_DIR}/.env (see ${CONFIG_DIR}/.env.example)`,
-    ];
-  };
-
-  if (template === "blank") {
-    const lines = ["Next steps:", ...getAuthLines(1)];
-    lines.push(
-      `2. Read and customize ${CONFIG_DIR}/prompt.md to describe what you want the agent to do`,
-      `3. Customize ${CONFIG_DIR}/${mainFilename} — it uses the JS API (\`run()\`) to control how the agent runs`,
-      `4. Run \`npx ${CLI_NAME} run\` to build the sandbox image and start the agent`,
-    );
-    return lines;
-  } else {
-    const hasReviewer = template.includes("review");
-    const usesPlanSchema = getTemplateDependencies(template).includes("zod");
-    let step = 1;
-    const lines: string[] = ["Next steps:", ...getAuthLines(step++)];
-    lines.push(
-      `${step++}. Templates use \`copyToWorktree: ["node_modules"]\` to copy your host node_modules into the sandbox for fast startup — the \`npm install\` in the onSandboxReady hook is a safety net for platform-specific binaries. Adjust both if you use a different package manager`,
-    );
-    if (usesPlanSchema) {
-      lines.push(
-        `${step++}. Install a schema validator for the planner's \`<plan>\` output — the template uses Zod (\`${addDependencyCommand(packageManager, "zod")}\`), but Valibot, ArkType, or any Standard Schema library works (https://standardschema.dev)`,
-      );
-    }
-    lines.push(
-      `${step++}. Read and customize the prompt files in ${CONFIG_DIR}/ — they shape what the agent does`,
-    );
-    if (hasReviewer) {
-      lines.push(
-        `${step++}. Customize ${CONFIG_DIR}/CODING_STANDARDS.md with your project's standards — the reviewer agent loads it during review`,
-      );
-    }
-    lines.push(
-      `${step++}. Run \`npx ${CLI_NAME} run\` to build the sandbox image and start the workflow`,
-    );
-    return lines;
-  }
+export function getNextStepsLines(): string[] {
+  return [
+    "Next steps:",
+    "1. Create your env file:",
+    `   cp ${CONFIG_DIR}/.env.example ${CONFIG_DIR}/.env`,
+    "   Fill in the values you need.",
+    "2. If using a model subscription, sign in. For Codex:",
+    `   codex --config 'cli_auth_credentials_store="file"' login`,
+    "   test -f ~/.codex/auth.json",
+    `3. Start with \`npx ${CLI_NAME} runner start\` (if installed) or \`npx ${CLI_NAME} run\``,
+  ];
 }
 
 // ---------------------------------------------------------------------------

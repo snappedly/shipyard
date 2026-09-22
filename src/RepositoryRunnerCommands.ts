@@ -30,25 +30,27 @@ const installRunnerCommand = Command.make(
   ({ registrationToken }) =>
     Effect.gen(function* () {
       const display = yield* Display;
-      const result = yield* display.spinner(
-        "Installing repository runner...",
-        Effect.tryPromise({
-          try: () =>
-            installRepositoryRunner({
-              repoDir: process.cwd(),
-              registrationToken:
-                registrationToken._tag === "Some"
-                  ? registrationToken.value
-                  : undefined,
-            }),
-          catch: (error) =>
-            new InitError({
-              message:
-                error instanceof RunnerInstallError
-                  ? error.message
-                  : `Repository runner installation failed: ${error instanceof Error ? error.message : String(error)}`,
-            }),
-        }),
+      const result = yield* display.progress(
+        "Installing repository runner",
+        (report) =>
+          Effect.tryPromise({
+            try: () =>
+              installRepositoryRunner({
+                repoDir: process.cwd(),
+                registrationToken:
+                  registrationToken._tag === "Some"
+                    ? registrationToken.value
+                    : undefined,
+                onProgress: report,
+              }),
+            catch: (error) =>
+              new InitError({
+                message:
+                  error instanceof RunnerInstallError
+                    ? error.message
+                    : `Repository runner installation failed: ${error instanceof Error ? error.message : String(error)}`,
+              }),
+          }),
       );
       yield* display.status(
         `Installed ${result.name} for ${result.repository}.`,

@@ -100,10 +100,11 @@ does not replace administrative `gh` access: Shipyard still uses that access to
 verify that the repository has no conflicting `shipyard` runner.
 
 Interactive `shipyard init` also offers installation after it creates a valid
-scaffold, defaulting to No. Non-interactive init skips installation unless
+scaffold, defaulting to Yes. Non-interactive init skips installation unless
 `--install-runner true` is passed. Installation creates the workflow locally;
-it never commits or pushes it. `runner start` requires the exact generated
-workflow on the repository's default branch.
+it never commits or pushes it. In a terminal, installation shows a progress
+bar for validation, download, registration, and workflow setup. `runner start`
+requires the exact generated workflow on the repository's default branch.
 
 The activation label is the exact, lowercase label `shipyard`. Init attempts to
 create it, and start creates it if it is missing. Adding that label or manually
