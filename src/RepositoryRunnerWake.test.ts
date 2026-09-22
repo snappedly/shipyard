@@ -176,4 +176,28 @@ describe("repository runner wake workflow", () => {
       "Commit and push .github/workflows/shipyard-wake.yml to the default branch (main)",
     );
   });
+
+  it("explains when GitHub denies access to the published workflow", async () => {
+    const adapter: RepositoryRunnerWakeGitHubAdapter = {
+      run: async (_command, args) => {
+        if (args.includes("--jq")) return { stdout: "staging\n", stderr: "" };
+        throw new Error(
+          "Command failed: gh api\ngh: Resource not accessible by personal access token (HTTP 403)",
+        );
+      },
+    };
+
+    await expect(
+      requirePublishedRepositoryRunnerWorkflow(
+        {
+          repoDir,
+          repository: "snappedly/shipyard",
+          environment: {},
+        },
+        adapter,
+      ),
+    ).rejects.toThrow(
+      "GitHub denied Contents: Read access for the host gh login",
+    );
+  });
 });

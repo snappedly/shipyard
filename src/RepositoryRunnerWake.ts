@@ -113,6 +113,20 @@ export interface RepositoryRunnerWakeSubscription {
 const workflowCollisionMessage = (): string =>
   `Refusing to overwrite the differing workflow at ${REPOSITORY_RUNNER_WORKFLOW_PATH}. Replace it with the required Shipyard wake-only workflow, then retry:\n\n${REPOSITORY_RUNNER_WORKFLOW}`;
 
+const publishedWorkflowFailureMessage = (
+  repository: string,
+  defaultBranch: string,
+  error: unknown,
+): string => {
+  const details = error instanceof Error ? error.message : String(error);
+  if (
+    /HTTP 403|Resource not accessible by personal access token/i.test(details)
+  ) {
+    return `The Shipyard wake workflow could not be read for ${repository} on the default branch (${defaultBranch}). GitHub denied Contents: Read access for the host gh login. Authenticate gh with repository administration access, then start the runner again. GitHub reported: ${details}`;
+  }
+  return `The Shipyard wake workflow is not active for ${repository}. Commit and push ${REPOSITORY_RUNNER_WORKFLOW_PATH} to the default branch (${defaultBranch}), then start the runner again. GitHub reported: ${details}`;
+};
+
 export const assertRepositoryRunnerWorkflowCanBeInstalled = async (
   repoDir: string,
   adapters: RepositoryRunnerWakeFileAdapters,
@@ -193,7 +207,7 @@ export const requirePublishedRepositoryRunnerWorkflow = async (
     publishedWorkflow = result.stdout;
   } catch (error) {
     throw new RepositoryRunnerWakeError(
-      `The Shipyard wake workflow is not active for ${options.repository}. Commit and push ${REPOSITORY_RUNNER_WORKFLOW_PATH} to the default branch (${defaultBranch}), then start the runner again. GitHub reported: ${error instanceof Error ? error.message : String(error)}`,
+      publishedWorkflowFailureMessage(options.repository, defaultBranch, error),
     );
   }
 
