@@ -25,6 +25,9 @@ import {
 import { encodeProjectPath } from "./SessionStore.js";
 import { testIsolated } from "./sandboxes/test-isolated.js";
 import { makeLocalSandbox } from "./testSandbox.js";
+import { silenceTerminalOutput } from "./testTerminalOutput.js";
+
+silenceTerminalOutput();
 
 /** Dummy sandbox provider used to satisfy the required `sandbox` field in test mode. */
 const testSandbox = createBindMountSandboxProvider({

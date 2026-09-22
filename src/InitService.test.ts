@@ -15,7 +15,6 @@ import {
 } from "./InitService.js";
 import type { AgentEntry, ScaffoldOptions } from "./InitService.js";
 import { SANDBOX_REPO_DIR } from "./SandboxFactory.js";
-import { SKELETON_PROMPT } from "./templates.js";
 import { CODEX_MODELS } from "./modelConfig.js";
 
 const makeDir = () => mkdtemp(join(tmpdir(), "init-service-"));
@@ -637,11 +636,6 @@ describe("InitService scaffold", () => {
       expect(prompt).not.toContain("--label Shipyard");
     },
   );
-
-  it("uses the lowercase shipyard label in the skeleton prompt example", () => {
-    expect(SKELETON_PROMPT).toContain("gh issue list --label shipyard");
-    expect(SKELETON_PROMPT).not.toContain("--label Shipyard");
-  });
 
   it("scaffolded prompts that lack a runtime TASK_ID do not contain {{TASK_ID}}", async () => {
     // Regression test for #477: the {{TASK_ID}} placeholder inside

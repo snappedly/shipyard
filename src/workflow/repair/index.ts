@@ -27,6 +27,7 @@ import type {
   GitHubPublicationResult,
   GitHubPullRequestSnapshot,
 } from "../../integrations/github/index.js";
+import { sameRevision } from "../shared.js";
 
 export interface RepairCandidate {
   readonly base: RevisionReference;
@@ -133,11 +134,6 @@ export interface BoundedRepairExecutionResult {
 const defaultNow = (): string => new Date().toISOString();
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
-
-const sameRevision = (
-  left: RevisionReference,
-  right: RevisionReference,
-): boolean => left.branch === right.branch && left.sha === right.sha;
 
 const actionable = (finding: Finding): boolean =>
   finding.severity !== "info" &&

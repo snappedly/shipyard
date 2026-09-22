@@ -56,6 +56,13 @@ describe("claudeCode factory", () => {
     expect(command).toContain("--model 'claude-opus-4-8'");
   });
 
+  it("rejects a model containing a NUL byte", () => {
+    const provider = claudeCode("invalid\0model");
+    expect(() => provider.buildPrintCommand(opts("do something"))).toThrow(
+      "Cannot quote a string containing a NUL byte",
+    );
+  });
+
   it("parseStreamLine extracts text from assistant message", () => {
     const provider = claudeCode("claude-opus-4-8");
     const line = JSON.stringify({

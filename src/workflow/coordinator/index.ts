@@ -15,6 +15,7 @@ import {
   type WorkIdentity,
   type WorkflowPhase,
 } from "../contracts/index.js";
+import { sameRevision } from "../shared.js";
 import { InMemoryCoordinatorStorage } from "./in-memory-storage.js";
 import type {
   AcquireBranchLeaseInput,
@@ -183,11 +184,6 @@ const sameIdentity = (left: WorkIdentity, right: WorkIdentity): boolean =>
   left.repository === right.repository &&
   left.itemId === right.itemId &&
   left.kind === right.kind;
-
-const sameRevision = (
-  left: { readonly branch: string; readonly sha: string },
-  right: { readonly branch: string; readonly sha: string },
-): boolean => left.branch === right.branch && left.sha === right.sha;
 
 const isSameEventRevision = (
   current: WorkflowJob,

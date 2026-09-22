@@ -26,11 +26,8 @@ import {
   type IsolatedSandboxHandle,
   type IsolatedSandboxProvider,
 } from "../SandboxProvider.js";
-import {
-  BoundedTail,
-  MAX_TAIL_CHARS,
-  OutputByteCounter,
-} from "../boundedTail.js";
+import { MAX_TAIL_CHARS } from "../boundedTail.js";
+import { StreamedProcessOutput } from "../processOutput.js";
 import { shellQuote } from "../shellQuote.js";
 
 /** Worktree path inside the Vercel sandbox. */
@@ -198,48 +195,30 @@ export const vercel = (options?: VercelOptions): IsolatedSandboxProvider =>
           },
         ): Promise<ExecResult> => {
           if (opts?.onLine || opts?.maxOutputBytes !== undefined) {
-            const onLine = opts?.onLine ?? (() => {});
-            const outputLimit =
-              opts?.maxOutputBytes === undefined
-                ? undefined
-                : new OutputByteCounter(opts.maxOutputBytes);
-            const tailChars = opts?.maxOutputBytes ?? maxOutputTailChars;
-            const stdoutTail = new BoundedTail(tailChars, "\n");
-            const stderrTail = new BoundedTail(tailChars, "");
-            let outputLimitError: Error | undefined;
-            const checkOutputLimit = (chunk: string): void => {
-              if (outputLimit === undefined || outputLimitError !== undefined) {
-                return;
-              }
-              outputLimit.add(chunk);
-              if (outputLimit.exceeded) {
-                outputLimitError = new Error(
-                  `Sandbox command output exceeded ${opts.maxOutputBytes} bytes`,
-                );
-              }
-            };
+            const output = new StreamedProcessOutput({
+              ...opts,
+              maxOutputTailChars,
+            });
             let partial = "";
 
             const stdoutWritable = new Writable({
               write(chunk, _encoding, callback) {
-                checkOutputLimit(chunk.toString());
-                if (outputLimitError !== undefined) {
-                  callback(outputLimitError);
+                const error = output.checkLimit(chunk.toString());
+                if (error !== undefined) {
+                  callback(error);
                   return;
                 }
                 const text = partial + chunk.toString();
                 const lines = text.split("\n");
                 partial = lines.pop() ?? "";
                 for (const line of lines) {
-                  stdoutTail.push(line);
-                  onLine(line);
+                  output.addStdoutLine(line);
                 }
                 callback();
               },
               final(callback) {
                 if (partial) {
-                  stdoutTail.push(partial);
-                  onLine(partial);
+                  output.addStdoutLine(partial);
                   partial = "";
                 }
                 callback();
@@ -248,12 +227,12 @@ export const vercel = (options?: VercelOptions): IsolatedSandboxProvider =>
 
             const stderrWritable = new Writable({
               write(chunk, _encoding, callback) {
-                checkOutputLimit(chunk.toString());
-                if (outputLimitError !== undefined) {
-                  callback(outputLimitError);
+                const error = output.checkLimit(chunk.toString());
+                if (error !== undefined) {
+                  callback(error);
                   return;
                 }
-                stderrTail.push(chunk.toString());
+                output.addStderr(chunk.toString());
                 callback();
               },
             });
@@ -267,13 +246,8 @@ export const vercel = (options?: VercelOptions): IsolatedSandboxProvider =>
               ...(opts?.sudo ? { sudo: true } : {}),
             });
 
-            if (outputLimitError !== undefined) throw outputLimitError;
-
-            return {
-              stdout: stdoutTail.toString(),
-              stderr: stderrTail.toString(),
-              exitCode: result.exitCode,
-            };
+            if (output.error !== undefined) throw output.error;
+            return output.result(result.exitCode);
           }
 
           const result = await sandbox.runCommand({
