@@ -206,6 +206,20 @@ The bundled templates are:
 - `parallel-planner`: plan parallel work and merge its branches; and
 - `parallel-planner-with-review`: add review to each parallel branch.
 
+The templates differ mainly in how they schedule work and how much they process
+per run:
+
+| Workflow                       | How it works                                                                    | Default limit     |
+| ------------------------------ | ------------------------------------------------------------------------------- | ----------------- |
+| `blank`                        | One customizable agent run                                                      | 1 agent iteration |
+| `simple-loop`                  | One agent handles one issue at a time; commits merge back to the current branch | 3 issues/run      |
+| `sequential-reviewer`          | One issue at a time: implement, then review on its branch                       | 10 issues/run     |
+| `parallel-planner`             | Plan dependency waves, implement all unblocked issues concurrently, then merge  | 10 waves          |
+| `parallel-planner-with-review` | Same as above, but each branch is reviewed before merging                       | 10 waves          |
+
+These are scaffold defaults and can be adjusted in the generated
+`.shipyard/main.mts` file.
+
 Read generated prompts before running an issue or merge workflow. Those
 templates can close issues, create branches, and merge work.
 
