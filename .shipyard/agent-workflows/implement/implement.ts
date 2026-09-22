@@ -26,7 +26,7 @@ try {
     },
   });
 
-  const commitsAhead = Number(sh("git rev-list --count main..HEAD").trim());
+  const commitsAhead = Number(sh("git rev-list --count staging..HEAD").trim());
   if (!Number.isFinite(commitsAhead) || commitsAhead === 0) {
     fail("Agent finished but no commits were made on the branch.");
   }

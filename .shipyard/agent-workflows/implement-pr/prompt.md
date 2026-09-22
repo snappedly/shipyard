@@ -11,7 +11,7 @@ This is not a fresh review. Focus on the PR conversation and unresolved feedback
 
 {{LINKED_ISSUE}}
 
-# CURRENT DIFF TO MAIN
+# CURRENT DIFF TO STAGING
 
 ```diff
 {{DIFF_TO_MAIN}}

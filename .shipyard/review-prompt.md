@@ -20,11 +20,11 @@ Here are the last 10 commits:
 
 </issue>
 
-<diff-to-main>
+<diff-to-staging>
 
-!`git diff main..HEAD`
+!`git diff staging..HEAD`
 
-</diff-to-main>
+</diff-to-staging>
 
 # REVIEW PROCESS
 

@@ -15,6 +15,6 @@ Please allow time for a fix before publishing vulnerability details.
 
 ## Supported versions
 
-Only the latest published minor release and the current `main` branch receive
-security fixes. Upgrade to the latest release before reporting an issue that is
-already fixed there.
+Only the latest published minor release and the current `production` branch
+receive security fixes. Upgrade to the latest release before reporting an issue
+that is already fixed there.

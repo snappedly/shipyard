@@ -2,7 +2,7 @@
 
 Implement issue #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}}
 
-You are on branch `{{BRANCH}}`, already created from `main`.
+You are on branch `{{BRANCH}}`, already created from `staging`.
 
 # ISSUE
 
