@@ -133,6 +133,38 @@ describe("SilentDisplay", () => {
     });
   });
 
+  describe("progress", () => {
+    it("passes through the result and captures progress updates", async () => {
+      const { ref, layer } = setup();
+
+      const result = await Effect.runPromise(
+        Effect.gen(function* () {
+          const d = yield* Display;
+          const value = yield* d.progress("Installing...", (report) =>
+            Effect.sync(() => {
+              report({ current: 1, total: 2, message: "Checking" });
+              report({ current: 2, total: 2, message: "Complete" });
+              return 42;
+            }),
+          );
+          return { value, entries: yield* readEntries(ref) };
+        }).pipe(Effect.provide(layer)),
+      );
+
+      expect(result.value).toBe(42);
+      expect(result.entries).toEqual([
+        {
+          _tag: "progress",
+          title: "Installing...",
+          updates: [
+            { current: 1, total: 2, message: "Checking" },
+            { current: 2, total: 2, message: "Complete" },
+          ],
+        },
+      ]);
+    });
+  });
+
   describe("summary", () => {
     it("captures summary with title and rows", async () => {
       const { ref, layer } = setup();

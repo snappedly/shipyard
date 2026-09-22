@@ -33,7 +33,7 @@ GitHub Issues in `snappedly/shipyard`, operated with `gh`; PRs are not a triage 
 
 ### Team workflow
 
-Small clear changes use focused verification and local review; planned work uses issue-backed implementation, cleanup, review, and PR delivery to `main`; future releases require human approval of the exact candidate. See `docs/agents/workflow.md`.
+Small clear changes use focused verification and local review; planned work uses issue-backed implementation, cleanup, review, and PR delivery to `staging`; future releases require human approval of the exact `production` candidate. See `docs/agents/workflow.md`.
 
 ### Domain docs
 

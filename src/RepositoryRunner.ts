@@ -48,6 +48,13 @@ export class RunnerInstallError extends Error {
 export interface RunnerInstallOptions {
   readonly repoDir: string;
   readonly registrationToken?: string;
+  readonly onProgress?: (update: RunnerInstallProgress) => void;
+}
+
+export interface RunnerInstallProgress {
+  readonly current: number;
+  readonly total: number;
+  readonly message: string;
 }
 
 export interface RunnerInstallResult {
@@ -268,6 +275,13 @@ const commandFailure = (purpose: string, error: unknown): RunnerInstallError =>
     `${purpose} failed: ${error instanceof Error ? error.message : String(error)}`,
   );
 
+const reportProgress = (
+  options: RunnerInstallOptions,
+  current: number,
+  total: number,
+  message: string,
+): void => options.onProgress?.({ current, total, message });
+
 export const installRepositoryRunner = async (
   options: RunnerInstallOptions,
   adapters: RunnerInstallAdapters = defaultAdapters,
@@ -287,6 +301,7 @@ export const installRepositoryRunner = async (
     );
   }
   const runnerExists = await adapters.exists(runnerDir);
+  const progressTotal = runnerExists ? 3 : 8;
   try {
     await assertRepositoryRunnerWorkflowCanBeInstalled(
       options.repoDir,
@@ -329,6 +344,12 @@ export const installRepositoryRunner = async (
         error,
       );
     });
+  reportProgress(
+    options,
+    1,
+    progressTotal,
+    "Validated repository and GitHub access",
+  );
 
   if (runnerExists) {
     let metadata;
@@ -360,6 +381,7 @@ export const installRepositoryRunner = async (
     ).catch((error) => {
       throw commandFailure("Validating protected runner directories", error);
     });
+    reportProgress(options, 2, progressTotal, "Validated existing runner");
     try {
       await installRepositoryRunnerWakeFiles(
         { repoDir: options.repoDir, runnerDir },
@@ -370,6 +392,7 @@ export const installRepositoryRunner = async (
         `The existing runner is valid, but its wake-up files could not be refreshed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+    reportProgress(options, 3, progressTotal, "Refreshed wake-up workflow");
     return {
       name: metadata.name,
       repository: metadata.repository,
@@ -401,6 +424,12 @@ export const installRepositoryRunner = async (
       `A repository runner labeled \`${ACTIVATION_LABEL}\` is already registered for ${repository}. Remove it before installing another.`,
     );
   }
+  reportProgress(
+    options,
+    2,
+    progressTotal,
+    "Checked for conflicting repository runners",
+  );
 
   let registrationToken = options.registrationToken;
   if (!registrationToken) {
@@ -431,6 +460,12 @@ export const installRepositoryRunner = async (
       throw commandFailure("Reading the one-time registration token", error);
     }
   }
+  reportProgress(
+    options,
+    3,
+    progressTotal,
+    "Prepared runner registration token",
+  );
 
   let release: RunnerRelease;
   try {
@@ -454,6 +489,12 @@ export const installRepositoryRunner = async (
       `Runner archive digest mismatch: expected ${expectedDigest}, received ${actualDigest}. Nothing was installed.`,
     );
   }
+  reportProgress(
+    options,
+    4,
+    progressTotal,
+    "Downloaded and verified official runner archive",
+  );
 
   await appendRunnerIgnores(join(configDir, ".gitignore"), adapters);
   await adapters.makeDirectory(runnerDir).catch((error) => {
@@ -471,6 +512,12 @@ export const installRepositoryRunner = async (
   });
   await adapters.chmod(runnerDir, 0o700);
   await adapters.chmod(maskDir, 0o700);
+  reportProgress(
+    options,
+    5,
+    progressTotal,
+    "Prepared protected runner directories",
+  );
 
   const archivePath = join(runnerDir, RUNNER_ARCHIVE);
   await adapters.writeBytes(archivePath, archive);
@@ -485,6 +532,7 @@ export const installRepositoryRunner = async (
   } finally {
     await adapters.remove(archivePath);
   }
+  reportProgress(options, 6, progressTotal, "Extracted runner archive");
 
   try {
     await adapters.run(
@@ -518,6 +566,7 @@ export const installRepositoryRunner = async (
         : `Registering ${runnerName} failed and partial local runner files could not be fully removed. Remove only ${runnerDir} and ${maskDir}, check GitHub Settings > Actions > Runners for an orphan registration, then retry. The one-time token was not stored.`,
     );
   }
+  reportProgress(options, 7, progressTotal, "Registered runner with GitHub");
 
   await adapters.writeText(
     join(runnerDir, RUNNER_INSTALL_METADATA),
@@ -545,6 +594,7 @@ export const installRepositoryRunner = async (
       `The runner was registered, but its wake-up files could not be installed. Runner files were retained at ${runnerDir}; fix the error and retry: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+  reportProgress(options, 8, progressTotal, "Installed wake-up workflow");
 
   return { name: runnerName, repository, version, runnerDir };
 };

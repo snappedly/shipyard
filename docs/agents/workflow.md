@@ -38,8 +38,9 @@ The pre-commit hook runs staged formatting and then the cheap typecheck. The ful
 ### Broader and release loop
 
 - Package output: `npm run build`; this also copies templates and checks that public declaration files are free of Effect references. The standard check invokes it before tests.
-- CI: pull requests and pushes to `main` run the package smoke test and documentation build.
-- Package release: the push-triggered `release.yml` workflow maintains and automatically merges the Changesets version pull request after CI, then verifies and publishes its exact `main` commit automatically through the unprotected `production` environment.
+- CI: pull requests and pushes to `staging` and `production` run the package smoke test.
+- Staging deployment: the push-triggered `staging.yml` workflow runs the full check and publishes the exact `staging` commit as an npm prerelease under the `staging` dist-tag.
+- Package release: the push-triggered `release.yml` workflow maintains and automatically merges the Changesets version pull request after CI, then verifies and publishes its exact `production` commit automatically through the unprotected `production` environment.
 
 ## Required checks
 
@@ -49,7 +50,7 @@ The pre-commit hook runs staged formatting and then the cheap typecheck. The ful
 - Cross-cutting or release work: `npm run typecheck`, `npm run build`, and `npm test`.
 - Formatting checks are required for the repository: `npm run format:check` (included in `npm run check`).
 
-The active CI workflow runs the package smoke test and documentation build on pull requests and pushes to `main`. Full suites and production/deployment builds are not universal local defaults; `npm run check` remains the explicit full repository check when it is required.
+The active CI workflow runs the package smoke test on pull requests and pushes to `staging` and `production`. The staging deployment runs the full repository check; `npm run check` remains the explicit full repository check when it is required locally.
 
 Require cleanup and applicable verification before commit. After review fixes, rerun only affected checks and review the changed scope.
 
@@ -63,23 +64,23 @@ Small, low-risk changes receive local review of the diff against the request and
 
 ## Pull or merge request
 
-The base branch is `main`. Changes intended for integration land through a pull request; small changes may perform local review inline but still use the same delivery path. The recommended merge strategy is squash merge. The agent may push the task branch and create or update its pull request after applicable checks pass.
+The default integration branch is `staging`. Changes intended for integration land through a pull request to `staging`; after staging verification, `staging` is merged into the protected `production` branch. Small changes may perform local review inline but still use the same delivery path. The recommended merge strategy is squash merge. The agent may push the task branch and create or update its pull request after applicable checks pass.
 
-Issues close when the change is merged to `main` and required CI passes. A future release task may remain open until its release verification completes.
+Issues close when the change is merged to `staging` and required CI passes. A future release task may remain open until its production release verification completes.
 
-No preview deployment is configured today. If a future non-production preview exists, it may run before production approval.
+The staging deployment is the non-production verification path. Testers install its npm prerelease with `@snappedly-tools/shipyard@staging`; it never advances the production `latest` dist-tag.
 
 ## Production release
 
-Package publication is automated by `release.yml`. Pending changesets create or update a version pull request, and the workflow automatically merges it after its exact-head CI passes. The workflow then dispatches a publish run for the resulting `main` commit, reruns `npm run check`, inspects the package manifest, and publishes through npm trusted publishing via the unprotected `production` environment. See `RELEASING.md`.
+Package publication is automated by `release.yml`. Pending changesets create or update a version pull request, and the workflow automatically merges it after its exact-head CI passes. The workflow then dispatches a publish run for the resulting `production` commit, reruns `npm run check`, inspects the package manifest, and publishes through npm trusted publishing via the unprotected `production` environment. See `RELEASING.md`.
 
-The repository has no hosted production environment or deployment workflow. Publishing the npm package does not deploy an always-on Shipyard service.
+The production deployment publishes the npm package; it does not deploy an always-on Shipyard service. The staging deployment publishes a prerelease of the same package for testing.
 
-If a separate production service deployment is added, the candidate must be identified by its exact `main` commit plus immutable version/artifact where available. A changed candidate invalidates prior approval, and any deployment-system approval gate must prevent an unapproved service candidate from deploying. The npm package release is intentionally unattended after its exact-candidate checks.
+If a separate production service deployment is added, the candidate must be identified by its exact `production` commit plus immutable version/artifact where available. A changed candidate invalidates prior approval, and any deployment-system approval gate must prevent an unapproved service candidate from deploying. The npm package release is intentionally unattended after its exact-candidate checks.
 
 ## Verification and recovery
 
-Production verification is currently not applicable. For repository changes, evidence is the applicable PR checks and review. For any future release, verify the exact artifact/version, package or CLI smoke behavior, deployment result, and relevant health signals.
+For staging, verify the exact prerelease version and `staging` dist-tag, install it in the test project, and run the relevant CLI smoke behavior. For production, verify the exact artifact/version, package or CLI smoke behavior, deployment result, and relevant health signals.
 
 Recovery is by revert or roll-forward through a new pull request. No production migrations exist in this repository. Future migrations must document whether rollback is unsafe and require a forward-compatible recovery plan.
 

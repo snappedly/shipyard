@@ -22,6 +22,7 @@ import type {
   GitHubPullRequestSnapshot,
 } from "../../integrations/github/index.js";
 import type { ReviewCandidate } from "../review/index.js";
+import { sameRevision } from "../shared.js";
 import type {
   BranchLease,
   DispatchIntent,
@@ -102,11 +103,6 @@ export interface ReviewSchedulingResult {
 }
 
 const defaultNow = (): string => new Date().toISOString();
-
-const sameRevision = (
-  left: RevisionReference,
-  right: RevisionReference,
-): boolean => left.branch === right.branch && left.sha === right.sha;
 
 const branchPart = (value: string): string =>
   value

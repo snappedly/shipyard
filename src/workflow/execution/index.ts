@@ -19,6 +19,7 @@ import {
   type ReviewAxis,
   type WorkBrief,
 } from "../contracts/index.js";
+import { deepFreeze } from "../shared.js";
 
 export interface TrustedPhaseInputs {
   readonly brief: WorkBrief;
@@ -196,14 +197,6 @@ export interface ExecutePhaseOptions {
   readonly output?: OutputDefinition;
   readonly signal?: AbortSignal;
 }
-
-const deepFreeze = <T>(value: T): T => {
-  if (typeof value !== "object" || value === null) return value;
-  for (const child of Object.values(value as Record<string, unknown>)) {
-    deepFreeze(child);
-  }
-  return Object.freeze(value);
-};
 
 const normalizeCommits = (
   commits: readonly (string | { readonly sha: string })[],
@@ -759,8 +752,7 @@ const sandboxResultToResponse = (
       questions: [],
       findings: [],
     },
-    logFilePath: result.logFilePath,
-  } as PhaseEngineResponse;
+  };
 };
 
 export const createCreateSandboxPhaseEngineAdapter = (

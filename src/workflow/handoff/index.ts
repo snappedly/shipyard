@@ -11,6 +11,7 @@ import {
   type WorkBrief,
 } from "../contracts/index.js";
 import type { WorkflowJob } from "../coordinator/index.js";
+import { sameRevision } from "../shared.js";
 
 export interface HandoffCandidate {
   readonly base: RevisionReference;
@@ -206,11 +207,6 @@ export interface SourceIssueClosureResult extends CompletionResult {
 }
 
 const defaultAxes: readonly ReviewAxis[] = ["standards", "spec"];
-
-const sameRevision = (
-  left: RevisionReference,
-  right: RevisionReference,
-): boolean => left.branch === right.branch && left.sha === right.sha;
 
 const isFreshTimestamp = (
   value: string,

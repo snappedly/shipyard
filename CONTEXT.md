@@ -205,7 +205,8 @@ The display mode where Shipyard writes iteration progress and agent output to a 
 _Avoid_: "file mode", "file logging", "quiet mode"
 
 **Run log**:
-A log file written to `.shipyard/logs/` during a run session.
+A log file written to `.shipyard/logs/YYYY-MM-DD/` during a run session, where
+the directory is the run's local calendar date.
 _Avoid_: "log file" (too generic), "output file"
 
 **Terminal mode**:

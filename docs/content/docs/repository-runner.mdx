@@ -15,8 +15,14 @@ You need Apple Silicon macOS, Docker Desktop, an initialized Shipyard
 repository, `gh` authenticated with repository-administration access, and agent
 credentials in `.shipyard/.env`.
 
+The `GH_TOKEN` in `.shipyard/.env` is the issue-agent credential and may be
+limited to Issues and Metadata. Runner startup uses the host `gh` login for
+administrative checks, including reading the published wake workflow. When
+Shipyard runs in Docker, the runtime token is passed into that sandbox for
+its GitHub issue operations; it is not the runner's administrative login.
+
 Interactive `npx shipyard init` offers runner installation after scaffolding
-and defaults to No. Non-interactive init skips it unless you pass
+and defaults to Yes. Non-interactive init skips it unless you pass
 `--install-runner true`. You can install later:
 
 ```sh
@@ -26,6 +32,10 @@ git commit -m "Add Shipyard wake workflow"
 git push
 npx shipyard runner start
 ```
+
+Terminal installs show a progress bar for validation, download, registration,
+and workflow setup. Non-interactive output records the same stages as log
+entries.
 
 `--registration-token` can supply the one-time registration credential. It
 does not replace administrative `gh` access, which is required to verify that
@@ -60,12 +70,14 @@ takes the controller offline.
 The controller runs only while its `runner start` terminal remains open. It
 does not start at login. Ctrl-C, closing the terminal, and `runner stop` use the
 bounded shutdown path and cancel active work while preserving Shipyard logs and
-worktrees.
+worktrees. `runner stop` can be run from another terminal: it signals the live
+PID recorded by the repository even when the stored process identity is stale.
 
 ```sh
 npx shipyard runner status
 npx shipyard runner stop
 npx shipyard runner remove
+npx shipyard runner purge
 ```
 
 Normal removal unregisters GitHub and deletes protected runner files, while
@@ -73,6 +85,14 @@ preserving Shipyard configuration, workflow, activation label, issues, logs,
 and worktrees. If unregistration fails, local state is preserved. Use
 `runner remove --force` only when necessary, then remove the named orphaned
 registration in GitHub.
+
+`runner purge` removes all dated default run-log folders and regular root-level
+`.log` files regardless of age. Root-level `.log` files in `.shipyard/logs/`
+are managed by this retention policy, including explicit logging paths. The
+foreground controller separately removes dated folders older than eight
+calendar days and root-level `.log` files last modified before the same cutoff.
+It runs this maintenance at startup and once per day; a purge failure is
+reported and does not stop the runner.
 
 There is no Mac sleep detector. After a sleep beyond GitHub's 24-hour queue
 lifetime, manually dispatch the workflow or restart the controller. GitHub can

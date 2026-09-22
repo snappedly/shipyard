@@ -8,6 +8,12 @@ import { styleText } from "node:util";
 
 export type Severity = "info" | "success" | "warn" | "error";
 
+export interface DisplayProgressUpdate {
+  readonly current: number;
+  readonly total: number;
+  readonly message: string;
+}
+
 export type DisplayEntry =
   | { readonly _tag: "intro"; readonly title: string }
   | {
@@ -16,6 +22,11 @@ export type DisplayEntry =
       readonly severity: Severity;
     }
   | { readonly _tag: "spinner"; readonly message: string }
+  | {
+      readonly _tag: "progress";
+      readonly title: string;
+      readonly updates: ReadonlyArray<DisplayProgressUpdate>;
+    }
   | {
       readonly _tag: "summary";
       readonly title: string;
@@ -42,6 +53,13 @@ export interface DisplayService {
   readonly spinner: <A, E, R>(
     message: string,
     effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E, R>;
+
+  readonly progress: <A, E, R>(
+    title: string,
+    effect: (
+      report: (update: DisplayProgressUpdate) => void,
+    ) => Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E, R>;
 
   readonly summary: (
@@ -97,6 +115,17 @@ export const SilentDisplay = {
           ]),
           () => effect,
         ),
+
+      progress: (title, effect) =>
+        Effect.gen(function* () {
+          const updates: DisplayProgressUpdate[] = [];
+          const result = yield* effect((update) => updates.push(update));
+          yield* Ref.update(ref, (entries) => [
+            ...entries,
+            { _tag: "progress" as const, title, updates: [...updates] },
+          ]);
+          return result;
+        }),
 
       summary: (title, rows) =>
         Ref.update(ref, (entries) => [
@@ -226,6 +255,22 @@ export const FileDisplay = {
               return result;
             }),
 
+          progress: (title, effect) =>
+            Effect.gen(function* () {
+              yield* appendToLog(`${title}...`);
+              const start = Date.now();
+              const updates: DisplayProgressUpdate[] = [];
+              const result = yield* effect((update) => updates.push(update));
+              for (const update of updates) {
+                yield* appendToLog(
+                  `  ${update.message} (${update.current}/${update.total})`,
+                );
+              }
+              const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+              yield* appendToLog(`${title} done (${elapsed}s)`);
+              return result;
+            }),
+
           summary: (title, rows) => {
             const lines = Object.entries(rows)
               .map(([key, value]) => `  ${key}: ${value}`)
@@ -299,6 +344,37 @@ export const ClackDisplay = {
               s.stop(message);
             } else {
               s.stop(`${message} (failed)`);
+            }
+          }),
+      ),
+
+    progress: (title, effect) =>
+      Effect.acquireUseRelease(
+        Effect.sync(() => {
+          const progress = clack.progress({ max: 100 });
+          let percent = 0;
+          progress.start(title);
+          const report = (update: DisplayProgressUpdate): void => {
+            const total = Math.max(1, update.total);
+            const current = Math.min(total, Math.max(0, update.current));
+            const nextPercent = Math.round((current / total) * 100);
+            const message = `${update.message} (${current}/${total})`;
+            if (nextPercent > percent) {
+              progress.advance(nextPercent - percent, message);
+            } else {
+              progress.message(message);
+            }
+            percent = nextPercent;
+          };
+          return { progress, report };
+        }),
+        ({ report }) => effect(report),
+        ({ progress }, exit) =>
+          Effect.sync(() => {
+            if (exit._tag === "Success") {
+              progress.stop(`${title} complete`);
+            } else {
+              progress.error(`${title} failed`);
             }
           }),
       ),

@@ -13,13 +13,8 @@ import {
   getIssueTracker,
   getSandboxProvider,
 } from "./InitService.js";
-import type {
-  AgentEntry,
-  PackageManager,
-  ScaffoldOptions,
-} from "./InitService.js";
+import type { AgentEntry, ScaffoldOptions } from "./InitService.js";
 import { SANDBOX_REPO_DIR } from "./SandboxFactory.js";
-import { SKELETON_PROMPT } from "./templates.js";
 import { CODEX_MODELS } from "./modelConfig.js";
 
 const makeDir = () => mkdtemp(join(tmpdir(), "init-service-"));
@@ -110,6 +105,7 @@ describe("InitService scaffold", () => {
       "utf-8",
     );
     expect(envExample).toContain("GH_TOKEN=");
+    expect(envExample).toContain("GH_REPO=\n");
     expect(envExample).toContain(
       "https://github.com/settings/personal-access-tokens/new",
     );
@@ -118,6 +114,17 @@ describe("InitService scaffold", () => {
     expect(envExample).toContain(
       'GH_TOKEN="$(gh auth token)" npx shipyard run',
     );
+  });
+
+  it("creates .env from the generated .env.example", async () => {
+    const dir = await makeDir();
+    await runScaffold(dir);
+
+    const configDir = join(dir, ".shipyard");
+    const envExample = await readFile(join(configDir, ".env.example"), "utf-8");
+    const env = await readFile(join(configDir, ".env"), "utf-8");
+
+    expect(env).toBe(envExample);
   });
 
   it("does not scaffold config.json for blank template", async () => {
@@ -520,199 +527,23 @@ describe("InitService scaffold", () => {
   });
 
   describe("getNextStepsLines", () => {
-    const next = (
-      template: string,
-      mainFilename: string,
-      packageManager: PackageManager = "npm",
-    ) =>
-      getNextStepsLines(
-        template,
-        mainFilename,
-        claudeCodeAgent,
-        packageManager,
-      );
-
-    it("blank template returns steps mentioning .env, main filename, and the one-command runner", () => {
-      const lines = next("blank", "main.mts");
-      expect(lines.length).toBeGreaterThanOrEqual(2);
-      const joined = lines.join("\n");
-      expect(joined).toContain(".env");
-      expect(joined).toContain("main.mts");
-      expect(joined).toContain("npx shipyard run");
+    it("shows environment setup, subscription login, and both start commands", () => {
+      expect(getNextStepsLines()).toEqual([
+        "Next steps:",
+        "1. Fill in the values you need in `.shipyard/.env`.",
+        "2. If using a model subscription, sign in. For Codex:",
+        `   codex --config 'cli_auth_credentials_store="file"' login`,
+        "   test -f ~/.codex/auth.json",
+        "3. Start with `npx shipyard runner start` (if installed) or `npx shipyard run`",
+      ]);
     });
 
-    it("non-blank template returns steps mentioning .env and the one-command runner", () => {
-      const lines = next("simple-loop", "main.mts");
-      const joined = lines.join("\n");
-      expect(joined).toContain(".env");
-      expect(joined).toContain("npx shipyard run");
-      expect(joined).not.toContain("npm run shipyard");
-    });
-
-    it("non-blank template includes a note about customizing the install command", () => {
-      const lines = next("simple-loop", "main.mts");
-      const joined = lines.join("\n");
-      expect(joined).toContain("npm install");
-      expect(joined).toContain("onSandboxReady");
-    });
-
-    it("non-blank template mentions copyToWorktree and node_modules", () => {
-      const lines = next("simple-loop", "main.mts");
-      const joined = lines.join("\n");
-      expect(joined).toContain("copyToWorktree");
-      expect(joined).toContain("node_modules");
-    });
-
-    it("blank template includes a step to customize prompt.md", () => {
-      const lines = next("blank", "main.mts");
-      const joined = lines.join("\n");
-      expect(joined).toContain("prompt.md");
-    });
-
-    it("simple-loop template includes a step to read/customize prompt files", () => {
-      const lines = next("simple-loop", "main.mts");
-      const joined = lines.join("\n");
-      expect(joined).toContain("prompt");
-      expect(joined).toMatch(/customiz|review|read/i);
-    });
-
-    it("sequential-reviewer template includes a step mentioning prompt files", () => {
-      const lines = next("sequential-reviewer", "main.mts");
-      const joined = lines.join("\n");
-      expect(joined).toContain("prompt");
-      expect(joined).toMatch(/customiz|review|read/i);
-    });
-
-    it("parallel-planner template includes a step mentioning prompt files", () => {
-      const lines = next("parallel-planner", "main.mts");
-      const joined = lines.join("\n");
-      expect(joined).toContain("prompt");
-      expect(joined).toMatch(/customiz|review|read/i);
-    });
-
-    it("returns at least 2 numbered steps for blank template", () => {
-      const lines = next("blank", "main.mts");
-      const numberedSteps = lines.filter((l) => /^\d+\./.test(l));
-      expect(numberedSteps.length).toBeGreaterThanOrEqual(2);
-    });
-
-    it("returns at least 3 numbered steps for non-blank templates", () => {
-      const lines = next("simple-loop", "main.mts");
-      const numberedSteps = lines.filter((l) => /^\d+\./.test(l));
-      expect(numberedSteps.length).toBeGreaterThanOrEqual(3);
-    });
-
-    it("uses main.ts filename when passed", () => {
-      const lines = next("blank", "main.ts");
-      const joined = lines.join("\n");
-      expect(joined).toContain("main.ts");
-      expect(joined).not.toContain("main.mts");
-    });
-
-    it("reviewer template mentions CODING_STANDARDS.md customization", () => {
-      const lines = next("sequential-reviewer", "main.mts");
-      const joined = lines.join("\n");
-      expect(joined).toContain("CODING_STANDARDS.md");
-    });
-
-    it("non-reviewer template does not mention CODING_STANDARDS.md", () => {
-      const lines = next("simple-loop", "main.mts");
-      const joined = lines.join("\n");
+    it("does not include internal template implementation details", () => {
+      const joined = getNextStepsLines().join("\n");
+      expect(joined).not.toContain("copyToWorktree");
+      expect(joined).not.toContain("onSandboxReady");
       expect(joined).not.toContain("CODING_STANDARDS.md");
-    });
-
-    it("blank template does not mention CODING_STANDARDS.md", () => {
-      const lines = next("blank", "main.mts");
-      const joined = lines.join("\n");
-      expect(joined).not.toContain("CODING_STANDARDS.md");
-    });
-
-    it("planner template includes a step to install a schema validator", () => {
-      const lines = next("parallel-planner", "main.mts");
-      const joined = lines.join("\n");
-      expect(joined).toContain("npm install zod");
-      expect(joined).toContain("standardschema.dev");
-    });
-
-    it("parallel-planner-with-review template includes the schema validator step", () => {
-      const lines = next("parallel-planner-with-review", "main.mts");
-      const joined = lines.join("\n");
-      expect(joined).toContain("npm install zod");
-    });
-
-    it("planner zod step uses the detected package manager's add command", () => {
-      expect(next("parallel-planner", "main.mts", "pnpm").join("\n")).toContain(
-        "pnpm add zod",
-      );
-      expect(next("parallel-planner", "main.mts", "yarn").join("\n")).toContain(
-        "yarn add zod",
-      );
-      expect(next("parallel-planner", "main.mts", "bun").join("\n")).toContain(
-        "bun add zod",
-      );
-    });
-
-    it("claude-code agent leads with subscription auth and explains the API-key fallback", () => {
-      const blank = next("blank", "main.mts").join("\n");
-      const nonBlank = next("simple-loop", "main.mts").join("\n");
-      expect(blank).toContain("claude setup-token");
-      expect(blank).toContain("CLAUDE_CODE_OAUTH_TOKEN");
-      expect(blank).toContain("recommended");
-      expect(blank).toContain("ANTHROPIC_API_KEY");
-      expect(nonBlank).toContain("claude setup-token");
-      expect(nonBlank).toContain("CLAUDE_CODE_OAUTH_TOKEN");
-    });
-
-    it("Codex API-key setup explains subscription auth first and the API-key fallback", () => {
-      const joined = getNextStepsLines(
-        "blank",
-        "main.mts",
-        codexAgent,
-        "npm",
-      ).join("\n");
-      expect(joined).toContain("codex login");
-      expect(joined).toContain("--codex-auth chatgpt");
-      expect(joined).toContain("OPENAI_API_KEY");
-      expect(joined).toContain("recommended");
-    });
-
-    it("Codex ChatGPT auth explains the host login, credential mount, and API-key fallback", () => {
-      const lines = getNextStepsLines(
-        "blank",
-        "main.mts",
-        codexAgent,
-        "npm",
-        "chatgpt",
-      );
-      const joined = lines.join("\n");
-      expect(joined).toContain("codex login");
-      expect(joined).toContain("~/.codex/auth.json");
-      expect(joined).toContain("trusted repositories");
-      expect(joined).toContain("OPENAI_API_KEY");
-    });
-
-    it("non-claude-code agents do not get the `claude setup-token` hint", () => {
-      const codexLines = getNextStepsLines(
-        "blank",
-        "main.mts",
-        codexAgent,
-        "npm",
-      ).join("\n");
-      expect(codexLines).not.toContain("claude setup-token");
-      expect(codexLines).not.toContain("CLAUDE_CODE_OAUTH_TOKEN");
-    });
-
-    it("next steps no longer link to the closed issues/191 workaround", () => {
-      const blank = next("blank", "main.mts").join("\n");
-      const nonBlank = next("simple-loop", "main.mts").join("\n");
-      expect(blank).not.toContain("issues/191");
-      expect(nonBlank).not.toContain("issues/191");
-    });
-
-    it("non-planner template does not mention installing zod", () => {
-      const lines = next("simple-loop", "main.mts");
-      const joined = lines.join("\n");
-      expect(joined).not.toContain("zod");
+      expect(joined).not.toContain("codex login");
     });
   });
 
@@ -805,11 +636,6 @@ describe("InitService scaffold", () => {
       expect(prompt).not.toContain("--label Shipyard");
     },
   );
-
-  it("uses the lowercase shipyard label in the skeleton prompt example", () => {
-    expect(SKELETON_PROMPT).toContain("gh issue list --label shipyard");
-    expect(SKELETON_PROMPT).not.toContain("--label Shipyard");
-  });
 
   it("scaffolded prompts that lack a runtime TASK_ID do not contain {{TASK_ID}}", async () => {
     // Regression test for #477: the {{TASK_ID}} placeholder inside
@@ -931,6 +757,30 @@ describe("InitService scaffold", () => {
       expect(mainTs).not.toContain("completedBranches.length === 1");
     });
 
+    it("main.mts merges completed existing branches and stops on no progress", async () => {
+      const dir = await makeDir();
+      await runScaffold(dir, { templateName: "parallel-planner" });
+
+      const mainTs = await readFile(
+        join(dir, ".shipyard", "main.mts"),
+        "utf-8",
+      );
+      expect(mainTs).toContain("entry.outcome.value.commits.length > 0 ||");
+      expect(mainTs).toContain(
+        "entry.outcome.value.completionSignal !== undefined",
+      );
+
+      const noProgressIndex = mainTs.indexOf(
+        "if (completedBranches.length === 0)",
+      );
+      const noProgressSection = mainTs.slice(
+        noProgressIndex,
+        noProgressIndex + 350,
+      );
+      expect(noProgressSection).toContain("break");
+      expect(noProgressSection).not.toContain("continue");
+    });
+
     it("common files are still generated with parallel-planner template", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "parallel-planner" });
@@ -1025,6 +875,32 @@ describe("InitService scaffold", () => {
       // Commits from both implementer and reviewer must be merged
       expect(mainTs).toContain("implement.commits");
       expect(mainTs).toContain("review.commits");
+    });
+
+    it("main.mts reviews completed existing branches and stops on no progress", async () => {
+      const dir = await makeDir();
+      await runScaffold(dir, { templateName: "parallel-planner-with-review" });
+
+      const mainTs = await readFile(
+        join(dir, ".shipyard", "main.mts"),
+        "utf-8",
+      );
+      expect(mainTs).toContain("implement.commits.length > 0 ||");
+      expect(mainTs).toContain("implement.completionSignal !== undefined");
+      expect(mainTs).toContain("entry.outcome.value.commits.length > 0 ||");
+      expect(mainTs).toContain(
+        "entry.outcome.value.completionSignal !== undefined",
+      );
+
+      const noProgressIndex = mainTs.indexOf(
+        "if (completedBranches.length === 0)",
+      );
+      const noProgressSection = mainTs.slice(
+        noProgressIndex,
+        noProgressIndex + 350,
+      );
+      expect(noProgressSection).toContain("break");
+      expect(noProgressSection).not.toContain("continue");
     });
 
     it("main.mts uses Promise.allSettled for parallel execution", async () => {

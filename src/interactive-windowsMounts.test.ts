@@ -43,6 +43,9 @@ import {
 } from "./SandboxProvider.js";
 import { SANDBOX_REPO_DIR } from "./SandboxFactory.js";
 import { claudeCode } from "./AgentProvider.js";
+import { silenceTerminalOutput } from "./testTerminalOutput.js";
+
+silenceTerminalOutput();
 
 /** A bind-mount provider whose handle executes commands on the host worktree. */
 const makeInteractiveProvider = () =>

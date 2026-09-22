@@ -27,7 +27,7 @@ export const initializeRepositoryRunner = async (
       ? await options.confirm!({
           message:
             "Install a foreground repository runner for labelled GitHub issues?",
-          initialValue: false,
+          initialValue: true,
         })
       : false;
   }

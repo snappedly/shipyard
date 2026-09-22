@@ -20,6 +20,9 @@ import {
   type InteractiveExecOptions,
 } from "./SandboxProvider.js";
 import { claudeCode } from "./AgentProvider.js";
+import { silenceTerminalOutput } from "./testTerminalOutput.js";
+
+silenceTerminalOutput();
 
 describe("interactive arg collection", () => {
   let hostDir: string;

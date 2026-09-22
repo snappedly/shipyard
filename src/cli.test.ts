@@ -1,13 +1,20 @@
 import { exec } from "node:child_process";
-import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { NodeContext } from "@effect/platform-node";
-import { Cause, Effect, Exit, Layer } from "effect";
+import { Cause, Effect, Exit, Layer, Ref } from "effect";
 import { describe, expect, it } from "vitest";
 import { cli } from "./cli.js";
-import { ClackDisplay } from "./Display.js";
+import { ClackDisplay, type DisplayEntry, SilentDisplay } from "./Display.js";
 
 const execAsync = promisify(exec);
 
@@ -46,11 +53,23 @@ const runCliInProcess = (args: ReadonlyArray<string>) =>
     cli(["node", "shipyard", ...args]).pipe(Effect.provide(cliTestLayer)),
   );
 
-const runCliInProcessAt = async (args: ReadonlyArray<string>, cwd: string) => {
+const runCliInProcessAt = async (
+  args: ReadonlyArray<string>,
+  cwd: string,
+  displayRef?: Ref.Ref<ReadonlyArray<DisplayEntry>>,
+) => {
   const previousCwd = process.cwd();
   process.chdir(cwd);
   try {
-    return await runCliInProcess(args);
+    return displayRef === undefined
+      ? await runCliInProcess(args)
+      : await Effect.runPromiseExit(
+          cli(["node", "shipyard", ...args]).pipe(
+            Effect.provide(
+              Layer.merge(NodeContext.layer, SilentDisplay.layer(displayRef)),
+            ),
+          ),
+        );
   } finally {
     process.chdir(previousCwd);
   }
@@ -82,6 +101,34 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     expect(stdout).toContain("status");
     expect(stdout).toContain("stop");
     expect(stdout).toContain("remove");
+    expect(stdout).toContain("purge");
+  });
+
+  it("runner purge removes all default run logs regardless of age", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "cli-log-purge-"));
+    const logsDir = join(hostDir, ".shipyard", "logs");
+    await mkdir(join(logsDir, "2000-01-01"), { recursive: true });
+    await mkdir(join(logsDir, "2099-12-31"), { recursive: true });
+    await writeFile(join(logsDir, "audit.log"), "root-level run log");
+    await writeFile(join(logsDir, "notes.txt"), "operator notes");
+    const displayRef = Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([]);
+
+    const result = await runCliInProcessAt(
+      ["runner", "purge"],
+      hostDir,
+      displayRef,
+    );
+
+    expect(Exit.isSuccess(result)).toBe(true);
+    await expect(readdir(logsDir)).resolves.not.toContain("2000-01-01");
+    await expect(readdir(logsDir)).resolves.not.toContain("2099-12-31");
+    await expect(readdir(logsDir)).resolves.not.toContain("audit.log");
+    await expect(readdir(logsDir)).resolves.toContain("notes.txt");
+    expect(await Ref.get(displayRef).pipe(Effect.runPromise)).toContainEqual({
+      _tag: "status",
+      message: "Purged 3 run-log entries.",
+      severity: "success",
+    });
   });
 
   it("runner remove --help exposes explicit forced local removal", async () => {
@@ -136,16 +183,71 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     await commitFile(hostDir, "hello.txt", "hello", "initial commit");
     await mkdir(join(hostDir, ".shipyard"));
 
-    try {
-      await runCli("run --skip-build", hostDir);
-      expect.fail("Expected command to fail");
-    } catch (err: unknown) {
-      const { stdout, stderr } = err as { stdout: string; stderr: string };
-      const output = stdout + stderr;
+    const result = await runCliInProcessAt(["run", "--skip-build"], hostDir);
+
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
+      const output = Cause.pretty(result.cause);
       expect(output).toContain("No Shipyard entrypoint found");
       expect(output).toContain("main.ts");
       expect(output).toContain("main.mts");
     }
+  });
+
+  it("run applies automatic log retention before resolving the entrypoint", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "cli-log-retention-"));
+    const logsDir = join(hostDir, ".shipyard", "logs");
+    await mkdir(join(logsDir, "2000-01-01"), { recursive: true });
+    const rootLog = join(logsDir, "audit.log");
+    await writeFile(rootLog, "root-level run log");
+    await utimes(rootLog, new Date(2000, 0, 1), new Date(2000, 0, 1));
+    const displayRef = Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([]);
+
+    const result = await runCliInProcessAt(
+      ["run", "--skip-build"],
+      hostDir,
+      displayRef,
+    );
+
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
+      expect(Cause.pretty(result.cause)).toContain(
+        "No Shipyard entrypoint found",
+      );
+    }
+    await expect(readdir(logsDir)).resolves.not.toContain("2000-01-01");
+    await expect(readdir(logsDir)).resolves.not.toContain("audit.log");
+    expect(await Ref.get(displayRef).pipe(Effect.runPromise)).toContainEqual({
+      _tag: "status",
+      message: "Purged 2 outdated run-log entries.",
+      severity: "info",
+    });
+  });
+
+  it("run continues when automatic log retention fails", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "cli-log-retention-error-"));
+    const configDir = join(hostDir, ".shipyard");
+    await mkdir(configDir);
+    await writeFile(join(configDir, "logs"), "not a directory");
+    const displayRef = Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([]);
+
+    const result = await runCliInProcessAt(
+      ["run", "--skip-build"],
+      hostDir,
+      displayRef,
+    );
+
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
+      expect(Cause.pretty(result.cause)).toContain(
+        "No Shipyard entrypoint found",
+      );
+    }
+    expect(await Ref.get(displayRef).pipe(Effect.runPromise)).toContainEqual({
+      _tag: "status",
+      message: expect.stringContaining("Automatic run-log purge skipped"),
+      severity: "warn",
+    });
   });
 
   it.skipIf(process.platform === "win32")(

@@ -17,6 +17,9 @@ import {
 } from "./SandboxProvider.js";
 import { claudeCode, codex } from "./AgentProvider.js";
 import { CODEX_MODELS } from "./modelConfig.js";
+import { silenceTerminalOutput } from "./testTerminalOutput.js";
+
+silenceTerminalOutput();
 
 // --- buildInteractiveArgs prompt tests ---
 
