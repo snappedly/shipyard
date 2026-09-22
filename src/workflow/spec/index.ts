@@ -37,6 +37,29 @@ export interface SpecDeliveryPlan {
   readonly waves: readonly (readonly WorkIdentity[])[];
 }
 
+export interface SpecScopeExpansionInput {
+  readonly coordinator: WorkflowCoordinator;
+  readonly delivery: DeliveryGroup;
+  readonly addedChildren: readonly WorkIdentity[];
+  readonly addedDependencies?: readonly {
+    readonly itemId: string;
+    readonly dependsOn: readonly string[];
+  }[];
+  readonly completedChildIds?: readonly string[];
+  readonly parentState?: "open" | "merged";
+}
+
+export interface SpecScopeExpansionResult {
+  readonly status: "expanded" | "follow-up-required" | "rejected";
+  readonly delivery?: DeliveryRecord;
+  readonly plan?: SpecDeliveryPlan;
+  readonly candidateInvalidated: boolean;
+  readonly checksInvalidated: boolean;
+  readonly reviewInvalidated: boolean;
+  readonly draftRequired: boolean;
+  readonly reason?: string;
+}
+
 const compareIdentities = (left: WorkIdentity, right: WorkIdentity): number =>
   left.itemId.localeCompare(right.itemId, undefined, { numeric: true }) ||
   left.kind.localeCompare(right.kind);
@@ -106,6 +129,118 @@ export const planSpecDelivery = (delivery: DeliveryGroup): SpecDeliveryPlan => {
     ),
     waves,
   };
+};
+
+/** Add pre-merge children without reopening or rewriting completed children. */
+export const expandSpecDeliveryScope = async (
+  input: SpecScopeExpansionInput,
+): Promise<SpecScopeExpansionResult> => {
+  if (input.parentState === "merged") {
+    return {
+      status: "follow-up-required",
+      candidateInvalidated: false,
+      checksInvalidated: false,
+      reviewInvalidated: false,
+      draftRequired: false,
+      reason:
+        "Merged deliveries cannot be mutated; create a follow-up delivery",
+    };
+  }
+  const existingById = new Map(
+    input.delivery.graph.children.map((child) => [child.itemId, child]),
+  );
+  for (const child of input.addedChildren) {
+    if (child.kind !== "executable-issue") {
+      return {
+        status: "rejected",
+        candidateInvalidated: false,
+        checksInvalidated: false,
+        reviewInvalidated: false,
+        draftRequired: false,
+        reason: `Only executable children may be added: ${child.itemId}`,
+      };
+    }
+    if (existingById.has(child.itemId)) {
+      return {
+        status: "rejected",
+        candidateInvalidated: false,
+        checksInvalidated: false,
+        reviewInvalidated: false,
+        draftRequired: false,
+        reason: `Child ${child.itemId} is already part of the delivery`,
+      };
+    }
+  }
+  const completed = new Set(input.completedChildIds ?? []);
+  if ([...completed].some((itemId) => !existingById.has(itemId))) {
+    return {
+      status: "rejected",
+      candidateInvalidated: false,
+      checksInvalidated: false,
+      reviewInvalidated: false,
+      draftRequired: false,
+      reason:
+        "Completed child set contains an item outside the current delivery",
+    };
+  }
+  const dependencyMap = new Map<string, Set<string>>(
+    input.delivery.graph.dependencies.map((dependency) => [
+      dependency.itemId,
+      new Set(dependency.dependsOn),
+    ]),
+  );
+  for (const dependency of input.addedDependencies ?? []) {
+    if (completed.has(dependency.itemId)) {
+      const existing =
+        dependencyMap.get(dependency.itemId) ?? new Set<string>();
+      if (
+        existing.size !== dependency.dependsOn.length ||
+        dependency.dependsOn.some((itemId) => !existing.has(itemId))
+      ) {
+        return {
+          status: "rejected",
+          candidateInvalidated: false,
+          checksInvalidated: false,
+          reviewInvalidated: false,
+          draftRequired: false,
+          reason: `Completed child ${dependency.itemId} cannot be mutated`,
+        };
+      }
+    }
+    const values = dependencyMap.get(dependency.itemId) ?? new Set<string>();
+    for (const parent of dependency.dependsOn) values.add(parent);
+    dependencyMap.set(dependency.itemId, values);
+  }
+  const children = [...input.delivery.graph.children, ...input.addedChildren];
+  try {
+    const next = resolveDeliveryGroup({
+      issue: input.delivery.root,
+      children,
+      dependencies: [...dependencyMap.entries()].map(([itemId, dependsOn]) => ({
+        itemId,
+        dependsOn: [...dependsOn],
+      })),
+    });
+    const delivery = await input.coordinator.resolveDelivery(next);
+    return {
+      status: "expanded",
+      delivery,
+      plan: planSpecDelivery(delivery),
+      candidateInvalidated: true,
+      checksInvalidated: true,
+      reviewInvalidated: true,
+      draftRequired: true,
+    };
+  } catch (error) {
+    return {
+      status: "rejected",
+      candidateInvalidated: false,
+      checksInvalidated: false,
+      reviewInvalidated: false,
+      draftRequired: false,
+      reason: errorMessage(error),
+    };
+  }
 };
 
 export interface SpecChildWorkerRequest {

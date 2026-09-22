@@ -1,14 +1,18 @@
 import { createHash } from "node:crypto";
+import type { DeliveryFailureEvidence } from "../../workflow/coordinator/index.js";
 import { GITHUB_PUBLICATION_METADATA_VERSION } from "./types.js";
 import type {
   GitHubBranchPublicationInput,
   GitHubBranchSnapshot,
+  GitHubBlockedDeliveryPublicationInput,
+  GitHubBlockedDeliveryPublicationResult,
   GitHubBriefPublicationInput,
   GitHubCheckPublicationInput,
   GitHubCheckSnapshot,
   GitHubCommentPublicationInput,
   GitHubCommentSnapshot,
   GitHubIssueSnapshot,
+  GitHubLabelSnapshot,
   GitHubIssueClosurePublicationInput,
   GitHubPublicationOptions,
   GitHubPublicationResult,
@@ -16,9 +20,18 @@ import type {
   GitHubPullRequestHandoffPublicationInput,
   GitHubPullRequestPublicationInput,
   GitHubPullRequestSnapshot,
+  GitHubResumeBlockedDeliveryInput,
+  GitHubResumeBlockedDeliveryResult,
   GitHubPublicationMetadata,
   GitHubRepairIssuePublicationInput,
   GitHubRepairLinkPublicationInput,
+} from "./types.js";
+import {
+  READY_FOR_HUMAN_LABEL,
+  SHIPYARD_BLOCKED_LABEL,
+  SHIPYARD_BLOCKED_LABEL_COLOR,
+  SHIPYARD_BLOCKED_LABEL_DESCRIPTION,
+  SHIPYARD_LABEL,
 } from "./types.js";
 
 const markerText = (marker: string): string => `<!-- shipyard:${marker} -->`;
@@ -31,6 +44,76 @@ const markerPart = (value: string | number): string =>
 
 const markerHash = (value: string): string =>
   createHash("sha256").update(value).digest("hex").slice(0, 16);
+
+const safeDiagnostic = (value: string, limit = 600): string =>
+  value
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/(?:gh[pousr]|github_pat)_[A-Za-z0-9_]+/gi, "[REDACTED]")
+    .replace(
+      /\b(?:authorization|token|password|secret|cookie)\s*[:=]\s*[^\s,;]+/gi,
+      "$1=[REDACTED]",
+    )
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, limit);
+
+export const formatBlockedDeliveryComment = (
+  evidence: DeliveryFailureEvidence,
+): string =>
+  [
+    "Shipyard blocked this delivery after automatic recovery was exhausted.",
+    "",
+    `- Failed phase: \`${safeDiagnostic(evidence.phase, 80)}\``,
+    `- Error: ${safeDiagnostic(evidence.error)}`,
+    `- Attempts: ${evidence.attempts}`,
+    `- Last successful step: ${safeDiagnostic(evidence.lastSuccessfulStep ?? "not recorded", 160)}`,
+    ...(evidence.branch
+      ? [`- Branch: \`${safeDiagnostic(evidence.branch, 160)}\``]
+      : []),
+    ...(evidence.commit
+      ? [`- Commit: \`${safeDiagnostic(evidence.commit, 160)}\``]
+      : []),
+    ...(evidence.pullRequest
+      ? [`- Pull request: ${safeDiagnostic(evidence.pullRequest, 240)}`]
+      : []),
+    `- Recovery: ${safeDiagnostic(evidence.recovery, 300)}`,
+  ].join("\n");
+
+export const projectBlockedLabels = (
+  labels: readonly string[],
+): readonly string[] => [
+  ...new Set(
+    labels.filter(
+      (label) =>
+        label !== SHIPYARD_LABEL &&
+        label !== READY_FOR_HUMAN_LABEL &&
+        label !== SHIPYARD_BLOCKED_LABEL,
+    ),
+  ),
+  SHIPYARD_BLOCKED_LABEL,
+];
+
+export const projectActiveLabels = (
+  labels: readonly string[],
+): readonly string[] =>
+  labels.filter(
+    (label) =>
+      label !== SHIPYARD_BLOCKED_LABEL &&
+      label !== READY_FOR_HUMAN_LABEL &&
+      label !== SHIPYARD_LABEL,
+  );
+
+export const projectResumedLabels = (
+  labels: readonly string[],
+): readonly string[] => [...projectActiveLabels(labels), SHIPYARD_LABEL];
+
+const sameLabels = (
+  actual: readonly string[],
+  expected: readonly string[],
+): boolean =>
+  actual.length === expected.length &&
+  expected.every((label) => actual.includes(label));
 
 const metadataLine = (metadata: GitHubPublicationMetadata): string =>
   `<!-- shipyard:metadata ${JSON.stringify(metadata)} -->`;
@@ -418,6 +501,320 @@ export class GitHubPublication {
       },
     });
     return result(marker, execution);
+  }
+
+  private async publishIssueLabels(input: {
+    readonly jobId: string;
+    readonly lease: GitHubBlockedDeliveryPublicationInput["lease"];
+    readonly issueNumber: number;
+    readonly labels: readonly string[];
+    readonly key: string;
+  }): Promise<GitHubPublicationResult<GitHubIssueSnapshot>> {
+    const marker = `issue-labels:${markerPart(input.lease.repository)}:${markerPart(input.issueNumber)}:${markerPart(input.key)}`;
+    const execution = await this.options.coordinator.publishEffect({
+      jobId: input.jobId,
+      lease: input.lease,
+      itemId: String(input.issueNumber),
+      kind: "github-issue-labels",
+      marker,
+      payload: {
+        repository: input.lease.repository,
+        issueNumber: input.issueNumber,
+        labels: input.labels,
+      },
+      reconcile: async () => {
+        const issue = await this.options.transport.fetchIssue({
+          repository: input.lease.repository,
+          issueNumber: input.issueNumber,
+        });
+        return issue !== undefined && sameLabels(issue.labels, input.labels)
+          ? issue
+          : undefined;
+      },
+      publish: async () => {
+        if (this.options.transport.updateIssue === undefined) {
+          throw new Error("GitHub transport cannot project issue labels");
+        }
+        const issue = await this.options.transport.fetchIssue({
+          repository: input.lease.repository,
+          issueNumber: input.issueNumber,
+        });
+        if (issue === undefined)
+          throw new Error("Source issue is not published");
+        return this.options.transport.updateIssue({
+          repository: input.lease.repository,
+          issueNumber: input.issueNumber,
+          labels: input.labels,
+          marker: markerText(marker),
+        });
+      },
+    });
+    return result(marker, execution);
+  }
+
+  /** Ensure the red blocked label contract before projecting blocked work. */
+  async ensureShipyardBlockedLabel(
+    repository: string,
+  ): Promise<GitHubLabelSnapshot> {
+    if (this.options.transport.ensureLabel === undefined) {
+      throw new Error("GitHub transport cannot ensure repository labels");
+    }
+    return this.options.transport.ensureLabel({
+      repository,
+      name: SHIPYARD_BLOCKED_LABEL,
+      color: SHIPYARD_BLOCKED_LABEL_COLOR,
+      description: SHIPYARD_BLOCKED_LABEL_DESCRIPTION,
+    });
+  }
+
+  async publishBlockedDelivery(
+    input: GitHubBlockedDeliveryPublicationInput,
+  ): Promise<GitHubBlockedDeliveryPublicationResult> {
+    const label = await this.ensureShipyardBlockedLabel(input.lease.repository);
+    const issue = await this.options.transport.fetchIssue({
+      repository: input.lease.repository,
+      issueNumber: input.issueNumber,
+    });
+    if (issue === undefined)
+      throw new Error("Blocked source issue is not published");
+    const issuePublication = await this.publishIssueLabels({
+      jobId: input.jobId,
+      lease: input.lease,
+      issueNumber: input.issueNumber,
+      labels: projectBlockedLabels(issue.labels),
+      key: `blocked:${input.evidence.attempts}`,
+    });
+    const comment = await this.publishComment({
+      jobId: input.jobId,
+      lease: input.lease,
+      issueNumber: input.issueNumber,
+      key: `blocked:${input.evidence.attempts}:${input.evidence.phase}`,
+      body: formatBlockedDeliveryComment(input.evidence),
+    });
+    let pullRequest:
+      | GitHubPublicationResult<GitHubPullRequestSnapshot>
+      | undefined;
+    if (input.pullRequest !== undefined) {
+      const pullRequestInput = input.pullRequest;
+      pullRequest = await this.publishBlockedPullRequest({
+        jobId: input.jobId,
+        lease: input.lease,
+        ...pullRequestInput,
+      });
+    }
+    let parentComment:
+      | GitHubPublicationResult<GitHubCommentSnapshot>
+      | undefined;
+    if (input.parentIssueNumber !== undefined) {
+      const job = await this.options.coordinator.getJob(input.jobId);
+      if (job === undefined)
+        throw new Error("Blocked workflow job does not exist");
+      const marker = `parent-blocked:${markerPart(input.lease.repository)}:${markerPart(input.parentIssueNumber)}:${markerPart(input.issueNumber)}:${markerPart(input.evidence.attempts)}`;
+      const body = [
+        `Shipyard blocked child issue #${input.issueNumber}.`,
+        input.blockerUrl === undefined
+          ? "Re-add the shipyard label to the child issue to resume the existing delivery."
+          : `Blocker: ${input.blockerUrl}`,
+      ].join("\n");
+      const execution = await this.options.coordinator.publishEffect({
+        jobId: input.jobId,
+        lease: input.lease,
+        deliveryKey: job.deliveryKey,
+        kind: "github-parent-blocked-link",
+        marker,
+        payload: {
+          repository: input.lease.repository,
+          issueNumber: input.parentIssueNumber,
+        },
+        reconcile: () =>
+          this.options.transport.findCommentByMarker({
+            repository: input.lease.repository,
+            issueNumber: input.parentIssueNumber!,
+            marker: markerText(marker),
+          }),
+        publish: () =>
+          this.options.transport.createComment({
+            repository: input.lease.repository,
+            issueNumber: input.parentIssueNumber!,
+            body: `${markerText(marker)}\n${body}`,
+          }),
+      });
+      parentComment = result(marker, execution);
+    }
+    return {
+      label,
+      issue: issuePublication,
+      comment,
+      pullRequest,
+      parentComment,
+    };
+  }
+
+  async publishBlockedPullRequest(input: {
+    readonly jobId: string;
+    readonly lease: GitHubBlockedDeliveryPublicationInput["lease"];
+    readonly number: number;
+    readonly branch: string;
+    readonly baseBranch: string;
+    readonly headSha: string;
+  }): Promise<GitHubPublicationResult<GitHubPullRequestSnapshot>> {
+    const marker = `pull-request-blocked:${markerPart(input.lease.repository)}:${markerPart(input.number)}:${markerPart(input.headSha)}`;
+    const matches = (pullRequest: GitHubPullRequestSnapshot): boolean =>
+      pullRequest.state === "open" &&
+      pullRequest.draft &&
+      pullRequest.branch === input.branch &&
+      pullRequest.baseBranch === input.baseBranch &&
+      pullRequest.headSha === input.headSha &&
+      (pullRequest.labels ?? []).includes(SHIPYARD_BLOCKED_LABEL) &&
+      !(pullRequest.labels ?? []).includes(READY_FOR_HUMAN_LABEL) &&
+      !(pullRequest.labels ?? []).includes(SHIPYARD_LABEL);
+    const execution = await this.options.coordinator.publishEffect({
+      jobId: input.jobId,
+      lease: input.lease,
+      branch: input.branch,
+      headSha: input.headSha,
+      kind: "github-pull-request-blocked",
+      marker,
+      payload: { repository: input.lease.repository, number: input.number },
+      reconcile: async () => {
+        const pullRequest = await this.options.transport.fetchPullRequest({
+          repository: input.lease.repository,
+          pullRequestNumber: input.number,
+        });
+        return pullRequest !== undefined && matches(pullRequest)
+          ? pullRequest
+          : undefined;
+      },
+      publish: async () => {
+        const pullRequest = await this.options.transport.fetchPullRequest({
+          repository: input.lease.repository,
+          pullRequestNumber: input.number,
+        });
+        if (pullRequest === undefined)
+          throw new Error("Tracked pull request is not published");
+        if (
+          pullRequest.state !== "open" ||
+          pullRequest.branch !== input.branch ||
+          pullRequest.baseBranch !== input.baseBranch ||
+          pullRequest.headSha !== input.headSha
+        ) {
+          throw new Error(
+            "Pull request candidate changed before blocked projection",
+          );
+        }
+        if (this.options.transport.updatePullRequest === undefined) {
+          throw new Error("GitHub transport cannot project pull request state");
+        }
+        return this.options.transport.updatePullRequest({
+          repository: input.lease.repository,
+          pullRequestNumber: input.number,
+          draft: true,
+          labels: projectBlockedLabels(pullRequest.labels ?? []),
+          marker: markerText(marker),
+        });
+      },
+    });
+    return result(marker, execution);
+  }
+
+  async resumeBlockedDelivery(
+    input: GitHubResumeBlockedDeliveryInput,
+  ): Promise<GitHubResumeBlockedDeliveryResult> {
+    const reclaimed = await this.options.coordinator.reclaimBlockedJob(
+      input.jobId,
+    );
+    if (
+      reclaimed.status !== "reclaimed" &&
+      reclaimed.status !== "already-reclaimed"
+    ) {
+      return {
+        status: "not-reclaimed",
+        reason: reclaimed.reason ?? "Blocked delivery was not reclaimed",
+      };
+    }
+    const issue = await this.options.transport.fetchIssue({
+      repository: input.lease.repository,
+      issueNumber: input.issueNumber,
+    });
+    if (issue === undefined)
+      throw new Error("Resumed source issue is not published");
+    const issuePublication = await this.publishIssueLabels({
+      jobId: input.jobId,
+      lease: input.lease,
+      issueNumber: input.issueNumber,
+      labels: projectResumedLabels(issue.labels),
+      key: "resumed",
+    });
+    let pullRequest:
+      | GitHubPublicationResult<GitHubPullRequestSnapshot>
+      | undefined;
+    if (input.pullRequest !== undefined) {
+      const pullRequestInput = input.pullRequest;
+      const marker = `pull-request-resumed:${markerPart(input.lease.repository)}:${markerPart(pullRequestInput.number)}`;
+      const execution = await this.options.coordinator.publishEffect({
+        jobId: input.jobId,
+        lease: input.lease,
+        branch: pullRequestInput.branch,
+        kind: "github-pull-request-resumed",
+        marker,
+        payload: {
+          repository: input.lease.repository,
+          number: pullRequestInput.number,
+        },
+        reconcile: async () => {
+          const current = await this.options.transport.fetchPullRequest({
+            repository: input.lease.repository,
+            pullRequestNumber: pullRequestInput.number,
+          });
+          return current !== undefined &&
+            current.state === "open" &&
+            current.draft &&
+            current.branch === pullRequestInput.branch &&
+            current.baseBranch === pullRequestInput.baseBranch &&
+            current.headSha === pullRequestInput.headSha &&
+            !(current.labels ?? []).includes(SHIPYARD_BLOCKED_LABEL) &&
+            !(current.labels ?? []).includes(READY_FOR_HUMAN_LABEL)
+            ? current
+            : undefined;
+        },
+        publish: async () => {
+          const current = await this.options.transport.fetchPullRequest({
+            repository: input.lease.repository,
+            pullRequestNumber: pullRequestInput.number,
+          });
+          if (current === undefined)
+            throw new Error("Tracked pull request is not published");
+          if (
+            current.state !== "open" ||
+            current.branch !== pullRequestInput.branch ||
+            current.baseBranch !== pullRequestInput.baseBranch ||
+            current.headSha !== pullRequestInput.headSha
+          ) {
+            throw new Error(
+              "Pull request candidate changed before resume projection",
+            );
+          }
+          if (this.options.transport.updatePullRequest === undefined) {
+            throw new Error(
+              "GitHub transport cannot project pull request state",
+            );
+          }
+          return this.options.transport.updatePullRequest({
+            repository: input.lease.repository,
+            pullRequestNumber: pullRequestInput.number,
+            draft: true,
+            labels: projectResumedLabels(current.labels ?? []),
+            marker: markerText(marker),
+          });
+        },
+      });
+      pullRequest = result(marker, execution);
+    }
+    return {
+      status: reclaimed.status,
+      issue: issuePublication,
+      pullRequest,
+    };
   }
 
   async publishStandaloneIssueClosure(

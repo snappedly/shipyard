@@ -13,6 +13,7 @@ import {
 } from "../contracts/index.js";
 import {
   deliverSpec,
+  expandSpecDeliveryScope,
   planSpecDelivery,
   reviewAxesForRisk,
   type SpecChildWorker,
@@ -166,6 +167,30 @@ describe("spec delivery planning", () => {
       "spec",
       "interface",
     ]);
+  });
+
+  it("expands open scope without reopening completed children", async () => {
+    const delivery = deliveryFor(["101"]);
+    const expanded = await expandSpecDeliveryScope({
+      coordinator: coordinator(),
+      delivery,
+      addedChildren: [identity("102")],
+      completedChildIds: ["101"],
+    });
+    expect(expanded.status).toBe("expanded");
+    expect(expanded.candidateInvalidated).toBe(true);
+    expect(expanded.draftRequired).toBe(true);
+    expect(
+      expanded.plan?.waves.map((wave) => wave.map((child) => child.itemId)),
+    ).toEqual([["101", "102"]]);
+
+    const merged = await expandSpecDeliveryScope({
+      coordinator: coordinator(),
+      delivery,
+      addedChildren: [identity("103")],
+      parentState: "merged",
+    });
+    expect(merged.status).toBe("follow-up-required");
   });
 });
 

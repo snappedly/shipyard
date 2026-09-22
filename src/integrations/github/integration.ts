@@ -110,6 +110,9 @@ const labels = (value: unknown): string[] => {
     .filter((entry) => entry.length > 0);
 };
 
+const addedLabel = (payload: JsonRecord): string | undefined =>
+  requiredStringValue(record(payload.label)?.name);
+
 const state = (value: unknown): "open" | "closed" =>
   value === "closed" ? "closed" : "open";
 
@@ -124,7 +127,7 @@ const allowedEventNames = new Set<GitHubEventName>([
 ]);
 
 const supportedActions: Readonly<Record<GitHubEventName, readonly string[]>> = {
-  issues: ["opened", "edited", "reopened", "closed"],
+  issues: ["opened", "edited", "reopened", "closed", "labeled", "unlabeled"],
   issue_comment: ["created", "edited"],
   pull_request: [
     "opened",
@@ -472,6 +475,10 @@ export class GitHubIntegration {
         relevantRevision: issue.updatedAt || envelope.receivedAt,
         observedAt: issue.updatedAt || envelope.receivedAt,
         sourceState: issue.state,
+        resumeRequested:
+          name === "issues" &&
+          action === "labeled" &&
+          addedLabel(payload)?.toLowerCase() === "shipyard",
         reply: name === "issue_comment" ? commentSnapshot(payload) : undefined,
       };
       const brief = await this.briefForIssue(draft, issue, kind);
@@ -487,6 +494,7 @@ export class GitHubIntegration {
             relevantRevision: draft.relevantRevision,
             observedAt: draft.observedAt,
             sourceState: draft.sourceState,
+            resumeRequested: draft.resumeRequested,
             payload: envelope.payload,
           },
         },
@@ -802,6 +810,8 @@ export class GitHubIntegration {
       this.options.triage === undefined &&
       current !== undefined &&
       current.control === "active" &&
+      current.state !== "completed" &&
+      current.state !== "merged" &&
       sameIssueContent(current.brief, issue)
     ) {
       return current.brief;

@@ -10,12 +10,21 @@ import type {
 } from "../../workflow/contracts/index.js";
 import type {
   BranchLease,
+  DeliveryFailureEvidence,
+  DeliveryKey,
   EffectExecution,
   EffectIntent,
   IngestResult,
   WorkflowCoordinator,
   WorkflowEventInput,
 } from "../../workflow/coordinator/index.js";
+
+export const SHIPYARD_LABEL = "shipyard" as const;
+export const SHIPYARD_BLOCKED_LABEL = "shipyard-blocked" as const;
+export const SHIPYARD_BLOCKED_LABEL_COLOR = "d73a4a" as const;
+export const SHIPYARD_BLOCKED_LABEL_DESCRIPTION =
+  "Shipyard delivery is blocked after automatic recovery was exhausted; re-add shipyard to retry the existing delivery." as const;
+export const READY_FOR_HUMAN_LABEL = "ready-for-human" as const;
 import type {
   TriageInvestigator,
   TriageStore,
@@ -193,6 +202,7 @@ export interface GitHubNormalizedEvent {
   readonly relevantRevision: string;
   readonly observedAt: string;
   readonly sourceState: "open" | "closed";
+  readonly resumeRequested?: boolean;
   readonly reply?: GitHubCommentSnapshot;
   readonly review?: GitHubPullRequestReviewSnapshot;
   readonly trackedPullRequest?: GitHubTrackedPullRequest;
@@ -365,6 +375,20 @@ export interface GitHubReadTransport {
 }
 
 export interface GitHubWriteTransport {
+  /** Ensure a repository label exists with the coordinator-owned contract. */
+  readonly ensureLabel?: (input: {
+    readonly repository: string;
+    readonly name: string;
+    readonly color: string;
+    readonly description: string;
+  }) => Promise<GitHubLabelSnapshot>;
+  /** Replace only the labels projected by Shipyard on an issue. */
+  readonly updateIssue?: (input: {
+    readonly repository: string;
+    readonly issueNumber: number;
+    readonly labels: readonly string[];
+    readonly marker: string;
+  }) => Promise<GitHubIssueSnapshot>;
   createComment(input: {
     readonly repository: string;
     readonly issueNumber: number;
@@ -430,6 +454,12 @@ export interface GitHubPublicationOptions {
   readonly transport: GitHubReadTransport & GitHubWriteTransport;
   readonly trackingStore: GitHubTrackingStore;
   readonly now?: () => string;
+}
+
+export interface GitHubLabelSnapshot {
+  readonly name: string;
+  readonly color: string;
+  readonly description?: string;
 }
 
 export interface GitHubPublicationResult<T> {
@@ -524,4 +554,47 @@ export interface GitHubRepairLinkPublicationInput {
   readonly lease: BranchLease;
   readonly issueNumber: number;
   readonly repairIssueUrl: string;
+}
+
+export interface GitHubBlockedDeliveryPublicationInput {
+  readonly jobId: string;
+  readonly lease: BranchLease;
+  readonly issueNumber: number;
+  readonly evidence: DeliveryFailureEvidence;
+  readonly parentIssueNumber?: number;
+  readonly pullRequest?: {
+    readonly number: number;
+    readonly branch: string;
+    readonly baseBranch: string;
+    readonly headSha: string;
+  };
+  readonly blockerUrl?: string;
+}
+
+export interface GitHubBlockedDeliveryPublicationResult {
+  readonly label?: GitHubLabelSnapshot;
+  readonly issue?: GitHubPublicationResult<GitHubIssueSnapshot>;
+  readonly comment: GitHubPublicationResult<GitHubCommentSnapshot>;
+  readonly pullRequest?: GitHubPublicationResult<GitHubPullRequestSnapshot>;
+  readonly parentComment?: GitHubPublicationResult<GitHubCommentSnapshot>;
+}
+
+export interface GitHubResumeBlockedDeliveryInput {
+  readonly jobId: string;
+  readonly lease: BranchLease;
+  readonly issueNumber: number;
+  readonly workerId?: string;
+  readonly pullRequest?: {
+    readonly number: number;
+    readonly branch: string;
+    readonly baseBranch: string;
+    readonly headSha: string;
+  };
+}
+
+export interface GitHubResumeBlockedDeliveryResult {
+  readonly status: "reclaimed" | "already-reclaimed" | "not-reclaimed";
+  readonly reason?: string;
+  readonly issue?: GitHubPublicationResult<GitHubIssueSnapshot>;
+  readonly pullRequest?: GitHubPublicationResult<GitHubPullRequestSnapshot>;
 }

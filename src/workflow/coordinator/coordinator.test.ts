@@ -99,6 +99,7 @@ const event = (
   relevantRevision,
   observedAt,
   sourceState: options.sourceState,
+  resumeRequested: options.resumeRequested,
 });
 
 const createClock = (): CoordinatorClock & {
@@ -513,6 +514,83 @@ describe("workflow coordinator", () => {
     });
     expect(retried.status).toBe("dispatched");
     expect(retried.assignment?.id).toBe(first.assignment?.id);
+  });
+
+  it("retains sanitized blocked evidence and reclaims the same dispatch", async () => {
+    const { coordinator } = createCoordinator();
+    const received = await coordinator.ingest(
+      event("delivery-blocked", "2026-09-17T12:00:00.000Z", "a".repeat(40)),
+    );
+    const first = await coordinator.dispatchNext({
+      repository,
+      workerId: "worker-a",
+    });
+    const firstFailure = await coordinator.recordInfrastructureFailure({
+      jobId: received.job!.id,
+      assignmentId: first.assignment!.id,
+      error: "worker failed token=ghp_secret-one",
+      branch: "shipyard/8",
+      commit: "b".repeat(40),
+      pullRequest: "https://github.com/snappedly/shipyard/pull/8",
+    });
+    expect(firstFailure.status).toBe("retry-scheduled");
+    const second = await coordinator.dispatchNext({
+      repository,
+      workerId: "worker-b",
+    });
+    expect(second.assignment?.id).toBe(first.assignment?.id);
+    const secondFailure = await coordinator.recordInfrastructureFailure({
+      jobId: received.job!.id,
+      assignmentId: first.assignment!.id,
+      error: "worker failed token=ghp_secret-two",
+    });
+    expect(secondFailure.status).toBe("retry-scheduled");
+    const third = await coordinator.dispatchNext({
+      repository,
+      workerId: "worker-c",
+    });
+    expect(third.assignment?.id).toBe(first.assignment?.id);
+    const exhausted = await coordinator.recordInfrastructureFailure({
+      jobId: received.job!.id,
+      assignmentId: first.assignment!.id,
+      error: "worker failed token=ghp_secret-three",
+      recovery: "Re-add shipyard to retry",
+    });
+
+    expect(exhausted.status).toBe("exhausted");
+    expect(exhausted.job.blocked?.reason).toBe(
+      "infrastructure-retries-exhausted",
+    );
+    expect(exhausted.evidence?.error).not.toContain("ghp_secret");
+    expect(exhausted.evidence?.attempts).toBe(3);
+    expect(
+      await coordinator.dispatchNext({ repository, workerId: "worker-d" }),
+    ).toMatchObject({ status: "none" });
+
+    const resumedEvent = await coordinator.ingest(
+      event(
+        "delivery-blocked-resume",
+        "2026-09-17T12:00:03.000Z",
+        "a".repeat(40),
+        {
+          resumeRequested: true,
+        },
+      ),
+    );
+    expect(resumedEvent.job?.id).toBe(received.job?.id);
+    expect(resumedEvent.dispatch?.id).toBe(first.dispatch?.id);
+    const reclaimed = await coordinator.reclaimBlockedJob(received.job!.id);
+    expect(reclaimed.status).toBe("already-reclaimed");
+    const replay = await coordinator.reclaimBlockedJob(received.job!.id);
+    expect(replay.status).toBe("already-reclaimed");
+    const resumed = await coordinator.dispatchNext({
+      repository,
+      workerId: "worker-e",
+    });
+    expect(resumed.assignment?.id).toBe(first.assignment?.id);
+    expect(
+      (await coordinator.getJob(received.job!.id))?.blocked,
+    ).toBeUndefined();
   });
 
   it("keeps clarification and post-result phase state across pause and resume", async () => {

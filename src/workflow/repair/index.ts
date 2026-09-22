@@ -83,6 +83,10 @@ export interface ScheduleRepairOptions {
   readonly workerId: string;
   readonly sourceIssueNumber?: number;
   readonly pullRequestNumber?: number;
+  /** A merged delivery cannot be mutated; callers must start a follow-up. */
+  readonly deliveryState?: "active" | "merged";
+  /** Return the existing PR to draft before a repair changes its candidate. */
+  readonly invalidateHandoff?: boolean;
   readonly followUp?: boolean;
   readonly pullRequestState?: "open" | "closed";
   readonly readCurrent?: () => Promise<CurrentRepairCandidate>;
@@ -102,6 +106,8 @@ export interface RepairBatchResult {
   readonly repairIssue?: GitHubIssueSnapshot;
   readonly issuePublication?: GitHubPublicationResult<GitHubIssueSnapshot>;
   readonly linkPublication?: GitHubPublicationResult<unknown>;
+  readonly handoffInvalidation?: GitHubPublicationResult<GitHubPullRequestSnapshot>;
+  readonly followUpRequired?: boolean;
 }
 
 export interface ScheduleRepairInput extends ScheduleRepairOptions {
@@ -250,6 +256,11 @@ export const scheduleBoundedRepair = async (
     return { ...existing, outcome: "duplicate" };
   }
   const batch = existing?.batch ?? requestedBatch;
+  if (input.deliveryState === "merged") {
+    return blocked(batch, "Post-merge repair requires a follow-up delivery", {
+      followUpRequired: true,
+    });
+  }
   if (findings.length === 0) {
     return blocked(batch, "No actionable blocking findings remain");
   }
@@ -328,12 +339,27 @@ export const scheduleBoundedRepair = async (
     workerId: input.workerId,
     ttlMs: input.leaseTtlMs ?? 60_000,
   });
+  const handoffInvalidation =
+    input.invalidateHandoff === true && input.pullRequestNumber !== undefined
+      ? await input.publication.invalidatePullRequestHandoff({
+          jobId: input.jobId,
+          lease,
+          pullRequestNumber: input.pullRequestNumber,
+          branch: input.candidate.head.branch,
+          baseBranch: policy.baseBranch,
+          headSha: input.candidate.head.sha,
+          briefHash: brief.hash,
+          reason:
+            "Pre-merge repair or scope expansion invalidated the candidate",
+        })
+      : undefined;
   const scheduledResult: RepairBatchResult = {
     outcome: "scheduled",
     batch,
     job: scheduled.job,
     dispatch: scheduled.dispatch,
     lease,
+    handoffInvalidation,
   };
   input.store.save(key, scheduledResult);
   const issuePublication = await input.publication.publishRepairIssue({
@@ -370,6 +396,7 @@ export const scheduleBoundedRepair = async (
       lease,
       issuePublication,
       linkPublication,
+      handoffInvalidation,
     });
   }
   const result: RepairBatchResult = {

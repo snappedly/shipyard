@@ -18,6 +18,7 @@ import {
   closeStandaloneSourceIssue,
   closeSourceIssue,
   evaluateHandoffReadiness,
+  invalidateCandidateEvidence,
   mergeProtectedCandidate,
   prepareHumanHandoff,
   processHumanReviewDecision,
@@ -139,6 +140,23 @@ const job = async (): Promise<WorkflowJob> => {
 };
 
 describe("handoff gates", () => {
+  it("invalidates checks and review evidence after pre-merge scope changes", () => {
+    const invalidated = invalidateCandidateEvidence({
+      candidate: {
+        base,
+        head: { ...head, sha: "c".repeat(40) },
+        briefHash: brief.hash,
+      },
+      checks: [check],
+      review,
+      reason: "A new child was added before merge",
+    });
+    expect(invalidated.invalidated).toBe(true);
+    expect(invalidated.checks[0]?.status).toBe("unknown");
+    expect(invalidated.checks[0]?.summary).toContain("new child");
+    expect(invalidated.review).toBeUndefined();
+  });
+
   it("blocks stale checks, missing review axes, and actionable findings", async () => {
     const currentJob = await job();
     const missing = evaluateHandoffReadiness({

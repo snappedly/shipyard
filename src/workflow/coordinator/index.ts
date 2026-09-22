@@ -32,6 +32,7 @@ import type {
   CoordinatorClock,
   CoordinatorStorage,
   CoordinatorStorageTransaction,
+  DeliveryFailureEvidence,
   DeliveryGroup,
   DeliveryKey,
   DeliveryLease,
@@ -47,6 +48,7 @@ import type {
   IngestResult,
   PublishEffectInput,
   RepairRequestResult,
+  ReclaimBlockedJobResult,
   RepositoryControl,
   SchedulePhaseInput,
   SchedulePhaseResult,
@@ -217,6 +219,25 @@ const isSameEventRevision = (
 
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
+
+const sanitizeDiagnostic = (value: string, limit = 600): string =>
+  value
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/(?:gh[pousr]|github_pat)_[A-Za-z0-9_]+/gi, "[REDACTED]")
+    .replace(
+      /\b(?:authorization|token|password|secret|cookie)\s*[:=]\s*[^\s,;]+/gi,
+      "$1=[REDACTED]",
+    )
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, limit);
+
+const safeReference = (value: string | undefined): string | undefined => {
+  if (value === undefined) return undefined;
+  const sanitized = sanitizeDiagnostic(value, 240);
+  return sanitized.length === 0 ? undefined : sanitized;
+};
 
 export class LeaseLostError extends Error {
   constructor(message = "Branch lease is no longer valid") {
@@ -439,6 +460,29 @@ export class WorkflowCoordinator {
           event: ignored,
           job: current,
           reason: ignored.ignoreReason,
+        };
+      }
+
+      if (
+        current !== undefined &&
+        input.resumeRequested === true &&
+        current.brief.hash === brief.hash
+      ) {
+        const reclaimed = await this.reclaimBlockedJobInTransaction(
+          transaction,
+          current,
+        );
+        const accepted = {
+          ...storedBase,
+          status: "accepted" as const,
+          jobId: current.id,
+        };
+        await transaction.saveEvent(accepted);
+        return {
+          disposition: "accepted",
+          event: accepted,
+          job: reclaimed.job,
+          dispatch: reclaimed.dispatch,
         };
       }
 
@@ -711,7 +755,7 @@ export class WorkflowCoordinator {
     if (job.key.phase !== "triage" && !isAuthorized(job.brief, job.policy)) {
       return "authorization-pending";
     }
-    if (job.infrastructureRetries >= job.infrastructureRetryLimit) {
+    if (job.infrastructureRetries > job.infrastructureRetryLimit) {
       return "infrastructure-retries-exhausted";
     }
     return undefined;
@@ -1088,6 +1132,15 @@ export class WorkflowCoordinator {
         `Effect is not bound to workflow item ${job.key.itemId}`,
       );
     }
+    if (
+      input.deliveryKey !== undefined &&
+      (input.deliveryKey.repository !== job.deliveryKey.repository ||
+        input.deliveryKey.itemId !== job.deliveryKey.itemId)
+    ) {
+      throw new LeaseLostError(
+        `Effect is not bound to delivery ${job.deliveryKey.repository}#${job.deliveryKey.itemId}`,
+      );
+    }
     if (input.headSha !== undefined) {
       const currentHead = [...job.phaseResults]
         .reverse()
@@ -1298,6 +1351,8 @@ export class WorkflowCoordinator {
         state,
         control: nextControl,
         infrastructureRetries: 0,
+        lastInfrastructureFailure: undefined,
+        blocked: undefined,
         activeAssignmentId:
           job.activeAssignmentId === result.assignmentId
             ? undefined
@@ -1337,10 +1392,44 @@ export class WorkflowCoordinator {
       ) {
         return { status: "not-retryable", job };
       }
+      const latestSuccess = [...job.phaseResults]
+        .reverse()
+        .find((result) => result.outcome === "completed");
+      const latestHead = [...job.phaseResults]
+        .reverse()
+        .map((result) => result.head)
+        .find(
+          (head): head is { branch: string; sha: string } => head !== undefined,
+        );
+      const attempts = job.infrastructureRetries + 1;
+      const lastSuccessfulStep = safeReference(
+        input.lastSuccessfulStep ?? latestSuccess?.phase,
+      );
+      const evidence: DeliveryFailureEvidence = {
+        phase: dispatch.key.phase,
+        error: sanitizeDiagnostic(input.error),
+        attempts,
+        lastSuccessfulStep,
+        lastSuccess: lastSuccessfulStep,
+        branch: safeReference(input.branch ?? latestHead?.branch),
+        commit: safeReference(input.commit ?? latestHead?.sha),
+        pullRequest: safeReference(input.pullRequest),
+        recovery: sanitizeDiagnostic(
+          input.recovery ??
+            "Re-add the shipyard label to resume this delivery after checking the failure.",
+        ),
+        occurredAt: this.clock.now(),
+      };
       if (job.infrastructureRetries >= job.infrastructureRetryLimit) {
         const blocked = {
           ...job,
           state: "blocked" as const,
+          lastInfrastructureFailure: evidence,
+          blocked: {
+            kind: "infrastructure" as const,
+            reason: "infrastructure-retries-exhausted" as const,
+            evidence,
+          },
           updatedAt: this.clock.now(),
           version: job.version + 1,
         };
@@ -1348,16 +1437,18 @@ export class WorkflowCoordinator {
         await transaction.saveDispatch({
           ...dispatch,
           status: "failed",
-          error: input.error,
+          error: evidence.error,
           updatedAt: this.clock.now(),
         });
         await this.releaseDeliveryLeaseForRetry(transaction, job, dispatch);
-        return { status: "exhausted", job: blocked };
+        return { status: "exhausted", job: blocked, evidence };
       }
       const retried = {
         ...job,
         state: phaseState(dispatch.key.phase),
-        infrastructureRetries: job.infrastructureRetries + 1,
+        infrastructureRetries: attempts,
+        lastInfrastructureFailure: evidence,
+        blocked: undefined,
         updatedAt: this.clock.now(),
         version: job.version + 1,
       };
@@ -1365,7 +1456,7 @@ export class WorkflowCoordinator {
       const pending = {
         ...dispatch,
         status: "pending" as const,
-        error: input.error,
+        error: evidence.error,
         workerId: undefined,
         claimedAt: undefined,
         claimExpiresAt: undefined,
@@ -1373,8 +1464,105 @@ export class WorkflowCoordinator {
       };
       await transaction.saveDispatch(pending);
       await this.releaseDeliveryLeaseForRetry(transaction, job, dispatch);
-      return { status: "retry-scheduled", job: retried, dispatch: pending };
+      return {
+        status: "retry-scheduled",
+        job: retried,
+        dispatch: pending,
+        evidence,
+      };
     });
+  }
+
+  async reclaimBlockedJob(jobId: string): Promise<ReclaimBlockedJobResult> {
+    return this.storage.transaction(async (transaction) => {
+      const job = await transaction.getJob(jobId);
+      if (job === undefined) {
+        throw new Error(`Workflow job ${jobId} does not exist`);
+      }
+      return this.reclaimBlockedJobInTransaction(transaction, job);
+    });
+  }
+
+  async reclaimBlockedDelivery(
+    identity: WorkIdentity,
+  ): Promise<ReclaimBlockedJobResult | undefined> {
+    return this.storage.transaction(async (transaction) => {
+      const job = await transaction.findCurrentJob(identity);
+      return job === undefined
+        ? undefined
+        : this.reclaimBlockedJobInTransaction(transaction, job);
+    });
+  }
+
+  private async reclaimBlockedJobInTransaction(
+    transaction: CoordinatorStorageTransaction,
+    job: WorkflowJob,
+  ): Promise<ReclaimBlockedJobResult> {
+    if (job.state !== "blocked" || job.blocked === undefined) {
+      return { status: "already-reclaimed", job };
+    }
+    if (job.control !== "active") {
+      return {
+        status: "rejected",
+        job,
+        reason: `Workflow job is ${job.control}`,
+      };
+    }
+    if (job.blocked.kind !== "infrastructure") {
+      return {
+        status: "rejected",
+        job,
+        reason:
+          "Only infrastructure-blocked deliveries may be reclaimed automatically",
+      };
+    }
+    const dispatch =
+      (job.activeAssignmentId === undefined
+        ? undefined
+        : await transaction.findDispatchByAssignmentId(
+            job.activeAssignmentId,
+          )) ??
+      (await transaction.findDispatchByDedupeKey(keyToString(job.key)));
+    if (dispatch === undefined) {
+      return {
+        status: "rejected",
+        job,
+        reason: "Blocked delivery has no resumable dispatch",
+      };
+    }
+    if (dispatch.status === "pending") {
+      return { status: "already-reclaimed", job, dispatch };
+    }
+    if (dispatch.status !== "failed") {
+      return {
+        status: "rejected",
+        job,
+        dispatch,
+        reason: "Blocked delivery dispatch is not reclaimable",
+      };
+    }
+    const resumed: WorkflowJob = {
+      ...job,
+      state: phaseState(dispatch.key.phase),
+      infrastructureRetries: 0,
+      lastInfrastructureFailure: undefined,
+      blocked: undefined,
+      activeAssignmentId: dispatch.assignment?.id ?? job.activeAssignmentId,
+      updatedAt: this.clock.now(),
+      version: job.version + 1,
+    };
+    const pending: DispatchIntent = {
+      ...dispatch,
+      status: "pending",
+      workerId: undefined,
+      claimedAt: undefined,
+      claimExpiresAt: undefined,
+      error: undefined,
+      updatedAt: this.clock.now(),
+    };
+    await transaction.saveJob(resumed);
+    await transaction.saveDispatch(pending);
+    return { status: "reclaimed", job: resumed, dispatch: pending };
   }
 
   private async releaseDeliveryLeaseForRetry(

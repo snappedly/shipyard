@@ -190,6 +190,33 @@ describe("GitHub webhook intake", () => {
     expect(dispatch.assignment?.phase).toBe("triage");
   });
 
+  it("marks an explicit shipyard label re-add as a resume request", async () => {
+    const { integration } = createIntegration();
+    const resumed = await integration.receiveWebhook(
+      webhook(
+        "issues",
+        "delivery-resume-label",
+        issuePayload({
+          action: "labeled",
+          issue: {
+            number: 42,
+            title: "Fix the intake path",
+            body: "authorization: approved",
+            state: "open",
+            updated_at: "2026-09-17T12:00:00.000Z",
+            html_url: `https://github.com/${repository}/issues/42`,
+            user: { login: "maintainer", type: "User" },
+            labels: [{ name: "shipyard" }],
+          },
+          label: { name: "shipyard" },
+        }),
+      ),
+    );
+
+    expect(resumed.status).toBe("accepted");
+    expect(resumed.event?.workflowEvent.resumeRequested).toBe(true);
+  });
+
   it("reprocesses a delivery left in received state after a coordinator failure", async () => {
     const { integration, coordinator, store } = createIntegration();
     vi.spyOn(coordinator, "ingest").mockRejectedValueOnce(

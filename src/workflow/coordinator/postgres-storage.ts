@@ -262,6 +262,8 @@ const eventFromRow = (value: Record<string, unknown>): StoredEvent => {
         : (requiredString(value.source_state, "event.source_state") as
             | "open"
             | "closed"),
+    resumeRequested:
+      value.resume_requested === true || value.resume_requested === "true",
     payload: jsonValue(value.payload),
     key,
     status: requiredString(
@@ -348,6 +350,22 @@ const jobFromRow = (value: Record<string, unknown>): WorkflowJob => {
       value.infrastructure_retry_limit,
       "job.infrastructure_retry_limit",
     ),
+    lastInfrastructureFailure:
+      value.blocked_evidence === null || value.blocked_evidence === undefined
+        ? undefined
+        : (jsonValue(
+            value.blocked_evidence,
+          ) as WorkflowJob["lastInfrastructureFailure"]),
+    blocked:
+      value.blocked_evidence === null || value.blocked_evidence === undefined
+        ? undefined
+        : {
+            kind: "infrastructure",
+            reason: "infrastructure-retries-exhausted",
+            evidence: jsonValue(value.blocked_evidence) as NonNullable<
+              WorkflowJob["blocked"]
+            >["evidence"],
+          },
     assignments: parseAssignments(jsonValue(value.assignments)),
     phaseResults: parsePhaseResults(jsonValue(value.phase_results)),
     activeAssignmentId:
@@ -527,10 +545,10 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
     const inserted = await this.client.query<Record<string, unknown>>(
       `INSERT INTO shipyard_events (
          id, delivery_id, repository, item_id, brief_revision, phase,
-         relevant_revision, observed_at, source_state, brief, policy, status,
+         relevant_revision, observed_at, source_state, resume_requested, brief, policy, status,
          ignore_reason, job_id, received_at, payload, delivery
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb,
-                 $12, $13, $14, $15, $16::jsonb, $17::jsonb)
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb,
+                 $13, $14, $15, $16, $17::jsonb, $18::jsonb)
        ON CONFLICT (delivery_id) DO NOTHING
        RETURNING *`,
       [
@@ -543,6 +561,7 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
         event.key.relevantRevision,
         event.observedAt,
         event.sourceState ?? null,
+        event.resumeRequested ?? false,
         json(event.brief),
         json(event.policy),
         event.status,
@@ -568,14 +587,15 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
     await this.client.query(
       `INSERT INTO shipyard_events (
          id, delivery_id, repository, item_id, brief_revision, phase,
-         relevant_revision, observed_at, source_state, brief, policy, status,
+         relevant_revision, observed_at, source_state, resume_requested, brief, policy, status,
          ignore_reason, job_id, received_at, payload, delivery
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb,
-                 $12, $13, $14, $15, $16::jsonb, $17::jsonb)
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb,
+                 $13, $14, $15, $16, $17::jsonb, $18::jsonb)
        ON CONFLICT (delivery_id) DO UPDATE SET
          status = EXCLUDED.status,
          ignore_reason = EXCLUDED.ignore_reason,
          job_id = EXCLUDED.job_id,
+         resume_requested = EXCLUDED.resume_requested,
          delivery = EXCLUDED.delivery`,
       [
         event.id,
@@ -587,6 +607,7 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
         event.key.relevantRevision,
         event.observedAt,
         event.sourceState ?? null,
+        event.resumeRequested ?? false,
         json(event.brief),
         json(event.policy),
         event.status,
@@ -689,11 +710,11 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
          relevant_revision, delivery_repository, delivery_item_id,
          brief, policy, state, control, phase_attempts,
          repair_batches, follow_ups, infrastructure_retries,
-         infrastructure_retry_limit, assignments, phase_results,
+         infrastructure_retry_limit, blocked_evidence, assignments, phase_results,
          active_assignment_id, latest_observed_at, created_at, updated_at, version
        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb,
                  $12, $13, $14, $15, $16, $17::jsonb, $18::jsonb,
-                 $19::jsonb, $20, $21, $22, $23, $24)`,
+                 $19::jsonb, $20::jsonb, $21::jsonb, $22, $23, $24, $25, $26)`,
       jobValues(job),
     );
   }
@@ -707,10 +728,11 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
          policy = $11::jsonb, state = $12, control = $13,
          phase_attempts = $14::jsonb, repair_batches = $15, follow_ups = $16,
          infrastructure_retries = $17, infrastructure_retry_limit = $18,
-         assignments = $19::jsonb, phase_results = $20::jsonb,
-         active_assignment_id = $21, latest_observed_at = $22,
-         created_at = $23, updated_at = $24, version = $25
-       WHERE id = $1 AND version = $26
+         blocked_evidence = $19::jsonb, assignments = $20::jsonb,
+         phase_results = $21::jsonb, active_assignment_id = $22,
+         latest_observed_at = $23, created_at = $24, updated_at = $25,
+         version = $26
+       WHERE id = $1 AND version = $27
        RETURNING id`,
       [...jobValues(job), job.version - 1],
     );
@@ -1000,6 +1022,7 @@ const jobValues = (job: WorkflowJob): readonly unknown[] => [
   job.followUps,
   job.infrastructureRetries,
   job.infrastructureRetryLimit,
+  job.blocked === undefined ? null : json(job.blocked.evidence),
   json(job.assignments),
   json(job.phaseResults),
   job.activeAssignmentId ?? null,

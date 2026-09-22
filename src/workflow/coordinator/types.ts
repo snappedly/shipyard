@@ -82,6 +82,26 @@ export interface DeliveryLease {
   readonly expiresAt: number;
 }
 
+/** Sanitized evidence retained when bounded infrastructure recovery stops. */
+export interface DeliveryFailureEvidence {
+  readonly phase: WorkflowPhase;
+  readonly error: string;
+  readonly attempts: number;
+  readonly lastSuccessfulStep?: string;
+  readonly lastSuccess?: string;
+  readonly branch?: string;
+  readonly commit?: string;
+  readonly pullRequest?: string;
+  readonly recovery: string;
+  readonly occurredAt: string;
+}
+
+export interface BlockedDeliveryState {
+  readonly kind: "infrastructure";
+  readonly reason: "infrastructure-retries-exhausted";
+  readonly evidence: DeliveryFailureEvidence;
+}
+
 export interface WorkKey {
   readonly repository: string;
   readonly itemId: string;
@@ -101,6 +121,8 @@ export interface WorkflowEventInput {
   readonly delivery?: DeliveryGroup;
   /** A closed source item invalidates queued and active work. */
   readonly sourceState?: "open" | "closed";
+  /** An explicit `shipyard` activation may reclaim the existing blocked job. */
+  readonly resumeRequested?: boolean;
   readonly payload?: unknown;
 }
 
@@ -131,6 +153,8 @@ export interface WorkflowJob {
   readonly followUps: number;
   readonly infrastructureRetries: number;
   readonly infrastructureRetryLimit: number;
+  readonly lastInfrastructureFailure?: DeliveryFailureEvidence;
+  readonly blocked?: BlockedDeliveryState;
   readonly assignments: readonly Assignment[];
   readonly phaseResults: readonly PhaseResult[];
   readonly activeAssignmentId?: string;
@@ -376,12 +400,29 @@ export interface InfrastructureFailureInput {
   readonly jobId: string;
   readonly assignmentId: string;
   readonly error: string;
+  readonly lastSuccessfulStep?: string;
+  readonly branch?: string;
+  readonly commit?: string;
+  readonly pullRequest?: string;
+  readonly recovery?: string;
 }
 
 export interface InfrastructureRetryResult {
   readonly status: "retry-scheduled" | "exhausted" | "not-retryable";
   readonly job: WorkflowJob;
   readonly dispatch?: DispatchIntent;
+  readonly evidence?: DeliveryFailureEvidence;
+}
+
+export interface ReclaimBlockedJobResult {
+  readonly status:
+    | "reclaimed"
+    | "already-reclaimed"
+    | "not-blocked"
+    | "rejected";
+  readonly job: WorkflowJob;
+  readonly dispatch?: DispatchIntent;
+  readonly reason?: string;
 }
 
 export interface RepairRequestResult {
@@ -403,6 +444,8 @@ export interface PublishEffectInput<T> {
   readonly branch?: string;
   /** Optional resource binding for effects that target the workflow item. */
   readonly itemId?: string;
+  /** Optional delivery binding for effects that target a parent aggregate. */
+  readonly deliveryKey?: DeliveryKey;
   /** Optional candidate binding for effects that publish a commit head. */
   readonly headSha?: string;
   readonly kind: string;

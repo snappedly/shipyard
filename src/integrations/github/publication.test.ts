@@ -541,4 +541,118 @@ describe("GitHubPublication", () => {
       "Pull request: #100",
     );
   });
+
+  it("projects blocked work without leaking diagnostics or adding duplicate PRs", async () => {
+    const { coordinator } = createPublication();
+    const prepared = await prepareCandidateJob(coordinator);
+    let issue = {
+      number: 42,
+      title: "Candidate",
+      body: "source",
+      state: "open" as const,
+      updatedAt: "2026-09-17T12:00:01.000Z",
+      labels: ["shipyard", "bug"] as string[],
+    };
+    let pullRequest = {
+      number: 100,
+      title: "Candidate",
+      body: "candidate",
+      state: "open" as const,
+      draft: false,
+      branch: "shipyard/issue-42",
+      baseBranch: "main",
+      headSha: "b".repeat(40),
+      updatedAt: "2026-09-17T12:00:01.000Z",
+      labels: ["ready-for-human", "shipyard"] as string[],
+    };
+    const ensureLabel = vi.fn(
+      async (input: { name: string; color: string; description: string }) => ({
+        name: input.name,
+        color: input.color,
+        description: input.description,
+      }),
+    );
+    const createComment = vi.fn(async (input: { body: string }) => ({
+      id: `comment-${createComment.mock.calls.length + 1}`,
+      body: input.body,
+      updatedAt: "2026-09-17T12:00:01.000Z",
+    }));
+    const transport = {
+      fetchIssue: async () => issue,
+      updateIssue: async (input: { labels: readonly string[] }) => {
+        issue = { ...issue, labels: [...input.labels] };
+        return issue;
+      },
+      ensureLabel,
+      fetchPullRequest: async () => pullRequest,
+      updatePullRequest: async (input: {
+        draft?: boolean;
+        labels?: readonly string[];
+      }) => {
+        pullRequest = {
+          ...pullRequest,
+          draft: input.draft ?? pullRequest.draft,
+          labels: [...(input.labels ?? pullRequest.labels)],
+        };
+        return pullRequest;
+      },
+      findCommentByMarker: async () => undefined,
+      findBranchByName: async () => undefined,
+      findPullRequestByMarker: async () => undefined,
+      findCheckByMarker: async () => undefined,
+      findIssueByMarker: async () => undefined,
+      createComment,
+      createBranch: async () => {
+        throw new Error("unused");
+      },
+      createPullRequest: async () => {
+        throw new Error("unused");
+      },
+      createCheck: async () => {
+        throw new Error("unused");
+      },
+      createRepairIssue: async () => {
+        throw new Error("unused");
+      },
+    } satisfies GitHubReadTransport & GitHubWriteTransport;
+    const publication = new GitHubPublication({
+      coordinator,
+      transport,
+      trackingStore: new InMemoryGitHubStore(),
+    });
+
+    const projected = await publication.publishBlockedDelivery({
+      jobId: prepared.jobId,
+      lease: prepared.lease,
+      issueNumber: 42,
+      parentIssueNumber: 1000,
+      pullRequest: {
+        number: 100,
+        branch: "shipyard/issue-42",
+        baseBranch: "main",
+        headSha: "b".repeat(40),
+      },
+      evidence: {
+        phase: "checking",
+        error: "worker failed token=ghp_secret",
+        attempts: 3,
+        lastSuccessfulStep: "implementation",
+        branch: "shipyard/issue-42",
+        commit: "b".repeat(40),
+        pullRequest: "#100",
+        recovery: "Re-add shipyard",
+        occurredAt: "2026-09-17T12:00:02.000Z",
+      },
+    });
+
+    expect(ensureLabel).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "shipyard-blocked", color: "d73a4a" }),
+    );
+    expect(issue.labels).toEqual(["bug", "shipyard-blocked"]);
+    expect(pullRequest.draft).toBe(true);
+    expect(pullRequest.labels).toEqual(["shipyard-blocked"]);
+    expect(projected.parentComment?.remote?.body).toContain("child issue #42");
+    expect(projected.comment.remote?.body).not.toContain("ghp_secret");
+    expect(createComment).toHaveBeenCalledTimes(2);
+  });
 });

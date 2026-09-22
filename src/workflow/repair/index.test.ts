@@ -269,4 +269,22 @@ describe("bounded PR repair", () => {
     expect(followUp.outcome).toBe("scheduled");
     expect(exhausted.outcome).toBe("blocked");
   });
+
+  it("rejects post-merge mutation and requires a follow-up delivery", async () => {
+    const harness = await createHarness();
+    const result = await scheduleBoundedRepair({
+      ...harness,
+      store: harness.repairStore,
+      brief,
+      policy,
+      candidate: { base, head, briefHash: brief.hash },
+      workerId: "worker-a",
+      deliveryState: "merged",
+      findings: [finding("post-merge")],
+    });
+
+    expect(result.outcome).toBe("blocked");
+    expect(result.followUpRequired).toBe(true);
+    expect(result.reason).toContain("follow-up delivery");
+  });
 });

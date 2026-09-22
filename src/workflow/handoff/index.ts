@@ -91,6 +91,21 @@ export interface HandoffReadinessResult {
   readonly packet: HandoffPacket;
 }
 
+export interface CandidateEvidenceInvalidationInput {
+  readonly candidate: HandoffCandidate;
+  readonly checks: readonly CheckEvidence[];
+  readonly review?: ReviewEvidence;
+  readonly reason: string;
+}
+
+export interface CandidateEvidenceInvalidationResult {
+  readonly candidate: HandoffCandidate;
+  readonly checks: readonly CheckEvidence[];
+  readonly review?: ReviewEvidence;
+  readonly invalidated: true;
+  readonly reason: string;
+}
+
 export interface HumanHandoffPublisher {
   requestReview(input: {
     readonly packet: HandoffPacket;
@@ -502,6 +517,21 @@ export const evaluateHandoffReadiness = (
     packet,
   };
 };
+
+/** Invalidate candidate-bound evidence after a repair or pre-merge scope change. */
+export const invalidateCandidateEvidence = (
+  input: CandidateEvidenceInvalidationInput,
+): CandidateEvidenceInvalidationResult => ({
+  candidate: input.candidate,
+  checks: input.checks.map((check) => ({
+    ...check,
+    status: "unknown",
+    summary: `Invalidated: ${input.reason}`,
+  })),
+  review: undefined,
+  invalidated: true,
+  reason: input.reason,
+});
 
 export const prepareHumanHandoff = async (
   input: PrepareHandoffOptions,

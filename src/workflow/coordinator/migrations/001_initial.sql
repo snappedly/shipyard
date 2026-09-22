@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS shipyard_events (
   relevant_revision TEXT NOT NULL,
   observed_at TIMESTAMPTZ NOT NULL,
   source_state TEXT,
+  resume_requested BOOLEAN NOT NULL DEFAULT FALSE,
   brief JSONB NOT NULL,
   policy JSONB NOT NULL,
   status TEXT NOT NULL,
@@ -23,7 +24,8 @@ CREATE TABLE IF NOT EXISTS shipyard_events (
 );
 
 ALTER TABLE shipyard_events
-  ADD COLUMN IF NOT EXISTS delivery JSONB;
+  ADD COLUMN IF NOT EXISTS delivery JSONB,
+  ADD COLUMN IF NOT EXISTS resume_requested BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE TABLE IF NOT EXISTS shipyard_jobs (
   id TEXT PRIMARY KEY,
@@ -44,6 +46,7 @@ CREATE TABLE IF NOT EXISTS shipyard_jobs (
   follow_ups INTEGER NOT NULL DEFAULT 0,
   infrastructure_retries INTEGER NOT NULL DEFAULT 0,
   infrastructure_retry_limit INTEGER NOT NULL,
+  blocked_evidence JSONB,
   assignments JSONB NOT NULL,
   phase_results JSONB NOT NULL,
   active_assignment_id TEXT,
@@ -55,7 +58,8 @@ CREATE TABLE IF NOT EXISTS shipyard_jobs (
 
 ALTER TABLE shipyard_jobs
   ADD COLUMN IF NOT EXISTS delivery_repository TEXT,
-  ADD COLUMN IF NOT EXISTS delivery_item_id TEXT;
+  ADD COLUMN IF NOT EXISTS delivery_item_id TEXT,
+  ADD COLUMN IF NOT EXISTS blocked_evidence JSONB;
 
 CREATE INDEX IF NOT EXISTS shipyard_jobs_identity_idx
   ON shipyard_jobs (repository, item_id, item_kind, updated_at DESC);
