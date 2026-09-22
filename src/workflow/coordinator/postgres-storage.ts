@@ -12,6 +12,10 @@ import type {
   BranchLease,
   CoordinatorStorage,
   CoordinatorStorageTransaction,
+  DeliveryGroup,
+  DeliveryKey,
+  DeliveryLease,
+  DeliveryRecord,
   DispatchIntent,
   EffectIntent,
   RepositoryControl,
@@ -19,6 +23,7 @@ import type {
   WorkKey,
   WorkflowJob,
 } from "./types.js";
+import { parseDeliveryRecord } from "./delivery.js";
 
 /** Minimal query surface implemented by `pg`, Neon, and compatible clients. */
 export interface PostgresQueryResult<
@@ -123,6 +128,9 @@ const keyToString = (key: WorkKey): string =>
     key.phase,
     key.relevantRevision,
   ].join("\u0000");
+
+const deliveryKeyToString = (key: DeliveryKey): string =>
+  `${key.repository}\u0000${key.itemId}`;
 
 const sameIdentity = (left: WorkIdentity, right: WorkIdentity): boolean =>
   left.repository === right.repository &&
@@ -243,6 +251,10 @@ const eventFromRow = (value: Record<string, unknown>): StoredEvent => {
     policy,
     phase: key.phase,
     relevantRevision: key.relevantRevision,
+    delivery:
+      value.delivery === null || value.delivery === undefined
+        ? undefined
+        : (jsonValue(value.delivery) as DeliveryGroup),
     observedAt: timestamp(value.observed_at, "event.observed_at"),
     sourceState:
       value.source_state === null || value.source_state === undefined
@@ -306,6 +318,17 @@ const jobFromRow = (value: Record<string, unknown>): WorkflowJob => {
     key,
     brief,
     policy,
+    deliveryKey: {
+      repository:
+        value.delivery_repository === null ||
+        value.delivery_repository === undefined
+          ? key.repository
+          : requiredString(value.delivery_repository, "job.delivery_repository"),
+      itemId:
+        value.delivery_item_id === null || value.delivery_item_id === undefined
+          ? key.itemId
+          : requiredString(value.delivery_item_id, "job.delivery_item_id"),
+    },
     state: requiredString(value.state, "job.state") as WorkflowJob["state"],
     control: requiredString(
       value.control,
@@ -432,6 +455,45 @@ const leaseFromRow = (value: Record<string, unknown>): BranchLease => ({
   expiresAt: numberValue(value.expires_at, "lease.expires_at"),
 });
 
+const deliveryFromRow = (value: Record<string, unknown>): DeliveryRecord => {
+  const delivery = parseDeliveryRecord(jsonValue(value.delivery));
+  const createdAt = timestamp(value.created_at, "delivery.created_at");
+  const updatedAt = timestamp(value.updated_at, "delivery.updated_at");
+  const version = numberValue(value.version, "delivery.version");
+  if (
+    delivery.key.repository !== requiredString(value.repository, "delivery.repository") ||
+    delivery.key.itemId !== requiredString(value.item_id, "delivery.item_id")
+  ) {
+    throw new Error("Stored delivery key does not match its routing data");
+  }
+  return { ...delivery, createdAt, updatedAt, version };
+};
+
+const deliveryLeaseFromRow = (
+  value: Record<string, unknown>,
+): DeliveryLease => ({
+  leaseId: requiredString(value.lease_id, "delivery lease.lease_id"),
+  resourceKey: requiredString(
+    value.resource_key,
+    "delivery lease.resource_key",
+  ),
+  key: {
+    repository: requiredString(
+      value.repository,
+      "delivery lease.repository",
+    ),
+    itemId: requiredString(value.item_id, "delivery lease.item_id"),
+  },
+  workerId: requiredString(value.worker_id, "delivery lease.worker_id"),
+  fencingToken: numberValue(
+    value.fencing_token,
+    "delivery lease.fencing_token",
+  ),
+  acquiredAt: numberValue(value.acquired_at, "delivery lease.acquired_at"),
+  heartbeatAt: numberValue(value.heartbeat_at, "delivery lease.heartbeat_at"),
+  expiresAt: numberValue(value.expires_at, "delivery lease.expires_at"),
+});
+
 const controlFromRow = (value: Record<string, unknown>): RepositoryControl => ({
   repository: requiredString(value.repository, "control.repository"),
   stopped: booleanValue(value.stopped, "control.stopped"),
@@ -465,9 +527,9 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
       `INSERT INTO shipyard_events (
          id, delivery_id, repository, item_id, brief_revision, phase,
          relevant_revision, observed_at, source_state, brief, policy, status,
-         ignore_reason, job_id, received_at, payload
+         ignore_reason, job_id, received_at, payload, delivery
        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb,
-                 $12, $13, $14, $15, $16::jsonb)
+                 $12, $13, $14, $15, $16::jsonb, $17::jsonb)
        ON CONFLICT (delivery_id) DO NOTHING
        RETURNING *`,
       [
@@ -487,6 +549,7 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
         event.jobId ?? null,
         event.receivedAt,
         event.payload === undefined ? null : json(event.payload),
+        event.delivery === undefined ? null : json(event.delivery),
       ],
     );
     if (inserted.rows.length > 0) {
@@ -505,13 +568,14 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
       `INSERT INTO shipyard_events (
          id, delivery_id, repository, item_id, brief_revision, phase,
          relevant_revision, observed_at, source_state, brief, policy, status,
-         ignore_reason, job_id, received_at, payload
+         ignore_reason, job_id, received_at, payload, delivery
        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb,
-                 $12, $13, $14, $15, $16::jsonb)
+                 $12, $13, $14, $15, $16::jsonb, $17::jsonb)
        ON CONFLICT (delivery_id) DO UPDATE SET
          status = EXCLUDED.status,
          ignore_reason = EXCLUDED.ignore_reason,
-         job_id = EXCLUDED.job_id`,
+         job_id = EXCLUDED.job_id,
+         delivery = EXCLUDED.delivery`,
       [
         event.id,
         event.deliveryId,
@@ -529,6 +593,42 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
         event.jobId ?? null,
         event.receivedAt,
         event.payload === undefined ? null : json(event.payload),
+        event.delivery === undefined ? null : json(event.delivery),
+      ],
+    );
+  }
+
+  async getDelivery(key: DeliveryKey): Promise<DeliveryRecord | undefined> {
+    const result = await this.client.query<Record<string, unknown>>(
+      "SELECT * FROM shipyard_deliveries WHERE repository = $1 AND item_id = $2 FOR UPDATE",
+      [key.repository, key.itemId],
+    );
+    const value = optionalRow(result);
+    return value === undefined ? undefined : deliveryFromRow(value);
+  }
+
+  async lockDelivery(key: DeliveryKey): Promise<void> {
+    await this.client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+      [deliveryKeyToString(key)],
+    );
+  }
+
+  async saveDelivery(delivery: DeliveryRecord): Promise<void> {
+    await this.client.query(
+      `INSERT INTO shipyard_deliveries (
+         repository, item_id, delivery, created_at, updated_at, version
+       ) VALUES ($1, $2, $3::jsonb, $4, $5, $6)
+       ON CONFLICT (repository, item_id) DO UPDATE SET
+         delivery = EXCLUDED.delivery, updated_at = EXCLUDED.updated_at,
+         version = EXCLUDED.version`,
+      [
+        delivery.key.repository,
+        delivery.key.itemId,
+        json(delivery),
+        delivery.createdAt,
+        delivery.updatedAt,
+        delivery.version,
       ],
     );
   }
@@ -585,13 +685,14 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
     await this.client.query(
       `INSERT INTO shipyard_jobs (
          id, repository, item_id, item_kind, brief_revision, phase,
-         relevant_revision, brief, policy, state, control, phase_attempts,
+         relevant_revision, delivery_repository, delivery_item_id,
+         brief, policy, state, control, phase_attempts,
          repair_batches, follow_ups, infrastructure_retries,
          infrastructure_retry_limit, assignments, phase_results,
          active_assignment_id, latest_observed_at, created_at, updated_at, version
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11,
-                 $12::jsonb, $13, $14, $15, $16, $17::jsonb, $18::jsonb,
-                 $19, $20, $21, $22, $23)`,
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb,
+                 $12, $13, $14, $15, $16, $17::jsonb, $18::jsonb,
+                 $19::jsonb, $20, $21, $22, $23, $24)`,
       jobValues(job),
     );
   }
@@ -600,14 +701,15 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
     const result = await this.client.query(
       `UPDATE shipyard_jobs SET
          repository = $2, item_id = $3, item_kind = $4, brief_revision = $5,
-         phase = $6, relevant_revision = $7, brief = $8::jsonb,
-         policy = $9::jsonb, state = $10, control = $11,
-         phase_attempts = $12::jsonb, repair_batches = $13, follow_ups = $14,
-         infrastructure_retries = $15, infrastructure_retry_limit = $16,
-         assignments = $17::jsonb, phase_results = $18::jsonb,
-         active_assignment_id = $19, latest_observed_at = $20,
-         created_at = $21, updated_at = $22, version = $23
-       WHERE id = $1 AND version = $24
+         phase = $6, relevant_revision = $7, delivery_repository = $8,
+         delivery_item_id = $9, brief = $10::jsonb,
+         policy = $11::jsonb, state = $12, control = $13,
+         phase_attempts = $14::jsonb, repair_batches = $15, follow_ups = $16,
+         infrastructure_retries = $17, infrastructure_retry_limit = $18,
+         assignments = $19::jsonb, phase_results = $20::jsonb,
+         active_assignment_id = $21, latest_observed_at = $22,
+         created_at = $23, updated_at = $24, version = $25
+       WHERE id = $1 AND version = $26
        RETURNING id`,
       [...jobValues(job), job.version - 1],
     );
@@ -640,6 +742,7 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
     selector: {
       readonly jobId?: string;
       readonly dispatchId?: string;
+      readonly excludedDeliveryIds?: readonly string[];
     } = {},
   ) {
     const predicates = [
@@ -654,6 +757,12 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
     if (selector.dispatchId !== undefined) {
       values.push(selector.dispatchId);
       predicates.push(`d.id = $${values.length}`);
+    }
+    if (selector.excludedDeliveryIds !== undefined && selector.excludedDeliveryIds.length > 0) {
+      values.push(selector.excludedDeliveryIds);
+      predicates.push(
+        `NOT ((j.delivery_repository || '#' || j.delivery_item_id) = ANY($${values.length}::text[]))`,
+      );
     }
     const result = await this.client.query<Record<string, unknown>>(
       `${dispatchSelect(predicates.join(" AND "))} ORDER BY d.created_at ASC LIMIT 1 FOR UPDATE OF d, j SKIP LOCKED`,
@@ -834,6 +943,8 @@ const jobValues = (job: WorkflowJob): readonly unknown[] => [
   job.key.briefRevision,
   job.key.phase,
   job.key.relevantRevision,
+  job.deliveryKey.repository,
+  job.deliveryKey.itemId,
   json(job.brief),
   json(job.policy),
   job.state,

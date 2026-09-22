@@ -35,6 +35,53 @@ export type EffectStatus =
   | "failed"
   | "cancelled";
 
+export interface DeliveryKey {
+  readonly repository: string;
+  readonly itemId: string;
+}
+
+export interface DeliveryDependency {
+  /** The child item whose work is waiting. */
+  readonly itemId: string;
+  /** Child item IDs that must complete before `itemId` can run. */
+  readonly dependsOn: readonly string[];
+}
+
+export interface DeliveryGraph {
+  readonly root: WorkIdentity;
+  readonly children: readonly WorkIdentity[];
+  readonly dependencies: readonly DeliveryDependency[];
+}
+
+export type DeliveryMode = "standalone" | "planning-spec";
+
+export interface DeliveryGroup {
+  /** Stable delivery identity: the issue itself or its planning-spec parent. */
+  readonly key: DeliveryKey;
+  /** Stable, human-readable form of `key`. */
+  readonly id: string;
+  readonly mode: DeliveryMode;
+  readonly root: WorkIdentity;
+  readonly graph: DeliveryGraph;
+}
+
+export interface DeliveryRecord extends DeliveryGroup {
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly version: number;
+}
+
+export interface DeliveryLease {
+  readonly leaseId: string;
+  readonly resourceKey: string;
+  readonly key: DeliveryKey;
+  readonly workerId: string;
+  readonly fencingToken: number;
+  readonly acquiredAt: number;
+  readonly heartbeatAt: number;
+  readonly expiresAt: number;
+}
+
 export interface WorkKey {
   readonly repository: string;
   readonly itemId: string;
@@ -50,6 +97,8 @@ export interface WorkflowEventInput {
   readonly phase: WorkflowPhase;
   readonly relevantRevision: string;
   readonly observedAt: string;
+  /** Delivery routing resolved from the source issue's relationships. */
+  readonly delivery?: DeliveryGroup;
   /** A closed source item invalidates queued and active work. */
   readonly sourceState?: "open" | "closed";
   readonly payload?: unknown;
@@ -74,6 +123,7 @@ export interface WorkflowJob {
   readonly key: WorkKey;
   readonly brief: WorkBrief;
   readonly policy: RepositoryPolicy;
+  readonly deliveryKey: DeliveryKey;
   readonly state: LifecycleState;
   readonly control: JobControl;
   readonly phaseAttempts: Readonly<Record<WorkflowPhase, number>>;
@@ -148,6 +198,11 @@ export interface CoordinatorStorageTransaction {
   ): Promise<{ readonly event: StoredEvent; readonly inserted: boolean }>;
   saveEvent(event: StoredEvent): Promise<void>;
 
+  getDelivery(key: DeliveryKey): Promise<DeliveryRecord | undefined>;
+  /** Serialize delivery graph updates even before the first record exists. */
+  lockDelivery(key: DeliveryKey): Promise<void>;
+  saveDelivery(delivery: DeliveryRecord): Promise<void>;
+
   /** Serialize intake for an identity even before its first job row exists. */
   lockWorkIdentity(identity: WorkIdentity): Promise<void>;
 
@@ -172,6 +227,7 @@ export interface CoordinatorStorageTransaction {
     selector?: {
       readonly jobId?: string;
       readonly dispatchId?: string;
+      readonly excludedDeliveryIds?: readonly string[];
     },
   ): Promise<DispatchIntent | undefined>;
   insertDispatchIfAbsent(
@@ -199,6 +255,11 @@ export interface CoordinatorStorageTransaction {
   findLeasesForJob(jobId: string): Promise<readonly BranchLease[]>;
   findLeasesForRepository(repository: string): Promise<readonly BranchLease[]>;
 
+  getDeliveryLease(key: DeliveryKey): Promise<DeliveryLease | undefined>;
+  /** Serialize delivery lease acquisition even when no lease row exists yet. */
+  lockDeliveryLeaseResource(key: DeliveryKey): Promise<void>;
+  saveDeliveryLease(lease: DeliveryLease): Promise<void>;
+
   getRepositoryControl(
     repository: string,
   ): Promise<RepositoryControl | undefined>;
@@ -222,6 +283,7 @@ export interface WorkflowCoordinatorOptions {
   readonly idFactory?: (prefix: string) => string;
   readonly infrastructureRetryLimit?: number;
   readonly dispatchClaimTtlMs?: number;
+  readonly deliveryLeaseTtlMs?: number;
   readonly effectClaimTtlMs?: number;
 }
 
@@ -231,6 +293,8 @@ export interface DispatchRequest {
   /** Restrict dispatch to a known job/intent when a workflow runner is resuming. */
   readonly jobId?: string;
   readonly dispatchId?: string;
+  /** Existing delivery lease when a runner is resuming a group. */
+  readonly deliveryLease?: DeliveryLease;
 }
 
 export type DispatchBlockReason =
@@ -243,6 +307,7 @@ export type DispatchBlockReason =
   | "invalid-policy"
   | "semantic-budget-exhausted"
   | "infrastructure-retries-exhausted"
+  | "delivery-busy"
   | "invalid-transition";
 
 export interface IngestResult {
@@ -258,6 +323,7 @@ export interface DispatchResult {
   readonly dispatch?: DispatchIntent;
   readonly assignment?: Assignment;
   readonly job?: WorkflowJob;
+  readonly deliveryLease?: DeliveryLease;
   readonly reason?: DispatchBlockReason;
 }
 
@@ -265,6 +331,13 @@ export interface AcquireBranchLeaseInput {
   readonly repository: string;
   readonly branch: string;
   readonly jobId: string;
+  readonly workerId: string;
+  readonly ttlMs: number;
+}
+
+export interface AcquireDeliveryLeaseInput {
+  readonly repository: string;
+  readonly key: DeliveryKey;
   readonly workerId: string;
   readonly ttlMs: number;
 }

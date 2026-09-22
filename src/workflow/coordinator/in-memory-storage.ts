@@ -3,6 +3,9 @@ import type {
   BranchLease,
   CoordinatorStorage,
   CoordinatorStorageTransaction,
+  DeliveryKey,
+  DeliveryLease,
+  DeliveryRecord,
   DispatchIntent,
   EffectIntent,
   RepositoryControl,
@@ -13,10 +16,12 @@ import type {
 
 interface MemoryState {
   readonly events: Map<string, StoredEvent>;
+  readonly deliveries: Map<string, DeliveryRecord>;
   readonly jobs: Map<string, WorkflowJob>;
   readonly dispatches: Map<string, DispatchIntent>;
   readonly effects: Map<string, EffectIntent>;
   readonly leases: Map<string, BranchLease>;
+  readonly deliveryLeases: Map<string, DeliveryLease>;
   readonly repositoryControls: Map<string, RepositoryControl>;
 }
 
@@ -25,6 +30,9 @@ const clone = <T>(value: T): T => structuredClone(value);
 const cloneState = (state: MemoryState): MemoryState => ({
   events: new Map(
     [...state.events.entries()].map(([key, value]) => [key, clone(value)]),
+  ),
+  deliveries: new Map(
+    [...state.deliveries.entries()].map(([key, value]) => [key, clone(value)]),
   ),
   jobs: new Map(
     [...state.jobs.entries()].map(([key, value]) => [key, clone(value)]),
@@ -37,6 +45,9 @@ const cloneState = (state: MemoryState): MemoryState => ({
   ),
   leases: new Map(
     [...state.leases.entries()].map(([key, value]) => [key, clone(value)]),
+  ),
+  deliveryLeases: new Map(
+    [...state.deliveryLeases.entries()].map(([key, value]) => [key, clone(value)]),
   ),
   repositoryControls: new Map(
     [...state.repositoryControls.entries()].map(([key, value]) => [
@@ -64,6 +75,9 @@ const effectKey = (jobId: string, kind: string, marker: string): string =>
 const resourceKey = (repository: string, branch: string): string =>
   `${repository}\u0000${branch}`;
 
+const deliveryKey = (key: DeliveryKey): string =>
+  `${key.repository}\u0000${key.itemId}`;
+
 class MemoryTransaction implements CoordinatorStorageTransaction {
   constructor(private readonly state: MemoryState) {}
 
@@ -80,6 +94,19 @@ class MemoryTransaction implements CoordinatorStorageTransaction {
 
   async saveEvent(event: StoredEvent): Promise<void> {
     this.state.events.set(event.deliveryId, clone(event));
+  }
+
+  async getDelivery(key: DeliveryKey): Promise<DeliveryRecord | undefined> {
+    const delivery = this.state.deliveries.get(deliveryKey(key));
+    return delivery === undefined ? undefined : clone(delivery);
+  }
+
+  async lockDelivery(_key: DeliveryKey): Promise<void> {
+    // In-memory transactions are already serialized by transactionTail.
+  }
+
+  async saveDelivery(delivery: DeliveryRecord): Promise<void> {
+    this.state.deliveries.set(deliveryKey(delivery.key), clone(delivery));
   }
 
   async lockWorkIdentity(_identity: WorkIdentity): Promise<void> {
@@ -165,8 +192,10 @@ class MemoryTransaction implements CoordinatorStorageTransaction {
     selector: {
       readonly jobId?: string;
       readonly dispatchId?: string;
+      readonly excludedDeliveryIds?: readonly string[];
     } = {},
   ): Promise<DispatchIntent | undefined> {
+    const excludedDeliveryIds = new Set(selector.excludedDeliveryIds ?? []);
     const dispatch = [...this.state.dispatches.values()]
       .filter(
         (candidate) =>
@@ -175,6 +204,14 @@ class MemoryTransaction implements CoordinatorStorageTransaction {
             candidate.jobId === selector.jobId) &&
           (selector.dispatchId === undefined ||
             candidate.id === selector.dispatchId) &&
+          !excludedDeliveryIds.has(
+            (() => {
+              const job = this.state.jobs.get(candidate.jobId);
+              return job === undefined
+                ? ""
+                : `${job.deliveryKey.repository}#${job.deliveryKey.itemId}`;
+            })(),
+          ) &&
           (candidate.status === "pending" ||
             ((candidate.status === "claimed" ||
               candidate.status === "started") &&
@@ -264,6 +301,21 @@ class MemoryTransaction implements CoordinatorStorageTransaction {
       .map(clone);
   }
 
+  async getDeliveryLease(
+    key: DeliveryKey,
+  ): Promise<DeliveryLease | undefined> {
+    const lease = this.state.deliveryLeases.get(deliveryKey(key));
+    return lease === undefined ? undefined : clone(lease);
+  }
+
+  async lockDeliveryLeaseResource(_key: DeliveryKey): Promise<void> {
+    // In-memory transactions are already serialized by transactionTail.
+  }
+
+  async saveDeliveryLease(lease: DeliveryLease): Promise<void> {
+    this.state.deliveryLeases.set(deliveryKey(lease.key), clone(lease));
+  }
+
   async getRepositoryControl(
     repository: string,
   ): Promise<RepositoryControl | undefined> {
@@ -283,10 +335,12 @@ class MemoryTransaction implements CoordinatorStorageTransaction {
 export class InMemoryCoordinatorStorage implements CoordinatorStorage {
   private state: MemoryState = {
     events: new Map(),
+    deliveries: new Map(),
     jobs: new Map(),
     dispatches: new Map(),
     effects: new Map(),
     leases: new Map(),
+    deliveryLeases: new Map(),
     repositoryControls: new Map(),
   };
 

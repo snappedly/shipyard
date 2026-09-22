@@ -17,12 +17,25 @@ import {
 } from "../contracts/index.js";
 import { sameRevision } from "../shared.js";
 import { InMemoryCoordinatorStorage } from "./in-memory-storage.js";
+import {
+  defaultDeliveryGroup,
+  deliveryContainsIdentity,
+  deliveryGroupFingerprint,
+  deliveryIdFor,
+  deliveryResourceKey,
+  resolveDeliveryGroup,
+} from "./delivery.js";
 import type {
   AcquireBranchLeaseInput,
+  AcquireDeliveryLeaseInput,
   BranchLease,
   CoordinatorClock,
   CoordinatorStorage,
   CoordinatorStorageTransaction,
+  DeliveryGroup,
+  DeliveryKey,
+  DeliveryLease,
+  DeliveryRecord,
   DispatchIntent,
   DispatchRequest,
   DispatchResult,
@@ -47,6 +60,15 @@ import type {
 
 export { InMemoryCoordinatorStorage } from "./in-memory-storage.js";
 export { PostgresCoordinatorStorage } from "./postgres-storage.js";
+export {
+  defaultDeliveryGroup,
+  deliveryContainsIdentity,
+  deliveryGroupFingerprint,
+  deliveryIdFor,
+  deliveryResourceKey,
+  parseDeliveryRecord,
+  resolveDeliveryGroup,
+} from "./delivery.js";
 export type * from "./types.js";
 export type {
   PostgresConnection,
@@ -216,6 +238,7 @@ export class WorkflowCoordinator {
   private readonly idFactory: (prefix: string) => string;
   private readonly infrastructureRetryLimit: number;
   private readonly dispatchClaimTtlMs: number;
+  private readonly deliveryLeaseTtlMs: number;
   private readonly effectClaimTtlMs: number;
 
   constructor(options: WorkflowCoordinatorOptions) {
@@ -224,6 +247,7 @@ export class WorkflowCoordinator {
     this.idFactory = options.idFactory ?? defaultIdFactory;
     this.infrastructureRetryLimit = options.infrastructureRetryLimit ?? 2;
     this.dispatchClaimTtlMs = options.dispatchClaimTtlMs ?? 60_000;
+    this.deliveryLeaseTtlMs = options.deliveryLeaseTtlMs ?? 60_000;
     this.effectClaimTtlMs = options.effectClaimTtlMs ?? 60_000;
   }
 
@@ -237,6 +261,67 @@ export class WorkflowCoordinator {
     return this.storage.transaction((transaction) =>
       transaction.findCurrentJob(identity),
     );
+  }
+
+  async getDelivery(key: DeliveryKey): Promise<DeliveryRecord | undefined> {
+    return this.storage.transaction((transaction) =>
+      transaction.getDelivery(key),
+    );
+  }
+
+  /** Resolve or refresh one stable delivery identity and its current graph. */
+  async resolveDelivery(group: DeliveryGroup): Promise<DeliveryRecord> {
+    const normalized = resolveDeliveryGroup({
+      issue: group.root,
+      children: group.graph.children,
+      dependencies: group.graph.dependencies,
+    });
+    if (
+      normalized.id !== group.id ||
+      normalized.key.repository !== group.key.repository ||
+      normalized.key.itemId !== group.key.itemId
+    ) {
+      throw new Error("Delivery group identity does not match its graph");
+    }
+    return this.storage.transaction((transaction) =>
+      this.upsertDelivery(transaction, normalized),
+    );
+  }
+
+  private async upsertDelivery(
+    transaction: CoordinatorStorageTransaction,
+    group: DeliveryGroup,
+  ): Promise<DeliveryRecord> {
+    await transaction.lockDelivery(group.key);
+    const existing = await transaction.getDelivery(group.key);
+    if (existing !== undefined) {
+      const existingGroup: DeliveryGroup = {
+        key: existing.key,
+        id: existing.id,
+        mode: existing.mode,
+        root: existing.root,
+        graph: existing.graph,
+      };
+      if (deliveryGroupFingerprint(existingGroup) === deliveryGroupFingerprint(group)) {
+        return existing;
+      }
+      const updated: DeliveryRecord = {
+        ...group,
+        createdAt: existing.createdAt,
+        updatedAt: this.clock.now(),
+        version: existing.version + 1,
+      };
+      await transaction.saveDelivery(updated);
+      return updated;
+    }
+    const created: DeliveryRecord = {
+      ...group,
+      createdAt: this.clock.now(),
+      updatedAt: this.clock.now(),
+      version: 1,
+    };
+    await transaction.saveDelivery(created);
+    return created;
   }
 
   async getRepositoryControl(
@@ -253,12 +338,22 @@ export class WorkflowCoordinator {
     if (policy.repository !== brief.identity.repository) {
       throw new Error("Event policy repository does not match work identity");
     }
-    const key = eventKey({ ...input, brief, policy });
+    const delivery = input.delivery ?? defaultDeliveryGroup(brief.identity);
+    if (!deliveryContainsIdentity(delivery, brief.identity)) {
+      throw new Error(
+        `Delivery ${delivery.id} does not contain workflow identity ${brief.identity.itemId}`,
+      );
+    }
+    if (delivery.key.repository !== brief.identity.repository) {
+      throw new Error("Delivery repository does not match work identity");
+    }
+    const key = eventKey({ ...input, brief, policy, delivery });
     const receivedAt = this.clock.now();
     const storedBase: StoredEvent = {
       ...input,
       brief,
       policy,
+      delivery,
       id: this.idFactory("event"),
       key,
       status: "received",
@@ -279,6 +374,7 @@ export class WorkflowCoordinator {
         };
       }
 
+      await this.upsertDelivery(transaction, delivery);
       await transaction.lockWorkIdentity(brief.identity);
       const current = await transaction.findCurrentJob(brief.identity);
       if (input.sourceState === "closed") {
@@ -384,6 +480,7 @@ export class WorkflowCoordinator {
         key,
         brief,
         policy,
+        deliveryKey: delivery.key,
         state: isAuthorized(brief, policy) ? "authorized" : "waiting-info",
         control: "active",
         phaseAttempts: phaseAttempts(),
@@ -432,11 +529,17 @@ export class WorkflowCoordinator {
 
       let dispatch: DispatchIntent | undefined;
       let job: WorkflowJob | undefined;
+      let deliveryLease: DeliveryLease | undefined;
+      const excludedDeliveryIds = new Set<string>();
       while (true) {
         dispatch = await transaction.findPendingDispatch(
           request.repository,
           this.clock.nowMilliseconds(),
-          { jobId: request.jobId, dispatchId: request.dispatchId },
+          {
+            jobId: request.jobId,
+            dispatchId: request.dispatchId,
+            excludedDeliveryIds: [...excludedDeliveryIds],
+          },
         );
         if (dispatch === undefined) return { status: "none" };
         job = await transaction.getJob(dispatch.jobId);
@@ -470,6 +573,26 @@ export class WorkflowCoordinator {
         }
         if (blockReason !== undefined) {
           return { status: "blocked", reason: blockReason, job };
+        }
+
+        try {
+          deliveryLease = await this.claimDeliveryLease(
+            transaction,
+            job.deliveryKey,
+            request.workerId,
+            request.deliveryLease,
+          );
+        } catch (error) {
+          if (!(error instanceof LeaseBusyError)) throw error;
+          if (
+            request.jobId !== undefined ||
+            request.dispatchId !== undefined ||
+            request.deliveryLease !== undefined
+          ) {
+            return { status: "blocked", reason: "delivery-busy", job };
+          }
+          excludedDeliveryIds.add(deliveryIdFor(job.deliveryKey));
+          continue;
         }
         break;
       }
@@ -545,6 +668,7 @@ export class WorkflowCoordinator {
         dispatch: claimed,
         assignment,
         job: nextJob,
+        deliveryLease,
       };
     });
   }
@@ -588,6 +712,112 @@ export class WorkflowCoordinator {
       return "infrastructure-retries-exhausted";
     }
     return undefined;
+  }
+
+  async acquireDeliveryLease(
+    input: AcquireDeliveryLeaseInput,
+  ): Promise<DeliveryLease> {
+    return this.storage.transaction((transaction) =>
+      this.claimDeliveryLease(
+        transaction,
+        input.key,
+        input.workerId,
+        undefined,
+        input.ttlMs,
+        input.repository,
+      ),
+    );
+  }
+
+  async heartbeatDeliveryLease(lease: DeliveryLease): Promise<DeliveryLease> {
+    return this.storage.transaction(async (transaction) => {
+      const current = await transaction.getDeliveryLease(lease.key);
+      this.assertDeliveryLease(current, lease);
+      const now = this.clock.nowMilliseconds();
+      const updated: DeliveryLease = {
+        ...current,
+        heartbeatAt: now,
+        expiresAt: Math.max(
+          current.expiresAt,
+          now + (current.expiresAt - current.heartbeatAt),
+        ),
+      };
+      await transaction.saveDeliveryLease(updated);
+      return updated;
+    });
+  }
+
+  private async claimDeliveryLease(
+    transaction: CoordinatorStorageTransaction,
+    key: DeliveryKey,
+    workerId: string,
+    suppliedLease?: DeliveryLease,
+    ttlMs = this.deliveryLeaseTtlMs,
+    repository = key.repository,
+  ): Promise<DeliveryLease> {
+    if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
+      throw new Error("Delivery lease ttlMs must be a positive finite number");
+    }
+    if (repository !== key.repository) {
+      throw new Error("Delivery lease repository does not match its key");
+    }
+    const delivery = await transaction.getDelivery(key);
+    if (delivery === undefined) {
+      throw new Error(`Delivery ${deliveryIdFor(key)} does not exist`);
+    }
+    await transaction.lockDeliveryLeaseResource(key);
+    const current = await transaction.getDeliveryLease(key);
+    if (suppliedLease !== undefined) {
+      if (
+        suppliedLease.key.repository !== key.repository ||
+        suppliedLease.key.itemId !== key.itemId ||
+        suppliedLease.workerId !== workerId
+      ) {
+        throw new LeaseLostError(
+          `Delivery lease ${suppliedLease.leaseId} is not bound to ${deliveryIdFor(key)}`,
+        );
+      }
+      this.assertDeliveryLease(current, suppliedLease);
+      return current;
+    }
+    const now = this.clock.nowMilliseconds();
+    if (current !== undefined && current.expiresAt > now) {
+      if (current.workerId === workerId) return current;
+      throw new LeaseBusyError(
+        `Delivery ${deliveryIdFor(key)} is leased by worker ${current.workerId}`,
+      );
+    }
+    const lease: DeliveryLease = {
+      leaseId: this.idFactory("delivery-lease"),
+      resourceKey: deliveryResourceKey(key),
+      key,
+      workerId,
+      fencingToken: (current?.fencingToken ?? 0) + 1,
+      acquiredAt: now,
+      heartbeatAt: now,
+      expiresAt: now + ttlMs,
+    };
+    await transaction.saveDeliveryLease(lease);
+    return lease;
+  }
+
+  private assertDeliveryLease(
+    current: DeliveryLease | undefined,
+    lease: DeliveryLease,
+  ): asserts current is DeliveryLease {
+    if (
+      current === undefined ||
+      current.leaseId !== lease.leaseId ||
+      current.fencingToken !== lease.fencingToken ||
+      current.workerId !== lease.workerId ||
+      current.key.repository !== lease.key.repository ||
+      current.key.itemId !== lease.key.itemId ||
+      current.expiresAt <= this.clock.nowMilliseconds()
+    ) {
+      throw new LeaseLostError(
+        `Delivery lease ${lease.leaseId} for ${deliveryIdFor(lease.key)} is expired or fenced`,
+      );
+    }
   }
 
   async acquireBranchLease(
