@@ -299,6 +299,70 @@ describe("GitHubPublication", () => {
     expect(body.match(/-->/g)).toHaveLength(1);
   });
 
+  it("updates an existing branch when a new candidate head is published", async () => {
+    const { coordinator } = createPublication();
+    const { jobId, lease } = await prepareCandidateJob(coordinator);
+    const stale = "c".repeat(40);
+    const candidate = "b".repeat(40);
+    const updateBranch = vi.fn(
+      async (input: { readonly branch: string; readonly headSha: string }) => ({
+        name: input.branch,
+        headSha: input.headSha,
+      }),
+    );
+    const createBranch = vi.fn(async () => {
+      throw new Error("createBranch should not be used for an existing branch");
+    });
+    const transport = {
+      fetchIssue: async () => undefined,
+      fetchPullRequest: async () => undefined,
+      findCommentByMarker: async () => undefined,
+      findBranchByName: async () => ({
+        name: "shipyard/issue-42",
+        headSha: stale,
+      }),
+      findPullRequestByMarker: async () => undefined,
+      findCheckByMarker: async () => undefined,
+      findIssueByMarker: async () => undefined,
+      createComment: async () => {
+        throw new Error("unused");
+      },
+      createBranch,
+      updateBranch,
+      createPullRequest: async () => {
+        throw new Error("unused");
+      },
+      createCheck: async () => {
+        throw new Error("unused");
+      },
+      createRepairIssue: async () => {
+        throw new Error("unused");
+      },
+    } satisfies GitHubReadTransport & GitHubWriteTransport;
+    const publication = new GitHubPublication({
+      coordinator,
+      transport,
+      trackingStore: new InMemoryGitHubStore(),
+    });
+
+    const result = await publication.publishBranch({
+      jobId,
+      lease,
+      branch: "shipyard/issue-42",
+      headSha: candidate,
+    });
+
+    expect(result.disposition).toBe("published");
+    expect(result.effect.marker).toContain(candidate);
+    expect(createBranch).not.toHaveBeenCalled();
+    expect(updateBranch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        branch: "shipyard/issue-42",
+        headSha: candidate,
+      }),
+    );
+  });
+
   it("does not let a job comment on a different workflow item", async () => {
     const { coordinator } = createPublication();
     const { jobId, lease } = await prepareJob(coordinator);

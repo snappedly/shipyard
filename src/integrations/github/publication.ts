@@ -266,26 +266,54 @@ export class GitHubPublication {
     input: GitHubBranchPublicationInput,
   ): Promise<GitHubPublicationResult<GitHubBranchSnapshot>> {
     const marker = `branch:${markerPart(input.jobId)}:${markerPart(input.branch)}`;
+    const effectMarker = `${marker}:candidate:${markerPart(input.headSha)}`;
     const execution = await this.options.coordinator.publishEffect({
       jobId: input.jobId,
       lease: input.lease,
       branch: input.branch,
       headSha: input.headSha,
       kind: "github-branch",
-      marker,
-      payload: { repository: input.lease.repository, branch: input.branch },
-      reconcile: () =>
-        this.options.transport.findBranchByName({
+      marker: effectMarker,
+      payload: {
+        repository: input.lease.repository,
+        branch: input.branch,
+        candidate: input.headSha,
+      },
+      reconcile: async () => {
+        const branch = await this.options.transport.findBranchByName({
           repository: input.lease.repository,
           branch: input.branch,
-        }),
-      publish: () =>
-        this.options.transport.createBranch({
+        });
+        return branch !== undefined && branch.headSha === input.headSha
+          ? branch
+          : undefined;
+      },
+      publish: async () => {
+        const branch = await this.options.transport.findBranchByName({
+          repository: input.lease.repository,
+          branch: input.branch,
+        });
+        if (branch !== undefined) {
+          if (branch.headSha === input.headSha) return branch;
+          if (this.options.transport.updateBranch === undefined) {
+            throw new Error(
+              "GitHub transport cannot update an existing branch candidate",
+            );
+          }
+          return this.options.transport.updateBranch({
+            repository: input.lease.repository,
+            branch: input.branch,
+            headSha: input.headSha,
+            marker: markerText(marker),
+          });
+        }
+        return this.options.transport.createBranch({
           repository: input.lease.repository,
           branch: input.branch,
           headSha: input.headSha,
           marker: markerText(marker),
-        }),
+        });
+      },
     });
     return result(marker, execution);
   }

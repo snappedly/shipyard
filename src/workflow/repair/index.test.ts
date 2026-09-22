@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createRepositoryPolicy,
   createWorkBrief,
+  WORKFLOW_CONTRACT_VERSION,
   type Finding,
   type RepositoryPolicy,
 } from "../contracts/index.js";
@@ -105,12 +106,67 @@ const createHarness = async () => {
     relevantRevision: base.sha,
     observedAt: "2026-09-17T12:00:00.000Z",
   });
+  const dispatched = await coordinator.dispatchNext({
+    repository,
+    workerId: "worker-a",
+  });
+  const candidateLease = await coordinator.acquireBranchLease({
+    repository,
+    branch: head.branch,
+    jobId: ingested.job!.id,
+    workerId: "worker-a",
+    ttlMs: 60_000,
+  });
+  await coordinator.recordPhaseResult({
+    jobId: ingested.job!.id,
+    lease: candidateLease,
+    result: {
+      contractVersion: WORKFLOW_CONTRACT_VERSION,
+      assignmentId: dispatched.assignment!.id,
+      phase: "implementation",
+      outcome: "completed",
+      identity: brief.identity,
+      briefHash: brief.hash,
+      base: brief.base,
+      head,
+      summary: "Published candidate",
+      evidence: ["The candidate is ready for repair."],
+      checks: [
+        {
+          name: "typecheck",
+          command: "npm run typecheck",
+          status: "passed",
+          summary: "passed",
+          baseSha: base.sha,
+          headSha: head.sha,
+          briefHash: brief.hash,
+        },
+      ],
+      commits: [head.sha],
+      artifacts: [],
+      questions: [],
+      findings: [],
+      completedAt: "2026-09-17T12:00:01.000Z",
+    },
+  });
   const store = new InMemoryGitHubStore();
   const repairStore = new InMemoryRepairBatchStore();
   const createdIssues: string[] = [];
+  let pullRequest = {
+    number: 100,
+    title: "Candidate",
+    body: "candidate",
+    state: "open" as const,
+    draft: false,
+    branch: head.branch,
+    baseBranch: base.branch,
+    headSha: head.sha,
+    updatedAt: "2026-09-17T12:00:00.000Z",
+    labels: ["ready-for-human"],
+  };
   const transport: GitHubReadTransport & GitHubWriteTransport = {
     fetchIssue: async () => undefined,
-    fetchPullRequest: async () => undefined,
+    fetchPullRequest: async () => pullRequest,
     findCommentByMarker: async () => undefined,
     findBranchByName: async () => undefined,
     findPullRequestByMarker: async () => undefined,
@@ -125,6 +181,14 @@ const createHarness = async () => {
       name: input.branch,
       headSha: input.headSha,
     }),
+    updatePullRequest: async (input) => {
+      pullRequest = {
+        ...pullRequest,
+        draft: input.draft ?? pullRequest.draft,
+        labels: [...(input.labels ?? pullRequest.labels)],
+      };
+      return pullRequest;
+    },
     createPullRequest: async () => {
       throw new Error("unused");
     },
@@ -179,6 +243,10 @@ describe("bounded PR repair", () => {
     expect(first.repairIssue?.number).toBe(77);
     expect(second.outcome).toBe("duplicate");
     expect(harness.createdIssues).toHaveLength(1);
+    expect(first.handoffInvalidation?.remote?.draft).toBe(true);
+    expect(first.handoffInvalidation?.remote?.labels).not.toContain(
+      "ready-for-human",
+    );
     expect(first.issuePublication?.remote?.labels).toContain(
       "shipyard:pr-repair",
     );

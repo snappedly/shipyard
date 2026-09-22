@@ -85,7 +85,10 @@ export interface ScheduleRepairOptions {
   readonly pullRequestNumber?: number;
   /** A merged delivery cannot be mutated; callers must start a follow-up. */
   readonly deliveryState?: "active" | "merged";
-  /** Return the existing PR to draft before a repair changes its candidate. */
+  /**
+   * @deprecated Pre-merge repairs always return an existing PR to draft. The
+   * flag is retained for source compatibility with earlier callers.
+   */
   readonly invalidateHandoff?: boolean;
   readonly followUp?: boolean;
   readonly pullRequestState?: "open" | "closed";
@@ -340,7 +343,7 @@ export const scheduleBoundedRepair = async (
     ttlMs: input.leaseTtlMs ?? 60_000,
   });
   const handoffInvalidation =
-    input.invalidateHandoff === true && input.pullRequestNumber !== undefined
+    input.pullRequestNumber !== undefined
       ? await input.publication.invalidatePullRequestHandoff({
           jobId: input.jobId,
           lease,
