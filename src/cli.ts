@@ -37,7 +37,10 @@ import {
   type CodexAuthMode,
 } from "./CodexAuth.js";
 import { requireCanonicalConfigDir } from "./runtimeConfig.js";
-import { installRepositoryRunner } from "./RepositoryRunner.js";
+import {
+  installRepositoryRunner,
+  RunnerInstallError,
+} from "./RepositoryRunner.js";
 import {
   initializeRepositoryRunner,
   repositoryRunnerNextSteps,
@@ -731,7 +734,25 @@ const initCommand = Command.make(
               }
               return confirmed === true;
             },
-            install: () => installRepositoryRunner({ repoDir: cwd }),
+            install: () =>
+              Effect.runPromise(
+                d.progress("Installing repository runner", (report) =>
+                  Effect.tryPromise({
+                    try: () =>
+                      installRepositoryRunner({
+                        repoDir: cwd,
+                        onProgress: report,
+                      }),
+                    catch: (error) =>
+                      new InitError({
+                        message:
+                          error instanceof RunnerInstallError
+                            ? error.message
+                            : `Repository runner installation failed: ${error instanceof Error ? error.message : String(error)}`,
+                      }),
+                  }),
+                ),
+              ),
           }),
         catch: (error) =>
           error instanceof InitError
@@ -763,14 +784,7 @@ const initCommand = Command.make(
 
       yield* d.status("Init complete!", "success");
 
-      // Show template-specific next steps
-      const nextSteps = getNextStepsLines(
-        selectedTemplate,
-        scaffoldResult.mainFilename,
-        selectedAgent,
-        packageManager,
-        selectedCodexAuth,
-      );
+      const nextSteps = getNextStepsLines();
       for (const [i, line] of nextSteps.entries()) {
         yield* d.text(i === 0 ? line : styleText("dim", line));
       }

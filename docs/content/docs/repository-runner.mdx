@@ -16,7 +16,7 @@ repository, `gh` authenticated with repository-administration access, and agent
 credentials in `.shipyard/.env`.
 
 Interactive `npx shipyard init` offers runner installation after scaffolding
-and defaults to No. Non-interactive init skips it unless you pass
+and defaults to Yes. Non-interactive init skips it unless you pass
 `--install-runner true`. You can install later:
 
 ```sh
@@ -26,6 +26,10 @@ git commit -m "Add Shipyard wake workflow"
 git push
 npx shipyard runner start
 ```
+
+Terminal installs show a progress bar for validation, download, registration,
+and workflow setup. Non-interactive output records the same stages as log
+entries.
 
 `--registration-token` can supply the one-time registration credential. It
 does not replace administrative `gh` access, which is required to verify that

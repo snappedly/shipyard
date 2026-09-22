@@ -17,7 +17,7 @@ describe("repository runner initialization", () => {
     expect(install).not.toHaveBeenCalled();
   });
 
-  it("offers interactive installation with No as the default", async () => {
+  it("offers interactive installation with Yes as the default", async () => {
     const confirm = vi.fn().mockResolvedValue(false);
     const install = vi.fn();
 
@@ -30,7 +30,7 @@ describe("repository runner initialization", () => {
     expect(confirm).toHaveBeenCalledWith({
       message:
         "Install a foreground repository runner for labelled GitHub issues?",
-      initialValue: false,
+      initialValue: true,
     });
     expect(result).toEqual({ status: "declined" });
     expect(install).not.toHaveBeenCalled();

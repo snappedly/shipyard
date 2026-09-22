@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   installRepositoryRunner,
   type RunnerInstallAdapters,
+  type RunnerInstallProgress,
 } from "./RepositoryRunner.js";
 import {
   REPOSITORY_RUNNER_WAKE_SCRIPT,
@@ -109,8 +110,12 @@ const makeAdapters = (
 describe("installRepositoryRunner", () => {
   it("installs and registers the verified official Apple Silicon runner", async () => {
     const { adapters, calls, writes } = makeAdapters();
+    const progress: RunnerInstallProgress[] = [];
 
-    const result = await installRepositoryRunner({ repoDir }, adapters);
+    const result = await installRepositoryRunner(
+      { repoDir, onProgress: (update) => progress.push(update) },
+      adapters,
+    );
 
     expect(result).toEqual({
       name: "shipyard-shipyard-jon-s-macbook-local",
@@ -164,6 +169,16 @@ describe("installRepositoryRunner", () => {
       version: "2.331.0",
     });
     expect(JSON.stringify(metadata)).not.toContain("one-time-token");
+    expect(progress.map(({ current, total }) => [current, total])).toEqual([
+      [1, 8],
+      [2, 8],
+      [3, 8],
+      [4, 8],
+      [5, 8],
+      [6, 8],
+      [7, 8],
+      [8, 8],
+    ]);
   });
 
   it.each([
@@ -242,6 +257,7 @@ describe("installRepositoryRunner", () => {
 
   it("validates a healthy matching installation without duplicating it", async () => {
     const base = makeAdapters();
+    const progress: RunnerInstallProgress[] = [];
     const runnerDir = join(repoDir, ".shipyard", "runner");
     const maskDir = join(repoDir, ".shipyard", "runner-sandbox-mask");
     const metadataPath = join(runnerDir, ".shipyard-install.json");
@@ -290,7 +306,10 @@ describe("installRepositoryRunner", () => {
     };
 
     await expect(
-      installRepositoryRunner({ repoDir }, adapters),
+      installRepositoryRunner(
+        { repoDir, onProgress: (update) => progress.push(update) },
+        adapters,
+      ),
     ).resolves.toEqual({
       name: existingMetadata.name,
       repository: existingMetadata.repository,
@@ -312,6 +331,11 @@ describe("installRepositoryRunner", () => {
     expect(base.writes.get(join(runnerDir, "shipyard-wake"))).toBe(
       REPOSITORY_RUNNER_WAKE_SCRIPT,
     );
+    expect(progress.map(({ current, total }) => [current, total])).toEqual([
+      [1, 3],
+      [2, 3],
+      [3, 3],
+    ]);
   });
 
   it("refuses a differing wake workflow before registering a runner", async () => {
