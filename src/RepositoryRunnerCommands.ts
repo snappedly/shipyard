@@ -2,6 +2,8 @@ import { Command, Options } from "@effect/cli";
 import { Effect } from "effect";
 import { Display } from "./Display.js";
 import { InitError } from "./errors.js";
+import { purgeRunLogs } from "./LogRetention.js";
+import { requireCanonicalConfigDir } from "./runtimeConfig.js";
 import {
   installRepositoryRunner,
   RunnerInstallError,
@@ -149,11 +151,34 @@ const removeRunnerCommand = Command.make(
     }),
 );
 
+const purgeRunnerCommand = Command.make("purge", {}, () =>
+  Effect.gen(function* () {
+    const display = yield* Display;
+    const repoDir = process.cwd();
+    yield* requireCanonicalConfigDir(repoDir);
+
+    const result = yield* Effect.tryPromise({
+      try: () => purgeRunLogs({ repoDir }),
+      catch: (error) =>
+        new InitError({
+          message: `Run-log purge failed: ${error instanceof Error ? error.message : String(error)}`,
+        }),
+    });
+    const removed = result.removedCount;
+    yield* display.status(
+      removed === 0
+        ? "No run logs found."
+        : `Purged ${removed} run-log ${removed === 1 ? "entry" : "entries"}.`,
+      "success",
+    );
+  }),
+);
+
 export const runnerCommand = Command.make("runner", {}, () =>
   Effect.gen(function* () {
     const display = yield* Display;
     yield* display.status(
-      "Repository runner commands. Use --help to see available subcommands.",
+      "Repository runner and run-log commands. Use --help to see available subcommands.",
       "info",
     );
   }),
@@ -164,5 +189,6 @@ export const runnerCommand = Command.make("runner", {}, () =>
     statusRunnerCommand,
     stopRunnerCommand,
     removeRunnerCommand,
+    purgeRunnerCommand,
   ]),
 );

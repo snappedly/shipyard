@@ -77,6 +77,7 @@ PID recorded by the repository even when the stored process identity is stale.
 npx shipyard runner status
 npx shipyard runner stop
 npx shipyard runner remove
+npx shipyard runner purge
 ```
 
 Normal removal unregisters GitHub and deletes protected runner files, while
@@ -84,6 +85,14 @@ preserving Shipyard configuration, workflow, activation label, issues, logs,
 and worktrees. If unregistration fails, local state is preserved. Use
 `runner remove --force` only when necessary, then remove the named orphaned
 registration in GitHub.
+
+`runner purge` removes all dated default run-log folders and regular root-level
+`.log` files regardless of age. Root-level `.log` files in `.shipyard/logs/`
+are managed by this retention policy, including explicit logging paths. The
+foreground controller separately removes dated folders older than eight
+calendar days and root-level `.log` files last modified before the same cutoff.
+It runs this maintenance at startup and once per day; a purge failure is
+reported and does not stop the runner.
 
 There is no Mac sleep detector. After a sleep beyond GitHub's 24-hour queue
 lifetime, manually dispatch the workflow or restart the controller. GitHub can

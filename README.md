@@ -140,6 +140,7 @@ Use these commands from the same repository root:
 npx shipyard runner status
 npx shipyard runner stop
 npx shipyard runner remove
+npx shipyard runner purge
 ```
 
 Status reports local process state, GitHub connectivity, repository identity,
@@ -150,6 +151,21 @@ the Shipyard config, workflow, issues, logs, and worktrees. If GitHub
 unregistration is unavailable, retry after restoring access. As a last resort,
 `runner remove --force` deletes local files and prints the GitHub registration
 that must be removed manually.
+
+`runner purge` removes all default run logs, regardless of age:
+
+```sh
+npx shipyard runner purge
+```
+
+It removes valid `.shipyard/logs/YYYY-MM-DD/` folders and regular root-level
+`.log` files. All root-level `.log` files in this managed directory—including
+explicit logging paths—participate in retention; use a path outside
+`.shipyard/logs/` for logs that must be retained separately. Other files,
+malformed directory names, and symlinks are left untouched. `shipyard run` and a
+foreground `runner start` automatically remove dated folders older than eight
+calendar days and root-level `.log` files last modified before the same cutoff,
+best-effort.
 
 There is no Mac sleep/wake detector. GitHub can discard a queued self-hosted job
 after 24 hours, so after a long sleep use manual workflow dispatch or restart

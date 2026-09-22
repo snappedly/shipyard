@@ -40,10 +40,17 @@ import {
   RUNNER_DIR,
   RUNNER_SANDBOX_MASK_DIR,
 } from "./runtimeNames.js";
+import {
+  DEFAULT_LOG_RETENTION_DAYS,
+  purgeRunLogs,
+  type PurgeRunLogsOptions,
+  type PurgeRunLogsResult,
+} from "./LogRetention.js";
 
 const execFileAsync = promisify(execFile);
 const CONTROLLER_STATE = ".shipyard-state.json";
 const LAST_FAILURE = ".shipyard-last-failure.json";
+const LOG_PURGE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 interface CommandResult {
   readonly stdout: string;
@@ -107,6 +114,13 @@ export interface RunnerControlAdapters {
   readonly onWake?: (handler: () => void) => () => void;
   readonly pause: (milliseconds: number) => Promise<void>;
   readonly now: () => Date;
+  readonly purgeRunLogs: (
+    options: PurgeRunLogsOptions,
+  ) => Promise<PurgeRunLogsResult>;
+  readonly scheduleRecurring: (
+    task: () => Promise<void>,
+    milliseconds: number,
+  ) => () => void;
   readonly report: (message: string) => void;
 }
 
@@ -294,6 +308,13 @@ const defaultAdapters: RunnerControlAdapters = {
   pause: (milliseconds) =>
     new Promise((resolve) => setTimeout(resolve, milliseconds)),
   now: () => new Date(),
+  purgeRunLogs,
+  scheduleRecurring: (task, milliseconds) => {
+    const timer = setInterval(() => {
+      void task();
+    }, milliseconds);
+    return () => clearInterval(timer);
+  },
   report: (message) => console.log(message),
 };
 
@@ -668,6 +689,7 @@ const startRepositoryRunnerManaged = async (
 
   let listenerChild: RepositoryRunnerChild | undefined;
   let shipyardChild: RepositoryRunnerChild | undefined;
+  let cancelLogPurge: (() => void) | undefined;
   let stopping = false;
   let lastWake: RunnerWakeRecord | undefined;
   let shutdownPromise: Promise<void> | undefined;
@@ -688,6 +710,26 @@ const startRepositoryRunnerManaged = async (
       adapters,
     );
     adapters.report(`[repository runner] ${state}: ${lastOutcome}`);
+  };
+  const purgeLogs = async (): Promise<void> => {
+    if (stopping || shipyardChild !== undefined) return;
+    try {
+      const result = await adapters.purgeRunLogs({
+        repoDir: options.repoDir,
+        retentionDays: DEFAULT_LOG_RETENTION_DAYS,
+        now: adapters.now(),
+      });
+      const removed = result.removedCount;
+      if (removed > 0) {
+        adapters.report(
+          `[repository runner] purged ${removed} outdated run-log ${removed === 1 ? "entry" : "entries"}`,
+        );
+      }
+    } catch (error) {
+      adapters.report(
+        `[repository runner] log purge skipped: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   };
   const removeTransientWork = () =>
     adapters.removeTree(join(context.runnerDir, RUNNER_WORK_DIR));
@@ -787,6 +829,12 @@ const startRepositoryRunnerManaged = async (
 
   let initialWorkFound = false;
   try {
+    await purgeLogs();
+    cancelLogPurge = adapters.scheduleRecurring(
+      purgeLogs,
+      LOG_PURGE_CHECK_INTERVAL_MS,
+    );
+
     const listEligibleIssueNumbers = async (): Promise<readonly string[]> => {
       const issues = await runCommand(
         adapters,
@@ -963,6 +1011,10 @@ const startRepositoryRunnerManaged = async (
     await bestEffort(() => saveState("stopped", failure.message));
     throw failure;
   } finally {
+    if (cancelLogPurge !== undefined) {
+      cancelLogPurge();
+      cancelLogPurge = undefined;
+    }
     wakeSubscription.close();
     unregisterShutdown();
     if (shutdownPromise) {

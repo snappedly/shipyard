@@ -92,6 +92,21 @@ follow `cwd`.
 Default run logs are placed in a folder named for the local calendar date, such
 as `.shipyard/logs/2026-09-22/`. Explicit `logging.path` values are unchanged.
 
+Shipyard automatically retains default run logs for eight calendar days. To
+remove all default run logs manually:
+
+```sh
+npx shipyard runner purge
+```
+
+The manual purge removes valid `YYYY-MM-DD` folders and regular root-level `.log`
+files. All root-level `.log` files in this managed directory, including explicit
+`logging.path` values, participate in retention. Use a path outside
+`.shipyard/logs/` for logs that must be retained separately. Other files,
+malformed directory names, and symlinks are left alone. `shipyard run` performs
+the eight-day purge best-effort before a run, using modification time for
+root-level `.log` files.
+
 Docker and Vercel Sandbox do not support `head` or automatically mount your checkout.
 They start from committed Git history. Use `copyToWorktree` for selected ignored
 or untracked files; these copy from the original repository. Mounts must stay
