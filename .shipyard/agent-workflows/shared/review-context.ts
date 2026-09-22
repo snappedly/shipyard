@@ -155,7 +155,8 @@ query($owner:String!,$repo:String!,$number:Int!) {
     review_threads: reviewThreads,
   };
 
-  const diff = safeSh("git diff main...HEAD") || sh("git diff main..HEAD");
+  const diff =
+    safeSh("git diff staging...HEAD") || sh("git diff staging..HEAD");
 
   return {
     prTitle: prView.title,

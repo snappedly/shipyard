@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - main
+      - production
 
 permissions: {}
 
@@ -70,13 +70,13 @@ jobs:
           package-manager-cache: false
       - run: npm install --global npm@12.0.2
       - run: npm ci
-      - name: Verify exact main revision
+      - name: Verify exact production revision
         env:
           CANDIDATE_SHA: ${{ github.sha }}
         run: |
-          git fetch origin main
+          git fetch origin production
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
-          test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse origin/production)" = "$CANDIDATE_SHA"
       - name: Create or update version pull request
         id: changesets
         uses: changesets/action/version@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
@@ -160,13 +160,13 @@ jobs:
           echo "Version pull request #$PR_NUMBER did not merge after auto-merge was enabled." >&2
           exit 1
 
-      - name: Start release for versioned main
+      - name: Start release for versioned production
         if: steps.version-ci.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
         # Merges made with GITHUB_TOKEN do not emit a new push workflow run.
         # Dispatch explicitly so the merged version is built and published.
-        run: gh workflow run release.yml --ref main
+        run: gh workflow run release.yml --ref production
 
   build-package:
     name: Build npm package
@@ -186,9 +186,9 @@ jobs:
         env:
           CANDIDATE_SHA: ${{ github.sha }}
         run: |
-          git fetch origin main
+          git fetch origin production
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
-          test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse origin/production)" = "$CANDIDATE_SHA"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
@@ -254,7 +254,7 @@ jobs:
       # The version pull request is merged with GITHUB_TOKEN, so its push
       # event does not start ci.yml. Record the exact-candidate result as the
       # required commit status so the merged release commit has the same
-      # visible CI signal as a normal main push. The pending status is posted
+      # visible CI signal as a normal production push. The pending status is posted
       # before the repository check starts; this finalizer also runs when an
       # earlier job fails so the status cannot disappear without a result.
       - name: Publish final exact candidate CI status
@@ -343,9 +343,9 @@ jobs:
           CANDIDATE_SHA: ${{ github.sha }}
         run: |
           sha256sum --check shipyard.tgz.sha256
-          git fetch origin main
+          git fetch origin production
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
-          test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse origin/production)" = "$CANDIDATE_SHA"
           SOURCE_VERSION=$(node --print "require('./package.json').version")
           PACKAGE_VERSION=$(tar -xOf shipyard.tgz package/package.json | node --input-type=module --eval "let input=''; process.stdin.on('data', chunk => input += chunk); process.stdin.on('end', () => console.log(JSON.parse(input).version))")
           test "$SOURCE_VERSION" = "$PACKAGE_VERSION"

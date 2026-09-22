@@ -11,7 +11,7 @@ You are an expert code reviewer. Your job is not just to comment. Actively impro
 
 {{LINKED_ISSUE}}
 
-# DIFF TO MAIN
+# DIFF TO STAGING
 
 ```diff
 {{DIFF_TO_MAIN}}
