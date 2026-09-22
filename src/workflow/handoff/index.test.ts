@@ -13,11 +13,13 @@ import {
   type WorkflowJob,
 } from "../coordinator/index.js";
 import {
+  completePlanningSpec,
   completeSourceIssue,
   completeStandaloneIssue,
   closeStandaloneSourceIssue,
   closeSourceIssue,
   evaluateHandoffReadiness,
+  formatPlanningSpecCompletionComment,
   invalidateCandidateEvidence,
   mergeProtectedCandidate,
   prepareHumanHandoff,
@@ -610,5 +612,117 @@ describe("handoff gates", () => {
         checks: [{ ...check, headSha: "c".repeat(40) }],
       }).reason,
     ).toContain("stale");
+  });
+
+  it("keeps an aggregate planning spec open until the exact merged candidate is complete", () => {
+    const mergedSha = "d".repeat(40);
+    const expected = {
+      repository,
+      itemId: "100",
+      kind: "planning-spec" as const,
+      briefRevision: 3,
+      briefHash: "f".repeat(64),
+      baseBranch: "main",
+      baseSha: base.sha,
+      branch: "shipyard/spec-100",
+      headSha: head.sha,
+    };
+    const candidate = {
+      metadata: expected,
+      pullRequestNumber: 200,
+      pullRequestUrl: "https://github.com/snappedly/shipyard/pull/200",
+      state: "closed" as const,
+      draft: false,
+      merged: true,
+      mergedSha,
+      branch: expected.branch,
+      baseBranch: expected.baseBranch,
+      headSha: expected.headSha,
+    };
+    const checks = [
+      {
+        name: "typecheck",
+        command: "npm run typecheck",
+        status: "passed" as const,
+        summary: "passed on the merged revision",
+        baseSha: base.sha,
+        headSha: mergedSha,
+        briefHash: expected.briefHash,
+      },
+    ];
+    const originalChildren = [
+      { number: 101, kind: "child" as const, state: "closed" as const },
+    ];
+    const repairChildren = [
+      {
+        number: 201,
+        kind: "repair" as const,
+        state: "closed" as const,
+        htmlUrl: "https://github.com/snappedly/shipyard/issues/201",
+      },
+    ];
+    const input = {
+      policy,
+      parentIssueNumber: 100,
+      expected,
+      candidate,
+      checks,
+      originalChildren,
+      repairChildren,
+    };
+
+    expect(
+      completePlanningSpec({
+        ...input,
+        candidate: { ...candidate, state: "open" },
+      }),
+    ).toMatchObject({
+      outcome: "open",
+      reason: "Integration pull request is still open",
+    });
+    expect(
+      completePlanningSpec({
+        ...input,
+        candidate: { ...candidate, merged: false },
+      }).reason,
+    ).toContain("without a merge");
+    expect(
+      completePlanningSpec({
+        ...input,
+        originalChildren: [{ ...originalChildren[0]!, state: "open" }],
+      }).reason,
+    ).toContain("Child issue #101");
+    expect(
+      completePlanningSpec({
+        ...input,
+        checks: [{ ...checks[0]!, status: "failed" }],
+      }).reason,
+    ).toContain("typecheck is failed");
+    expect(
+      completePlanningSpec({
+        ...input,
+        blockers: [{ id: "repair:201", active: true, reason: "blocked" }],
+      }).reason,
+    ).toContain("repair:201");
+
+    const completed = completePlanningSpec(input);
+    expect(completed).toMatchObject({ outcome: "completed", mergedSha });
+    expect(
+      formatPlanningSpecCompletionComment({
+        pullRequestNumber: candidate.pullRequestNumber,
+        pullRequestUrl: candidate.pullRequestUrl,
+        mergedSha,
+        originalChildren: completed.originalChildren,
+        repairChildren: completed.repairChildren,
+      }),
+    ).toEqual(
+      [
+        "Shipyard completed the planning-spec delivery.",
+        "- Pull request: [#200](https://github.com/snappedly/shipyard/pull/200)",
+        `- Merged revision: \`${mergedSha}\``,
+        "- Child issues: #101",
+        "- Repair issues: [#201](https://github.com/snappedly/shipyard/issues/201)",
+      ].join("\n"),
+    );
   });
 });

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { DeliveryFailureEvidence } from "../../workflow/coordinator/index.js";
+import { formatPlanningSpecCompletionComment } from "../../workflow/handoff/index.js";
 import { GITHUB_PUBLICATION_METADATA_VERSION } from "./types.js";
 import type {
   GitHubBranchPublicationInput,
@@ -23,6 +24,8 @@ import type {
   GitHubResumeBlockedDeliveryInput,
   GitHubResumeBlockedDeliveryResult,
   GitHubPublicationMetadata,
+  GitHubPlanningSpecClosurePublicationInput,
+  GitHubPlanningSpecClosurePublicationResult,
   GitHubRepairIssuePublicationInput,
   GitHubRepairLinkPublicationInput,
 } from "./types.js";
@@ -906,6 +909,74 @@ export class GitHubPublication {
         return this.options.transport.closeIssue({
           repository: input.lease.repository,
           issueNumber: input.issueNumber,
+        });
+      },
+    });
+    return { comment, issue: result(marker, execution) };
+  }
+
+  /** Publish one aggregate evidence comment, then close the parent idempotently. */
+  async publishPlanningSpecClosure(
+    input: GitHubPlanningSpecClosurePublicationInput,
+  ): Promise<GitHubPlanningSpecClosurePublicationResult> {
+    if (input.mergedSha.trim().length === 0) {
+      throw new Error("Cannot close a planning spec without a merged revision");
+    }
+    const job = await this.options.coordinator.getJob(input.jobId);
+    if (job === undefined) {
+      throw new Error(`Workflow job ${input.jobId} does not exist`);
+    }
+    if (
+      job.brief.identity.kind !== "planning-spec" ||
+      job.brief.identity.itemId !== String(input.parentIssueNumber)
+    ) {
+      throw new Error("Planning-spec closure is not bound to the parent job");
+    }
+    const comment = await this.publishComment({
+      jobId: input.jobId,
+      lease: input.lease,
+      issueNumber: input.parentIssueNumber,
+      key: `planning-spec-closure:${input.pullRequestNumber}:${input.mergedSha}`,
+      body: formatPlanningSpecCompletionComment({
+        pullRequestNumber: input.pullRequestNumber,
+        pullRequestUrl: input.pullRequestUrl,
+        mergedSha: input.mergedSha,
+        originalChildren: input.originalChildren,
+        repairChildren: input.repairChildren,
+      }),
+    });
+    if (comment.remote === undefined) {
+      return { comment };
+    }
+
+    const marker = `planning-spec-close:${markerPart(input.lease.repository)}:${markerPart(input.parentIssueNumber)}:${markerPart(input.pullRequestNumber)}:${markerPart(input.mergedSha)}`;
+    const execution = await this.options.coordinator.publishEffect({
+      jobId: input.jobId,
+      lease: input.lease,
+      itemId: String(input.parentIssueNumber),
+      deliveryKey: job.deliveryKey,
+      kind: "github-planning-spec-close",
+      marker,
+      payload: {
+        repository: input.lease.repository,
+        issueNumber: input.parentIssueNumber,
+        pullRequestNumber: input.pullRequestNumber,
+        mergedSha: input.mergedSha,
+      },
+      reconcile: async () => {
+        const issue = await this.options.transport.fetchIssue({
+          repository: input.lease.repository,
+          issueNumber: input.parentIssueNumber,
+        });
+        return issue?.state === "closed" ? issue : undefined;
+      },
+      publish: async () => {
+        if (this.options.transport.closeIssue === undefined) {
+          throw new Error("GitHub transport cannot close planning specs");
+        }
+        return this.options.transport.closeIssue({
+          repository: input.lease.repository,
+          issueNumber: input.parentIssueNumber,
         });
       },
     });

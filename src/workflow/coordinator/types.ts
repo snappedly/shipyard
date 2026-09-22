@@ -71,6 +71,12 @@ export interface DeliveryRecord extends DeliveryGroup {
   readonly version: number;
 }
 
+/** Current coordinator records associated with one delivery graph. */
+export interface DeliveryWorkflowState {
+  readonly delivery: DeliveryRecord;
+  readonly jobs: readonly WorkflowJob[];
+}
+
 export interface DeliveryLease {
   readonly leaseId: string;
   readonly resourceKey: string;

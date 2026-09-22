@@ -267,6 +267,66 @@ export interface StandaloneSourceIssueClosureResult extends StandaloneCompletion
   readonly closed: boolean;
 }
 
+export interface PlanningSpecIssueReference {
+  readonly number: number;
+  readonly kind: "child" | "repair";
+  readonly state: "open" | "closed";
+  readonly htmlUrl?: string;
+}
+
+export interface PlanningSpecBlocker {
+  readonly id: string;
+  readonly active: boolean;
+  readonly reason?: string;
+}
+
+/** Candidate identity retained in the integration pull request metadata. */
+export interface PlanningSpecCandidateMetadata {
+  readonly repository: string;
+  readonly itemId: string;
+  readonly kind: "planning-spec";
+  readonly briefRevision: number;
+  readonly briefHash: string;
+  readonly baseBranch: string;
+  readonly baseSha: string;
+  readonly branch: string;
+  readonly headSha: string;
+}
+
+export interface PlanningSpecCandidate {
+  readonly metadata: PlanningSpecCandidateMetadata;
+  readonly pullRequestNumber: number;
+  readonly pullRequestUrl?: string;
+  readonly state: "open" | "closed";
+  readonly draft: boolean;
+  readonly merged: boolean;
+  readonly mergedSha?: string;
+  readonly branch: string;
+  readonly baseBranch: string;
+  readonly headSha: string;
+}
+
+export interface PlanningSpecCompletionInput {
+  readonly policy: RepositoryPolicy;
+  readonly parentIssueNumber: number;
+  readonly expected: PlanningSpecCandidateMetadata;
+  readonly candidate: PlanningSpecCandidate;
+  readonly checks: readonly CheckEvidence[];
+  readonly originalChildren: readonly PlanningSpecIssueReference[];
+  readonly repairChildren: readonly PlanningSpecIssueReference[];
+  readonly blockers?: readonly PlanningSpecBlocker[];
+}
+
+export interface PlanningSpecCompletionResult {
+  readonly outcome: "completed" | "open";
+  readonly reason?: string;
+  readonly mergedSha?: string;
+  readonly candidate: PlanningSpecCandidate;
+  readonly originalChildren: readonly PlanningSpecIssueReference[];
+  readonly repairChildren: readonly PlanningSpecIssueReference[];
+  readonly blockers: readonly PlanningSpecBlocker[];
+}
+
 const defaultAxes: readonly ReviewAxis[] = ["standards", "spec"];
 
 const isFreshTimestamp = (
@@ -344,6 +404,203 @@ const allRequiredChecksPassed = (
     }
   }
   return reasons;
+};
+
+const samePlanningSpecMetadata = (
+  actual: PlanningSpecCandidateMetadata,
+  expected: PlanningSpecCandidateMetadata,
+): boolean =>
+  actual.repository === expected.repository &&
+  actual.itemId === expected.itemId &&
+  actual.kind === expected.kind &&
+  actual.briefRevision === expected.briefRevision &&
+  actual.briefHash === expected.briefHash &&
+  actual.baseBranch === expected.baseBranch &&
+  actual.baseSha === expected.baseSha &&
+  actual.branch === expected.branch &&
+  actual.headSha === expected.headSha;
+
+const planningSpecOpen = (
+  input: PlanningSpecCompletionInput,
+  reason: string,
+  blockers: readonly PlanningSpecBlocker[],
+): PlanningSpecCompletionResult => ({
+  outcome: "open",
+  reason,
+  mergedSha: input.candidate.mergedSha,
+  candidate: input.candidate,
+  originalChildren: input.originalChildren,
+  repairChildren: input.repairChildren,
+  blockers,
+});
+
+const issueReferenceKey = (issue: PlanningSpecIssueReference): string =>
+  String(issue.number);
+
+/**
+ * Reconcile aggregate planning-spec completion from current provider state.
+ * This gate has no merge capability: a provider-reported manual merge is the
+ * only transition that can satisfy the candidate portion of the contract.
+ */
+export const completePlanningSpec = (
+  input: PlanningSpecCompletionInput,
+): PlanningSpecCompletionResult => {
+  const policy = parseRepositoryPolicy(input.policy);
+  const blockers = [...(input.blockers ?? [])];
+  const candidate = input.candidate;
+
+  if (policy.repository !== input.expected.repository) {
+    return planningSpecOpen(
+      input,
+      "Planning-spec policy repository does not match the exact PR metadata",
+      blockers,
+    );
+  }
+  if (String(input.parentIssueNumber) !== input.expected.itemId) {
+    return planningSpecOpen(
+      input,
+      "Planning-spec parent does not match the exact PR metadata",
+      blockers,
+    );
+  }
+  if (!samePlanningSpecMetadata(candidate.metadata, input.expected)) {
+    return planningSpecOpen(
+      input,
+      "Integration pull request metadata does not match the current planning spec",
+      blockers,
+    );
+  }
+  if (candidate.pullRequestNumber < 1) {
+    return planningSpecOpen(
+      input,
+      "Integration pull request is invalid",
+      blockers,
+    );
+  }
+  if (
+    candidate.branch !== candidate.metadata.branch ||
+    candidate.headSha !== candidate.metadata.headSha ||
+    candidate.baseBranch !== candidate.metadata.baseBranch
+  ) {
+    return planningSpecOpen(
+      input,
+      "Integration pull request candidate does not match its metadata",
+      blockers,
+    );
+  }
+  if (candidate.state !== "closed") {
+    return planningSpecOpen(
+      input,
+      "Integration pull request is still open",
+      blockers,
+    );
+  }
+  if (!candidate.merged) {
+    return planningSpecOpen(
+      input,
+      "Integration pull request closed without a merge",
+      blockers,
+    );
+  }
+  if (candidate.draft) {
+    return planningSpecOpen(
+      input,
+      "Merged integration pull request was still a draft",
+      blockers,
+    );
+  }
+  const mergedSha = candidate.mergedSha?.trim();
+  if (mergedSha === undefined || mergedSha.length === 0) {
+    return planningSpecOpen(
+      input,
+      "Merged integration revision is missing",
+      blockers,
+    );
+  }
+  if (policy.issueClosure !== "merge-and-ci") {
+    return planningSpecOpen(
+      input,
+      "Planning spec remains open until release verification",
+      blockers,
+    );
+  }
+
+  const issueReferences = [...input.originalChildren, ...input.repairChildren];
+  if (input.originalChildren.length === 0) {
+    return planningSpecOpen(
+      input,
+      "No original child issues are scoped to the planning spec",
+      blockers,
+    );
+  }
+  const issueIds = new Set<string>();
+  for (const issue of issueReferences) {
+    if (issue.number < 1 || issueIds.has(issueReferenceKey(issue))) {
+      return planningSpecOpen(
+        input,
+        "Planning-spec child and repair scope is ambiguous",
+        blockers,
+      );
+    }
+    issueIds.add(issueReferenceKey(issue));
+    if (issue.state !== "closed") {
+      return planningSpecOpen(
+        input,
+        `${issue.kind === "repair" ? "Repair" : "Child"} issue #${issue.number} is still open`,
+        blockers,
+      );
+    }
+  }
+  const activeBlocker = blockers.find((blocker) => blocker.active);
+  if (activeBlocker !== undefined) {
+    return planningSpecOpen(
+      input,
+      `Scoped blocker remains active: ${activeBlocker.id}${activeBlocker.reason === undefined ? "" : ` (${activeBlocker.reason})`}`,
+      blockers,
+    );
+  }
+  const checkReasons = allRequiredChecksPassed(policy, input.checks, {
+    baseSha: candidate.metadata.baseSha,
+    headSha: mergedSha,
+    briefHash: candidate.metadata.briefHash,
+  });
+  if (checkReasons.length > 0) {
+    return planningSpecOpen(input, checkReasons.join("; "), blockers);
+  }
+  return {
+    outcome: "completed",
+    mergedSha,
+    candidate,
+    originalChildren: input.originalChildren,
+    repairChildren: input.repairChildren,
+    blockers,
+  };
+};
+
+const issueLink = (issue: PlanningSpecIssueReference): string =>
+  issue.htmlUrl === undefined
+    ? `#${issue.number}`
+    : `[#${issue.number}](${issue.htmlUrl})`;
+
+/** Concise, stable evidence for the single aggregate parent comment. */
+export const formatPlanningSpecCompletionComment = (input: {
+  readonly pullRequestNumber: number;
+  readonly pullRequestUrl?: string;
+  readonly mergedSha: string;
+  readonly originalChildren: readonly PlanningSpecIssueReference[];
+  readonly repairChildren: readonly PlanningSpecIssueReference[];
+}): string => {
+  const pullRequest =
+    input.pullRequestUrl === undefined
+      ? `#${input.pullRequestNumber}`
+      : `[#${input.pullRequestNumber}](${input.pullRequestUrl})`;
+  return [
+    "Shipyard completed the planning-spec delivery.",
+    `- Pull request: ${pullRequest}`,
+    `- Merged revision: \`${input.mergedSha}\``,
+    `- Child issues: ${input.originalChildren.map(issueLink).join(", ")}`,
+    `- Repair issues: ${input.repairChildren.length === 0 ? "none" : input.repairChildren.map(issueLink).join(", ")}`,
+  ].join("\n");
 };
 
 const candidateReasons = (

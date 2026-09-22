@@ -4,6 +4,7 @@ export {
 } from "./signature.js";
 export {
   GitHubIntegration,
+  createGitHubPlanningSpecCompletionHandler,
   createGitHubIssueBrief,
   reviewDecisionFor,
 } from "./integration.js";

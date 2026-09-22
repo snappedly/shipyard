@@ -37,6 +37,7 @@ import type {
   DeliveryKey,
   DeliveryLease,
   DeliveryRecord,
+  DeliveryWorkflowState,
   DispatchIntent,
   DispatchRequest,
   DispatchResult,
@@ -288,6 +289,27 @@ export class WorkflowCoordinator {
     return this.storage.transaction((transaction) =>
       transaction.getDelivery(key),
     );
+  }
+
+  /** Read the current coordinator jobs for a delivery without changing state. */
+  async getDeliveryWorkflowState(
+    key: DeliveryKey,
+  ): Promise<DeliveryWorkflowState | undefined> {
+    return this.storage.transaction(async (transaction) => {
+      const delivery = await transaction.getDelivery(key);
+      if (delivery === undefined) return undefined;
+      const identities = [delivery.root, ...delivery.graph.children];
+      const seen = new Set<string>();
+      const jobs: WorkflowJob[] = [];
+      for (const identity of identities) {
+        const identityKey = `${identity.repository}\u0000${identity.itemId}`;
+        if (seen.has(identityKey)) continue;
+        seen.add(identityKey);
+        const job = await transaction.findCurrentJob(identity);
+        if (job !== undefined) jobs.push(job);
+      }
+      return { delivery, jobs };
+    });
   }
 
   /** Resolve or refresh one stable delivery identity and its current graph. */

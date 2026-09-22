@@ -3,15 +3,29 @@ import {
   createWorkBrief,
   parseRepositoryPolicy,
   parseWorkBrief,
+  type CheckEvidence,
   type WorkIdentity,
   type WorkItemKind,
   type WorkBrief,
 } from "../../workflow/contracts/index.js";
 import { runTriage, type TriageSource } from "../../workflow/triage/index.js";
 import {
+  completePlanningSpec,
   processHumanReviewDecision,
   type HumanReviewDecisionInput,
+  type PlanningSpecCandidateMetadata,
+  type PlanningSpecCompletionInput,
+  type PlanningSpecCompletionResult,
 } from "../../workflow/handoff/index.js";
+import type { WorkflowCoordinator } from "../../workflow/coordinator/index.js";
+import {
+  LeaseBusyError,
+  type DeliveryWorkflowState,
+} from "../../workflow/coordinator/index.js";
+import {
+  GitHubPublication,
+  parseGitHubPublicationMetadata,
+} from "./publication.js";
 import { verifyGitHubWebhookSignature } from "./signature.js";
 import { InMemoryGitHubStore } from "./store.js";
 import type {
@@ -28,6 +42,9 @@ import type {
   GitHubNormalizedEvent,
   GitHubPullRequestReviewSnapshot,
   GitHubPullRequestReviewHandler,
+  GitHubPlanningSpecCompletionHandler,
+  GitHubReadTransport,
+  GitHubPlanningSpecScope,
   GitHubReconciliationInput,
   GitHubReconciliationResult,
   GitHubTrackedPullRequest,
@@ -341,6 +358,284 @@ export const createGitHubIssueBrief = (
   });
 };
 
+export interface GitHubPlanningSpecScopeReader {
+  read(input: {
+    readonly repository: string;
+    readonly parentIssueNumber: number;
+    readonly trackedPullRequest: GitHubTrackedPullRequest;
+    readonly delivery: DeliveryWorkflowState;
+    readonly transport: GitHubReadTransport;
+  }): Promise<GitHubPlanningSpecScope>;
+}
+
+export interface CreateGitHubPlanningSpecCompletionHandlerOptions {
+  readonly coordinator: WorkflowCoordinator;
+  readonly publication: GitHubPublication;
+  readonly scope: GitHubPlanningSpecScopeReader;
+  readonly workerId?:
+    | string
+    | ((input: {
+        readonly repository: string;
+        readonly pullRequestNumber: number;
+      }) => string);
+  readonly leaseTtlMs?: number;
+}
+
+const expectedPlanningSpecMetadata = (
+  tracked: GitHubTrackedPullRequest,
+): PlanningSpecCandidateMetadata => ({
+  repository: tracked.brief.identity.repository,
+  itemId: tracked.brief.identity.itemId,
+  kind: "planning-spec",
+  briefRevision: tracked.brief.revision,
+  briefHash: tracked.brief.hash,
+  baseBranch: tracked.policy.baseBranch,
+  baseSha: tracked.brief.base.sha,
+  branch: tracked.branch,
+  headSha: tracked.headSha,
+});
+
+const providerCheckEvidence = (
+  checks: readonly {
+    readonly name: string;
+    readonly headSha: string;
+    readonly status: "queued" | "in_progress" | "completed";
+    readonly conclusion?:
+      | "success"
+      | "failure"
+      | "neutral"
+      | "cancelled"
+      | "timed_out"
+      | "action_required"
+      | "stale"
+      | "skipped";
+  }[],
+  expected: PlanningSpecCandidateMetadata,
+): readonly CheckEvidence[] =>
+  checks.map((check) => ({
+    name: check.name,
+    command: check.name,
+    status:
+      check.status !== "completed"
+        ? "incomplete"
+        : check.conclusion === "success"
+          ? "passed"
+          : "failed",
+    summary:
+      check.status === "completed"
+        ? `Provider conclusion: ${check.conclusion ?? "unknown"}`
+        : `Provider status: ${check.status}`,
+    baseSha: expected.baseSha,
+    headSha: check.headSha,
+    briefHash: expected.briefHash,
+  }));
+
+const coordinatorBlockers = (
+  delivery: DeliveryWorkflowState,
+): readonly {
+  readonly id: string;
+  readonly active: boolean;
+  readonly reason?: string;
+}[] =>
+  delivery.jobs
+    .filter(
+      (job) =>
+        job.brief.identity.kind !== "planning-spec" &&
+        (job.control !== "active" ||
+          job.state === "blocked" ||
+          job.state === "failed" ||
+          job.state === "cancelled"),
+    )
+    .map((job) => ({
+      id: `coordinator:${job.brief.identity.itemId}`,
+      active: true,
+      reason: job.lastInfrastructureFailure?.error ?? `Job is ${job.state}`,
+    }));
+
+const missingPlanningSpecPullRequest = (
+  expected: PlanningSpecCandidateMetadata,
+  pullRequestNumber: number,
+): PlanningSpecCompletionResult => ({
+  outcome: "open",
+  reason: "Integration pull request is not currently published",
+  candidate: {
+    metadata: { ...expected, headSha: "missing" },
+    pullRequestNumber,
+    state: "open",
+    draft: true,
+    merged: false,
+    branch: expected.branch,
+    baseBranch: expected.baseBranch,
+    headSha: "missing",
+  },
+  originalChildren: [],
+  repairChildren: [],
+  blockers: [],
+});
+
+/** Build the provider-backed aggregate reconciler used by GitHub intake. */
+export const createGitHubPlanningSpecCompletionHandler = (
+  options: CreateGitHubPlanningSpecCompletionHandlerOptions,
+): GitHubPlanningSpecCompletionHandler => ({
+  reconcile: async ({
+    repository,
+    pullRequestNumber,
+    trackedPullRequest,
+    transport,
+  }) => {
+    const expected = expectedPlanningSpecMetadata(trackedPullRequest);
+    const pullRequest = await transport.fetchPullRequest({
+      repository,
+      pullRequestNumber,
+    });
+    if (pullRequest === undefined) {
+      return missingPlanningSpecPullRequest(expected, pullRequestNumber);
+    }
+    const parsedMetadata = parseGitHubPublicationMetadata(pullRequest.body);
+    const metadata =
+      parsedMetadata?.kind === "planning-spec"
+        ? { ...parsedMetadata, kind: "planning-spec" as const }
+        : undefined;
+    const delivery = await options.coordinator.getDeliveryWorkflowState({
+      repository,
+      itemId: trackedPullRequest.brief.identity.itemId,
+    });
+    if (delivery === undefined) {
+      return {
+        outcome: "open",
+        reason: "Planning-spec delivery record is missing",
+        candidate: {
+          metadata: metadata ?? { ...expected, headSha: "metadata-missing" },
+          pullRequestNumber: pullRequest.number,
+          pullRequestUrl: pullRequest.htmlUrl,
+          state: pullRequest.state,
+          draft: pullRequest.draft,
+          merged: pullRequest.merged === true,
+          mergedSha: pullRequest.mergedSha,
+          branch: pullRequest.branch,
+          baseBranch: pullRequest.baseBranch,
+          headSha: pullRequest.headSha,
+        },
+        originalChildren: [],
+        repairChildren: [],
+        blockers: [],
+      };
+    }
+    const scope = await options.scope.read({
+      repository,
+      parentIssueNumber: Number(trackedPullRequest.brief.identity.itemId),
+      trackedPullRequest,
+      delivery,
+      transport,
+    });
+    const expectedChildIds = new Set(
+      delivery.delivery.graph.children.map((child) => child.itemId),
+    );
+    const actualChildIds = new Set(
+      scope.originalChildren.map((child) => String(child.number)),
+    );
+    const scopeBlocker =
+      expectedChildIds.size !== actualChildIds.size ||
+      [...expectedChildIds].some((itemId) => !actualChildIds.has(itemId))
+        ? {
+            id: "scope:original-children",
+            active: true,
+            reason:
+              "Provider scope does not contain every original delivery child",
+          }
+        : undefined;
+    const providerChecks =
+      pullRequest.mergedSha === undefined || transport.fetchChecks === undefined
+        ? []
+        : providerCheckEvidence(
+            await transport.fetchChecks({
+              repository,
+              headSha: pullRequest.mergedSha,
+            }),
+            expected,
+          );
+    const candidate = {
+      metadata: metadata ?? { ...expected, headSha: "metadata-missing" },
+      pullRequestNumber: pullRequest.number,
+      pullRequestUrl: pullRequest.htmlUrl,
+      state: pullRequest.state,
+      draft: pullRequest.draft,
+      merged: pullRequest.merged === true,
+      mergedSha: pullRequest.mergedSha,
+      branch: pullRequest.branch,
+      baseBranch: pullRequest.baseBranch,
+      headSha: pullRequest.headSha,
+    } as const;
+    const completionInput: PlanningSpecCompletionInput = {
+      policy: trackedPullRequest.policy,
+      parentIssueNumber: Number(trackedPullRequest.brief.identity.itemId),
+      expected,
+      candidate,
+      checks: providerChecks,
+      originalChildren: scope.originalChildren,
+      repairChildren: scope.repairChildren,
+      blockers: [
+        ...(scope.blockers ?? []),
+        ...(scopeBlocker === undefined ? [] : [scopeBlocker]),
+        ...coordinatorBlockers(delivery),
+      ],
+    };
+    const completion = completePlanningSpec(completionInput);
+    if (completion.outcome === "open") return completion;
+
+    const workerId =
+      typeof options.workerId === "function"
+        ? options.workerId({ repository, pullRequestNumber })
+        : (options.workerId ??
+          `github-planning-spec:${repository}#${pullRequestNumber}`);
+    let lease;
+    try {
+      lease = await options.coordinator.acquireBranchLease({
+        repository,
+        branch: candidate.branch,
+        jobId: trackedPullRequest.jobId,
+        workerId,
+        ttlMs: options.leaseTtlMs ?? 60_000,
+      });
+    } catch (error) {
+      return {
+        ...completion,
+        outcome: "open",
+        reason:
+          error instanceof LeaseBusyError
+            ? "Planning-spec completion is already being reconciled"
+            : `Could not acquire the reconciliation lease: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    try {
+      const publication = await options.publication.publishPlanningSpecClosure({
+        jobId: trackedPullRequest.jobId,
+        lease,
+        parentIssueNumber: completionInput.parentIssueNumber,
+        pullRequestNumber: candidate.pullRequestNumber,
+        pullRequestUrl: candidate.pullRequestUrl,
+        mergedSha: completion.mergedSha ?? "",
+        originalChildren: completion.originalChildren,
+        repairChildren: completion.repairChildren,
+      });
+      if (publication.issue === undefined) {
+        return {
+          ...completion,
+          outcome: "open",
+          reason: "Planning-spec closure publication is still in flight",
+        };
+      }
+    } catch (error) {
+      return {
+        ...completion,
+        outcome: "open",
+        reason: `Could not publish planning-spec completion: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    return completion;
+  },
+});
+
 const eventName = (value: string): GitHubEventName | undefined =>
   allowedEventNames.has(value as GitHubEventName)
     ? (value as GitHubEventName)
@@ -577,17 +872,44 @@ export class GitHubIntegration {
         deliveryId: `reconcile:pull-request:${input.repository}:${input.pullRequestNumber}`,
       };
     }
-    return this.toReconciliationResult(
-      await this.processEnvelope(
-        {
-          eventName: "pull_request",
-          deliveryId: `reconcile:pull-request:${input.repository}:${pullRequest.number}:${pullRequest.headSha}`,
-          payload: this.pullRequestPayload(pullRequest, input.repository),
-          receivedAt: this.now(),
-        },
-        true,
-      ),
+    const receipt = await this.processEnvelope(
+      {
+        eventName: "pull_request",
+        deliveryId: `reconcile:pull-request:${input.repository}:${pullRequest.number}:${pullRequest.headSha}`,
+        payload: this.pullRequestPayload(pullRequest, input.repository),
+        receivedAt: this.now(),
+      },
+      true,
     );
+    const baseResult = this.toReconciliationResult(receipt);
+    const tracked = this.options.trackingStore
+      ? await this.options.trackingStore.findTrackedPullRequest(
+          input.repository,
+          pullRequest.number,
+        )
+      : undefined;
+    if (
+      this.options.planningSpecCompletion === undefined ||
+      tracked === undefined ||
+      tracked.brief.identity.kind !== "planning-spec"
+    ) {
+      return baseResult;
+    }
+    try {
+      const planningSpecCompletion =
+        await this.options.planningSpecCompletion.reconcile({
+          repository: input.repository,
+          pullRequestNumber: pullRequest.number,
+          trackedPullRequest: tracked,
+          transport: input.transport,
+        });
+      return { ...baseResult, planningSpecCompletion };
+    } catch (error) {
+      return {
+        ...baseResult,
+        reason: `planning-spec reconciliation failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
   }
 
   private async processEnvelope(
@@ -719,6 +1041,26 @@ export class GitHubIntegration {
         event: normalized.event,
         review: reviewResult,
         reason: reviewResult.reason,
+      };
+    }
+    const trackedPlanningSpec = normalized.event.trackedPullRequest;
+    if (
+      trackedPlanningSpec !== undefined &&
+      trackedPlanningSpec.brief.identity.kind === "planning-spec"
+    ) {
+      // A planning-spec PR event is provider evidence for the aggregate
+      // record, not a new executable phase. Feeding it back through intake
+      // would supersede or close the parent based on the PR's own state.
+      await this.options.deliveryStore.updateDelivery({
+        ...effectiveDelivery,
+        status: "accepted",
+        eventKind: normalized.event.kind,
+        jobId: trackedPlanningSpec.jobId,
+      });
+      return {
+        status: "accepted",
+        deliveryId: envelope.deliveryId,
+        event: normalized.event,
       };
     }
     const ingest = await this.options.coordinator.ingest(
@@ -910,7 +1252,9 @@ export class GitHubIntegration {
       reply?.updatedAt ??
       envelope.receivedAt;
     const headSha = pullRequestHead(payload, tracked.headSha);
-    const sourceState = state(pullRequest?.state);
+    // A tracked pull request's closed state is not the source issue's state.
+    // Source issue closure is reconciled from issue events/provider reads.
+    const sourceState = "open" as const;
     const event: Omit<GitHubNormalizedEvent, "workflowEvent"> = {
       kind: "tracked-pr-updated",
       eventName: eventName(envelope.eventName) ?? "pull_request",
@@ -987,6 +1331,9 @@ export class GitHubIntegration {
       readonly updatedAt: string;
       readonly htmlUrl?: string;
       readonly authorLogin?: string;
+      readonly draft?: boolean;
+      readonly merged?: boolean;
+      readonly mergedSha?: string;
     },
     repository: string,
   ): JsonRecord {
@@ -999,6 +1346,9 @@ export class GitHubIntegration {
         state: pullRequest.state,
         updated_at: pullRequest.updatedAt,
         html_url: pullRequest.htmlUrl,
+        draft: pullRequest.draft,
+        merged: pullRequest.merged,
+        merge_commit_sha: pullRequest.mergedSha,
         user: pullRequest.authorLogin
           ? { login: pullRequest.authorLogin }
           : undefined,

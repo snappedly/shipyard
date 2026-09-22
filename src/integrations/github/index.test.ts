@@ -2,16 +2,23 @@ import { createHmac } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import {
   createRepositoryPolicy,
+  createWorkBrief,
   type RepositoryPolicy,
 } from "../../workflow/contracts/index.js";
 import {
   InMemoryCoordinatorStorage,
+  resolveDeliveryGroup,
   WorkflowCoordinator,
 } from "../../workflow/coordinator/index.js";
 import {
   GitHubIntegration,
+  GitHubPublication,
   InMemoryGitHubStore,
+  createGitHubPlanningSpecCompletionHandler,
+  serializeGitHubPublicationMetadata,
   verifyGitHubWebhookSignature,
+  type GitHubReadTransport,
+  type GitHubWriteTransport,
   type GitHubPullRequestReviewHandler,
   type GitHubWebhookSignatureInput,
 } from "./index.js";
@@ -581,5 +588,263 @@ describe("GitHub webhook intake", () => {
     expect(reply.ingest?.job?.brief.source.originalBody).toBe(
       "authorization: approved",
     );
+  });
+
+  it("reconciles a manually merged planning-spec PR from current provider state and replays safely", async () => {
+    const repositoryPolicy = policy();
+    const coordinator = new WorkflowCoordinator({
+      storage: new InMemoryCoordinatorStorage(),
+      clock: {
+        now: () => "2026-09-17T12:00:00.000Z",
+        nowMilliseconds: () => 0,
+      },
+    });
+    const store = new InMemoryGitHubStore();
+    const planningBrief = createWorkBrief({
+      identity: { repository, itemId: "100", kind: "planning-spec" },
+      source: {
+        provider: "github",
+        repository,
+        itemId: "100",
+        originalBody: "Deliver the planning spec.",
+      },
+      problem: "Deliver the planning spec.",
+      evidence: ["The request is authorized."],
+      acceptanceCriteria: ["All children are delivered."],
+      exclusions: [],
+      risk: "low",
+      verification: { checks: ["npm run typecheck"], artifacts: [] },
+      unresolvedQuestions: [],
+      authorization: {
+        status: "approved",
+        actor: "maintainer",
+        actorRole: "maintainer",
+        approvedAt: "2026-09-17T12:00:00.000Z",
+      },
+      base: { branch: "main", sha: "a".repeat(40) },
+      policyRevision: repositoryPolicy.revision,
+      skillRevision: repositoryPolicy.worker.skillRevision,
+      createdAt: "2026-09-17T12:00:00.000Z",
+    });
+    const delivery = resolveDeliveryGroup({
+      issue: planningBrief.identity,
+      children: [{ repository, itemId: "101", kind: "executable-issue" }],
+      dependencies: [],
+    });
+    const received = await coordinator.ingest({
+      deliveryId: "planning-spec-intake",
+      brief: planningBrief,
+      policy: repositoryPolicy,
+      phase: "triage",
+      relevantRevision: planningBrief.base.sha,
+      observedAt: "2026-09-17T12:00:00.000Z",
+      delivery,
+      sourceState: "open",
+    });
+    const sourceHead = "b".repeat(40);
+    const mergedSha = "d".repeat(40);
+    await store.saveTrackedPullRequest({
+      repository,
+      pullRequestNumber: 200,
+      jobId: received.job!.id,
+      itemId: "100",
+      branch: "shipyard/spec-100",
+      headSha: sourceHead,
+      marker: "<!-- shipyard:pull-request:spec-100 -->",
+      brief: planningBrief,
+      policy: repositoryPolicy,
+      createdAt: "2026-09-17T12:00:01.000Z",
+    });
+
+    let currentPullRequest = {
+      number: 200,
+      title: "Planning spec",
+      body: serializeGitHubPublicationMetadata({
+        version: 1,
+        repository,
+        itemId: "100",
+        kind: "planning-spec",
+        briefRevision: planningBrief.revision,
+        briefHash: planningBrief.hash,
+        baseBranch: "main",
+        baseSha: planningBrief.base.sha,
+        branch: "shipyard/spec-100",
+        headSha: sourceHead,
+      }),
+      state: "open" as "open" | "closed",
+      draft: false,
+      branch: "shipyard/spec-100",
+      baseBranch: "main",
+      headSha: sourceHead,
+      updatedAt: "2026-09-17T12:00:02.000Z",
+      htmlUrl: "https://github.com/snappedly/shipyard/pull/200",
+      merged: false,
+      mergedSha: undefined as string | undefined,
+      labels: ["ready-for-human"] as string[],
+    };
+    let parentIssue = {
+      number: 100,
+      title: "Planning spec",
+      body: "source",
+      state: "open" as "open" | "closed",
+      updatedAt: "2026-09-17T12:00:02.000Z",
+      labels: ["planning-spec"] as string[],
+    };
+    const children = new Map([
+      [
+        101,
+        {
+          number: 101,
+          title: "Child",
+          body: "child",
+          state: "closed" as const,
+          updatedAt: "2026-09-17T12:00:02.000Z",
+          labels: [] as string[],
+          htmlUrl: "https://github.com/snappedly/shipyard/issues/101",
+        },
+      ],
+      [
+        201,
+        {
+          number: 201,
+          title: "Repair",
+          body: "repair",
+          state: "closed" as const,
+          updatedAt: "2026-09-17T12:00:02.000Z",
+          labels: ["shipyard:pr-repair"] as string[],
+          htmlUrl: "https://github.com/snappedly/shipyard/issues/201",
+        },
+      ],
+    ]);
+    const createComment = vi.fn(async (input: { readonly body: string }) => ({
+      id: `aggregate-${createComment.mock.calls.length + 1}`,
+      body: input.body,
+      updatedAt: "2026-09-17T12:00:03.000Z",
+    }));
+    const closeIssue = vi.fn(async () => {
+      parentIssue = { ...parentIssue, state: "closed" };
+      return parentIssue;
+    });
+    const transport = {
+      fetchIssue: async (input: { readonly issueNumber: number }) =>
+        input.issueNumber === 100
+          ? parentIssue
+          : children.get(input.issueNumber),
+      fetchPullRequest: async () => currentPullRequest,
+      findCommentByMarker: async () => undefined,
+      findBranchByName: async () => undefined,
+      findPullRequestByMarker: async () => undefined,
+      findCheckByMarker: async () => undefined,
+      findIssueByMarker: async () => undefined,
+      fetchChecks: async () => [
+        {
+          id: "check-1",
+          name: "typecheck",
+          headSha: mergedSha,
+          status: "completed" as const,
+          conclusion: "success" as const,
+        },
+      ],
+      createComment,
+      createBranch: async () => {
+        throw new Error("unused");
+      },
+      createPullRequest: async () => {
+        throw new Error("unused");
+      },
+      createCheck: async () => {
+        throw new Error("unused");
+      },
+      createRepairIssue: async () => {
+        throw new Error("unused");
+      },
+      closeIssue,
+    } satisfies GitHubReadTransport & GitHubWriteTransport;
+    const publication = new GitHubPublication({
+      coordinator,
+      transport,
+      trackingStore: store,
+    });
+    const handler = createGitHubPlanningSpecCompletionHandler({
+      coordinator,
+      publication,
+      scope: {
+        read: async ({ transport: current }) => {
+          const child = await current.fetchIssue({
+            repository,
+            issueNumber: 101,
+          });
+          const repair = await current.fetchIssue({
+            repository,
+            issueNumber: 201,
+          });
+          return {
+            originalChildren: [
+              {
+                number: 101,
+                kind: "child" as const,
+                state: child?.state ?? "open",
+                htmlUrl: child?.htmlUrl,
+              },
+            ],
+            repairChildren: [
+              {
+                number: 201,
+                kind: "repair" as const,
+                state: repair?.state ?? "open",
+                htmlUrl: repair?.htmlUrl,
+              },
+            ],
+          };
+        },
+      },
+    });
+    const integration = new GitHubIntegration({
+      coordinator,
+      policy: repositoryPolicy,
+      base: { branch: "main", sha: "a".repeat(40) },
+      authorization: {
+        allowedRepositories: [repository],
+        allowedSenders: ["maintainer"],
+        allowedReviewers: ["maintainer"],
+      },
+      deliveryStore: store,
+      trackingStore: store,
+      planningSpecCompletion: handler,
+      webhookSecret: secret,
+    });
+    const reconciliation = {
+      repository,
+      pullRequestNumber: 200,
+      transport,
+    };
+
+    const premature = await integration.reconcile(reconciliation);
+    expect(premature.planningSpecCompletion?.outcome).toBe("open");
+    expect(premature.planningSpecCompletion?.reason).toContain("still open");
+
+    currentPullRequest = {
+      ...currentPullRequest,
+      state: "closed",
+    };
+    const unmerged = await integration.reconcile(reconciliation);
+    expect(unmerged.planningSpecCompletion?.outcome).toBe("open");
+    expect(unmerged.planningSpecCompletion?.reason).toContain(
+      "without a merge",
+    );
+    expect(parentIssue.state).toBe("open");
+
+    currentPullRequest = {
+      ...currentPullRequest,
+      merged: true,
+      mergedSha,
+    };
+    const merged = await integration.reconcile(reconciliation);
+    const replay = await integration.reconcile(reconciliation);
+    expect(merged.planningSpecCompletion?.outcome).toBe("completed");
+    expect(replay.planningSpecCompletion?.outcome).toBe("completed");
+    expect(createComment).toHaveBeenCalledOnce();
+    expect(closeIssue).toHaveBeenCalledOnce();
+    expect(parentIssue.state).toBe("closed");
   });
 });

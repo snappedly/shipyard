@@ -73,6 +73,33 @@ const brief = createWorkBrief({
   createdAt: "2026-09-17T12:00:00.000Z",
 });
 
+const planningBrief = createWorkBrief({
+  identity: { repository, itemId: "100", kind: "planning-spec" },
+  source: {
+    provider: "github",
+    repository,
+    itemId: "100",
+    originalBody: "Deliver the planning spec.",
+  },
+  problem: "Deliver the planning spec.",
+  evidence: ["The planning spec is authorized."],
+  acceptanceCriteria: ["All child work is delivered."],
+  exclusions: [],
+  risk: "low",
+  verification: { checks: ["npm run typecheck"], artifacts: [] },
+  unresolvedQuestions: [],
+  authorization: {
+    status: "approved",
+    actor: "maintainer",
+    actorRole: "maintainer",
+    approvedAt: "2026-09-17T12:00:00.000Z",
+  },
+  base: { branch: "main", sha: "a".repeat(40) },
+  policyRevision: policy.revision,
+  skillRevision: policy.worker.skillRevision,
+  createdAt: "2026-09-17T12:00:00.000Z",
+});
+
 const createPublication = () => {
   const storage = new InMemoryCoordinatorStorage();
   const coordinator = new WorkflowCoordinator({
@@ -144,6 +171,26 @@ const prepareCandidateJob = async (coordinator: WorkflowCoordinator) => {
     },
   });
   return prepared;
+};
+
+const preparePlanningSpecJob = async (coordinator: WorkflowCoordinator) => {
+  const received = await coordinator.ingest({
+    deliveryId: "delivery-spec-100",
+    brief: planningBrief,
+    policy,
+    phase: "triage",
+    relevantRevision: planningBrief.base.sha,
+    observedAt: "2026-09-17T12:00:00.000Z",
+    sourceState: "open",
+  });
+  const lease = await coordinator.acquireBranchLease({
+    repository,
+    branch: "shipyard/spec-100",
+    jobId: received.job!.id,
+    workerId: "worker-spec",
+    ttlMs: 60_000,
+  });
+  return { jobId: received.job!.id, lease };
 };
 
 describe("GitHubPublication", () => {
@@ -540,6 +587,83 @@ describe("GitHubPublication", () => {
     expect(createComment.mock.calls[0]?.[0].body).toContain(
       "Pull request: #100",
     );
+  });
+
+  it("publishes one aggregate planning-spec comment and closes the parent once", async () => {
+    const { coordinator } = createPublication();
+    const prepared = await preparePlanningSpecJob(coordinator);
+    let issue = {
+      number: 100,
+      title: "Planning spec",
+      body: "source",
+      state: "open" as "open" | "closed",
+      updatedAt: "2026-09-17T12:00:01.000Z",
+      labels: [],
+    };
+    const createComment = vi.fn(async (input: { readonly body: string }) => ({
+      id: `aggregate-comment-${createComment.mock.calls.length + 1}`,
+      body: input.body,
+      updatedAt: "2026-09-17T12:00:01.000Z",
+    }));
+    const closeIssue = vi.fn(async () => {
+      issue = { ...issue, state: "closed" };
+      return issue;
+    });
+    const transport = {
+      fetchIssue: async () => issue,
+      fetchPullRequest: async () => undefined,
+      findCommentByMarker: async () => undefined,
+      findBranchByName: async () => undefined,
+      findPullRequestByMarker: async () => undefined,
+      findCheckByMarker: async () => undefined,
+      findIssueByMarker: async () => undefined,
+      createComment,
+      createBranch: async () => {
+        throw new Error("unused");
+      },
+      createPullRequest: async () => {
+        throw new Error("unused");
+      },
+      createCheck: async () => {
+        throw new Error("unused");
+      },
+      createRepairIssue: async () => {
+        throw new Error("unused");
+      },
+      closeIssue,
+    } satisfies GitHubReadTransport & GitHubWriteTransport;
+    const publication = new GitHubPublication({
+      coordinator,
+      transport,
+      trackingStore: new InMemoryGitHubStore(),
+    });
+    const input = {
+      jobId: prepared.jobId,
+      lease: prepared.lease,
+      parentIssueNumber: 100,
+      pullRequestNumber: 200,
+      pullRequestUrl: "https://github.com/snappedly/shipyard/pull/200",
+      mergedSha: "d".repeat(40),
+      originalChildren: [
+        { number: 101, kind: "child" as const, state: "closed" as const },
+      ],
+      repairChildren: [
+        { number: 201, kind: "repair" as const, state: "closed" as const },
+      ],
+    };
+
+    const first = await publication.publishPlanningSpecClosure(input);
+    const replay = await publication.publishPlanningSpecClosure(input);
+
+    expect(first.comment.disposition).toBe("published");
+    expect(first.issue?.disposition).toBe("published");
+    expect(replay.comment.disposition).toBe("already-succeeded");
+    expect(replay.issue?.disposition).toBe("already-succeeded");
+    expect(createComment).toHaveBeenCalledOnce();
+    expect(closeIssue).toHaveBeenCalledOnce();
+    expect(issue.state).toBe("closed");
+    expect(createComment.mock.calls[0]?.[0].body).toContain("Merged revision");
+    expect(createComment.mock.calls[0]?.[0].body).toContain("#201");
   });
 
   it("projects blocked work without leaking diagnostics or adding duplicate PRs", async () => {

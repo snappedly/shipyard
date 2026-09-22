@@ -32,6 +32,9 @@ import type {
 import type {
   HandoffCandidate,
   HumanReviewRoundTripResult,
+  PlanningSpecBlocker,
+  PlanningSpecCompletionResult,
+  PlanningSpecIssueReference,
 } from "../../workflow/handoff/index.js";
 
 export type GitHubEventName =
@@ -83,6 +86,11 @@ export interface GitHubPullRequestSnapshot {
   readonly htmlUrl?: string;
   readonly authorLogin?: string;
   readonly labels?: readonly string[];
+  /** Provider-reported merge state; absent means the adapter did not expose it. */
+  readonly merged?: boolean;
+  /** Provider-reported merge commit, distinct from the source head SHA. */
+  readonly mergedSha?: string;
+  readonly mergedAt?: string;
 }
 
 /** Stable identity written to every coordinator-owned pull request. */
@@ -307,6 +315,8 @@ export interface GitHubIntegrationOptions {
   readonly trackingStore?: GitHubTrackingStore;
   /** Review events fail closed unless the caller wires candidate-bound handoff handling. */
   readonly reviewHandler?: GitHubPullRequestReviewHandler;
+  /** Optional current-provider aggregate reconciliation for planning-spec PRs. */
+  readonly planningSpecCompletion?: GitHubPlanningSpecCompletionHandler;
   readonly briefDefaults?: GitHubBriefDefaults;
   readonly briefFactory?: GitHubBriefFactory;
   /** Optional automatic investigation adapter; absent means intake remains raw triage. */
@@ -324,6 +334,7 @@ export interface GitHubWebhookReceipt {
   readonly event?: GitHubNormalizedEvent;
   readonly ingest?: IngestResult;
   readonly review?: HumanReviewRoundTripResult;
+  readonly planningSpecCompletion?: PlanningSpecCompletionResult;
 }
 
 export interface GitHubReconciliationInput {
@@ -339,6 +350,26 @@ export interface GitHubReconciliationResult {
   readonly reason?: string;
   readonly event?: GitHubNormalizedEvent;
   readonly ingest?: IngestResult;
+  readonly planningSpecCompletion?: PlanningSpecCompletionResult;
+}
+
+export interface GitHubPlanningSpecScope {
+  readonly originalChildren: readonly PlanningSpecIssueReference[];
+  readonly repairChildren: readonly PlanningSpecIssueReference[];
+  readonly blockers?: readonly PlanningSpecBlocker[];
+}
+
+export interface GitHubPlanningSpecCompletionInput {
+  readonly repository: string;
+  readonly pullRequestNumber: number;
+  readonly trackedPullRequest: GitHubTrackedPullRequest;
+  readonly transport: GitHubReadTransport;
+}
+
+export interface GitHubPlanningSpecCompletionHandler {
+  reconcile(
+    input: GitHubPlanningSpecCompletionInput,
+  ): Promise<PlanningSpecCompletionResult>;
 }
 
 export interface GitHubReadTransport {
@@ -372,6 +403,11 @@ export interface GitHubReadTransport {
     readonly repository: string;
     readonly marker: string;
   }): Promise<GitHubIssueSnapshot | undefined>;
+  /** Read checks for the exact merged candidate revision. */
+  readonly fetchChecks?: (input: {
+    readonly repository: string;
+    readonly headSha: string;
+  }) => Promise<readonly GitHubCheckSnapshot[]>;
 }
 
 export interface GitHubWriteTransport {
@@ -597,4 +633,20 @@ export interface GitHubResumeBlockedDeliveryResult {
   readonly reason?: string;
   readonly issue?: GitHubPublicationResult<GitHubIssueSnapshot>;
   readonly pullRequest?: GitHubPublicationResult<GitHubPullRequestSnapshot>;
+}
+
+export interface GitHubPlanningSpecClosurePublicationInput {
+  readonly jobId: string;
+  readonly lease: BranchLease;
+  readonly parentIssueNumber: number;
+  readonly pullRequestNumber: number;
+  readonly pullRequestUrl?: string;
+  readonly mergedSha: string;
+  readonly originalChildren: readonly PlanningSpecIssueReference[];
+  readonly repairChildren: readonly PlanningSpecIssueReference[];
+}
+
+export interface GitHubPlanningSpecClosurePublicationResult {
+  readonly comment: GitHubPublicationResult<GitHubCommentSnapshot>;
+  readonly issue?: GitHubPublicationResult<GitHubIssueSnapshot>;
 }
