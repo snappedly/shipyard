@@ -47,7 +47,10 @@ const cloneState = (state: MemoryState): MemoryState => ({
     [...state.leases.entries()].map(([key, value]) => [key, clone(value)]),
   ),
   deliveryLeases: new Map(
-    [...state.deliveryLeases.entries()].map(([key, value]) => [key, clone(value)]),
+    [...state.deliveryLeases.entries()].map(([key, value]) => [
+      key,
+      clone(value),
+    ]),
   ),
   repositoryControls: new Map(
     [...state.repositoryControls.entries()].map(([key, value]) => [
@@ -301,9 +304,7 @@ class MemoryTransaction implements CoordinatorStorageTransaction {
       .map(clone);
   }
 
-  async getDeliveryLease(
-    key: DeliveryKey,
-  ): Promise<DeliveryLease | undefined> {
+  async getDeliveryLease(key: DeliveryKey): Promise<DeliveryLease | undefined> {
     const lease = this.state.deliveryLeases.get(deliveryKey(key));
     return lease === undefined ? undefined : clone(lease);
   }

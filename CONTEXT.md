@@ -266,3 +266,47 @@ _Avoid_: `Shipyard`, "trigger label", "runner label"
 **Repository runner**:
 A **host**-side executor assigned to one repository that consumes **wake-up triggers** and invokes Shipyard against that repository.
 _Avoid_: "agent runner", "daemon", "service"
+
+**Delivery group**:
+A coordinator-owned unit of delivery identified by one standalone issue or one
+planning-spec parent and its scoped children. A delivery group owns the
+candidate branch, lease, pull request, checks, review, repair, and closure
+evidence for that unit.
+_Avoid_: "ticket batch", "branch group"
+
+**Integration pull request**:
+The single draft pull request that carries a planning spec's integrated
+candidate to the repository's base branch. Sibling workers return commits;
+only the coordinator integrates them into this pull request.
+_Avoid_: "child PR", "worker PR"
+
+**Candidate revision**:
+The exact base and head revisions (and, when applicable, merged revision)
+bound to checks, review findings, handoff, or closure. A new head invalidates
+evidence for the previous candidate.
+_Avoid_: "latest commit"
+
+**Blocked delivery**:
+A delivery whose bounded infrastructure recovery is exhausted and whose
+sanitized evidence is projected to GitHub. It remains open and can be resumed
+by explicitly re-adding the lowercase `shipyard` activation label.
+_Avoid_: "failed issue", "dead letter"
+
+**Repair issue**:
+A linked executable issue representing bounded work on an existing, unmerged
+pull request. It does not reopen a completed child and it cannot mutate a
+merged delivery.
+_Avoid_: "new child" when the work is a PR repair
+
+**Human handoff**:
+The coordinator state in which the exact current candidate has passed required
+checks and review, the pull request is ready for a maintainer, and Shipyard has
+not merged it.
+_Avoid_: "merge-ready" when describing permission to merge
+
+**Aggregate closure**:
+The planning-spec completion point after a maintainer manually merges the
+exact integration pull request, all scoped children and repair issues are
+resolved, and required merged-candidate checks pass. Shipyard records evidence
+and closes the parent; it never performs the merge.
+_Avoid_: "child completion" for the parent closure decision

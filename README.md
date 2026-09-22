@@ -15,12 +15,13 @@ commits—without babysitting.
 ## The Shipyard advantage
 
 Most agent setups launch a CLI and hope for the best. Shipyard is the control
-plane around the agent:
+plane around the agent and the reviewable pull request:
 
 - **Protected execution:** Run Codex or Claude Code in an isolated Docker-backed
   sandbox with explicit mounts, credentials, and network access.
-- **Real orchestration:** Plan dependencies, parallelize safe work, leave
-  blocked work alone, review each branch, and merge completed work.
+- **Real orchestration:** Plan delivery groups, parallelize safe work, leave
+  blocked work alone, review the exact candidate, and hand off for a human
+  merge.
 - **Failure-aware by design:** Use finite budgets, no-progress detection,
   cancellation, logs, and recovery artifacts instead of runaway loops.
 - **Reviewable output:** Runs preserve branches, worktrees, logs, and evidence;
@@ -61,17 +62,25 @@ the [agent guide](docs/content/docs/agents.mdx) for authentication details.
 
 ## Pick the workflow you need
 
-| Template                       | Best for              | Built-in flow                                     |
-| ------------------------------ | --------------------- | ------------------------------------------------- |
-| `blank`                        | One custom task       | One agent run                                     |
-| `simple-loop`                  | A small issue backlog | Implement issues sequentially                     |
-| `sequential-reviewer`          | Safer issue delivery  | Implement → review, one issue at a time           |
-| `parallel-planner`             | Independent issues    | Plan dependencies → implement in parallel → merge |
-| `parallel-planner-with-review` | Maximum autonomy      | Plan → implement and review in parallel → merge   |
+| Template                       | Best for              | Built-in flow                                             |
+| ------------------------------ | --------------------- | --------------------------------------------------------- |
+| `blank`                        | One custom task       | One agent run                                             |
+| `simple-loop`                  | A small issue backlog | Standalone delivery → draft PR → human handoff            |
+| `sequential-reviewer`          | Safer issue delivery  | Standalone delivery → review → draft PR → human handoff   |
+| `parallel-planner`             | Independent issues    | Group dependencies → integrate → draft PR → human handoff |
+| `parallel-planner-with-review` | Maximum autonomy      | Group → review/repair → draft PR → human handoff          |
 
 All templates are generated TypeScript. Adjust prompts, models, iteration
 limits, branch strategy, hooks, and checks in `.shipyard/main.ts` or
 `.shipyard/main.mts`.
+
+The coordinator owns delivery identity, branches, pull requests, checks,
+review, repairs, and evidence. Workers return commits and cannot publish,
+merge, or close source issues. A planning spec uses one integration branch and
+one pull request for its scoped children. GitHub is the source of truth; a
+local-only orphan branch is ignored after interruption. If a delivery is
+blocked after bounded recovery, re-add the lowercase `shipyard` label to
+explicitly retry the existing delivery.
 
 ## Keep a repository running
 
@@ -144,6 +153,9 @@ and [SECURITY.md](SECURITY.md).
 
 Shipyard runs in your infrastructure. There is no required hosted control
 plane; you control the host, Docker, model access, logs, and release policy.
+Shipyard never merges a pull request: maintainers merge the exact reviewed
+candidate, and planning-spec parents close only after the merged candidate and
+all scoped child/repair checks reconcile.
 
 ## Learn more
 

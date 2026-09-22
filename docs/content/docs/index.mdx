@@ -11,6 +11,13 @@ branch strategy. Shipyard manages the sandbox lifecycle and collects the
 agent's commits. Start with a single run; reusable sandboxes and parallel
 workflows are available when you need them.
 
+For issue workflows, Shipyard adds a coordinator-owned delivery lifecycle:
+each standalone issue gets one draft pull request, while one planning spec and
+its scoped children share one integration pull request. Workers return commits
+and evidence; a maintainer reviews and merges the exact candidate. Local-only
+orphan branches are ignored, and re-adding `shipyard` explicitly retries a
+blocked delivery.
+
 ## Quick start
 
 You need Node.js 20.18.1 or newer and npm, Git, a running Docker engine, and

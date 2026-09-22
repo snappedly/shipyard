@@ -8,6 +8,13 @@ GitHub Issues are canonical for work items and approved executable specification
 
 A small, clear user request can serve as the implementation brief. Ticketed `/implement` work starts from an executable issue or agent brief. Planning specs and wayfinder decision tickets do not qualify as executable work. `/implement-spec` is the explicit path for delivering a complete planning spec through its child ticket graph.
 
+Every activated issue enters a coordinator-owned delivery group. A standalone
+issue gets one deterministic branch and one draft pull request. A planning
+spec gets one integration branch and one draft pull request for the whole
+scoped graph; child workers return commits, and the coordinator integrates
+dependency-safe waves serially. Workers do not publish pull requests, merge,
+or close source issues.
+
 ## Ready to implement
 
 Implementation may start when the request or executable issue has an agreed scope, acceptance criteria, verification expectations, and no unresolved question that changes the implementation. Small clear requests may proceed directly. Planned work requires the executable issue or brief.
@@ -70,6 +77,12 @@ Issues close when the change is merged to `staging` and required CI passes. A fu
 
 The staging deployment is the non-production verification path. Testers install its npm prerelease with `@snappedly-tools/shipyard@staging`; it never advances the production `latest` dist-tag.
 
+GitHub is the source of truth for delivery state. Local-only orphan branches,
+worktrees, and recovery artifacts do not create or resume a delivery. Re-add
+the lowercase `shipyard` activation label to explicitly retry an existing
+blocked delivery; the coordinator clears `shipyard-blocked` only after it
+successfully reclaims the durable delivery.
+
 ## Production release
 
 Package publication is automated by `release.yml`. Pending changesets create or update a version pull request, and the workflow automatically merges it after its exact-head CI passes. The workflow then dispatches a publish run for the resulting `production` commit, reruns `npm run check`, inspects the package manifest, and publishes through npm trusted publishing via the unprotected `production` environment. See `RELEASING.md`.
@@ -87,3 +100,9 @@ Recovery is by revert or roll-forward through a new pull request. No production 
 ## Handoff
 
 A handoff reports the changed scope, issue and pull request, required check results, skipped checks and reasons, review axes and finding dispositions, merged revision, release candidate and approval state when applicable, deployment and verification evidence when applicable, and open recovery or follow-up work.
+
+Shipyard never performs a merge. A planning-spec parent remains open while any
+scoped child or repair issue is open, a blocker remains, or merged-candidate
+checks are missing or failing. After a maintainer merges the exact integration
+pull request and the aggregate checks and child scope reconcile successfully,
+the coordinator posts one evidence comment and closes the parent exactly once.
