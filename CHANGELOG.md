@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.5.0
+
+### Minor Changes
+
+- 24936fc: Organize default run logs into `.shipyard/logs/YYYY-MM-DD/` folders by local calendar date.
+- 24936fc: Add `shipyard runner purge` for manual removal of all managed run logs and automatic eight-day retention.
+- dac16eb: Add the Apple Silicon macOS repository runner for immediate GitHub label and manual wake-ups, with foreground lifecycle commands, safe finite backlog draining, protected runner state, and the fixed lowercase `shipyard` activation label.
+
+### Patch Changes
+
+- 24936fc: Reject NUL bytes consistently when building agent commands.
+- 24936fc: Default interactive repository-runner installation to Yes during `shipyard init`,
+  show determinate terminal progress while the runner is installed, and print
+  concise init next steps with subscription login commands. Include `GH_REPO` in
+  the generated `.env.example`.
+- 24936fc: Document the bundled workflow templates and their default scheduling limits in the README.
+- 24936fc: Create `.shipyard/.env` from the generated example during `shipyard init` and
+  direct users to fill in their credentials there.
+- 24936fc: Keep repository-runner workflow validation on the host's administrative GitHub
+  login instead of the issue-agent token, and explain denied workflow access.
+- 24936fc: Rewrite the README around Shipyard's autonomous, Docker-protected workflow
+  value proposition and streamline installation guidance.
+- 24936fc: Prevent parallel issue workflows from retrying completed branches indefinitely when a run creates no new commit.
+- 24936fc: Allow `shipyard runner stop` to stop a live recorded controller from another
+  terminal when its stored process identity is stale.
+
 ## 0.4.4
 
 ### Patch Changes
