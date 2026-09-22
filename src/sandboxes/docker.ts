@@ -39,6 +39,10 @@ import {
   OutputByteCounter,
 } from "../boundedTail.js";
 import { registerShutdown } from "../shutdownRegistry.js";
+import {
+  REPOSITORY_RUNNER_OWNER_ENV,
+  REPOSITORY_RUNNER_OWNER_LABEL,
+} from "../RepositoryRunnerLifecycle.js";
 
 export interface DockerOptions {
   /** Docker image name (default: derived from repo directory name). */
@@ -199,6 +203,12 @@ export const docker = (options?: DockerOptions): IsolatedSandboxProvider => {
             devices: options?.devices,
             cpus: options?.cpus,
             selinuxLabel,
+            labels: process.env[REPOSITORY_RUNNER_OWNER_ENV]
+              ? {
+                  [REPOSITORY_RUNNER_OWNER_LABEL]:
+                    process.env[REPOSITORY_RUNNER_OWNER_ENV],
+                }
+              : undefined,
           },
         ),
       );

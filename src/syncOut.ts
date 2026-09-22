@@ -45,6 +45,7 @@ import {
   RUNTIME_NAMESPACE,
   SYNC_BASE_REF,
 } from "./runtimeNames.js";
+import { assertExcludesRepositoryRunner } from "./runnerSecurity.js";
 
 export { SYNC_BASE_REF } from "./runtimeNames.js";
 
@@ -305,7 +306,39 @@ export const syncOut = (
       : [];
 
     yield* Effect.try({
-      try: () => untrackedFiles.forEach(assertSafeGitWorktreePath),
+      try: () =>
+        untrackedFiles.forEach((path) => {
+          assertSafeGitWorktreePath(path);
+          assertExcludesRepositoryRunner(path);
+        }),
+      catch: (error) => new SyncError({ message: String(error) }),
+    });
+
+    const changedPaths: string[] = [];
+    if (hasCommits) {
+      const committedNames = yield* execOk(
+        handle,
+        `git diff --name-only -z ${shellQuote(`${base}..HEAD`)}`,
+        { cwd: worktreePath },
+      );
+      changedPaths.push(
+        ...committedNames.stdout.split("\0").filter((path) => path.length > 0),
+      );
+    }
+    if (hasDiff) {
+      const uncommittedNames = yield* execOk(
+        handle,
+        "git diff --name-only -z HEAD",
+        { cwd: worktreePath },
+      );
+      changedPaths.push(
+        ...uncommittedNames.stdout
+          .split("\0")
+          .filter((path) => path.length > 0),
+      );
+    }
+    yield* Effect.try({
+      try: () => changedPaths.forEach(assertExcludesRepositoryRunner),
       catch: (error) => new SyncError({ message: String(error) }),
     });
 

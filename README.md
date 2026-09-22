@@ -34,10 +34,12 @@ cp .shipyard/.env.example .shipyard/.env
 ```
 
 `init` asks which agent, sandbox provider, and starter template to use. Its
-issue-based templates use GitHub Issues. When you select Codex, it also asks
-whether to sign in with ChatGPT or use an API key. Start with the `blank`
-template. Put any requested credentials in `.shipyard/.env`, then write one
-concrete task in `.shipyard/prompt.md`.
+issue-based templates use GitHub Issues. Init always attempts to create or
+update the lowercase `shipyard` label, and built-in issue workflows select only
+open issues carrying that label. When you select Codex, init also asks whether
+to sign in with ChatGPT or use an API key. Start with the `blank` template. Put
+any requested credentials in `.shipyard/.env`, then write one concrete task in
+`.shipyard/prompt.md`.
 
 Use a subscription first when the selected agent supports it. If subscription
 authentication does not work in your environment, use the API-key fallback:
@@ -73,6 +75,97 @@ Shipyard supports Codex and Claude Code agents, with Docker, Vercel Sandbox,
 and no-sandbox providers. `shipyard init` scaffolds Docker; configure Vercel
 Sandbox or no-sandbox mode through the JavaScript interface.
 
+## Repository runner for GitHub Issues
+
+Shipyard can keep one repository ready for labelled GitHub Issues on a
+user-managed Mac. This deployment currently supports GitHub.com repositories
+on Apple Silicon macOS only. It uses GitHub's official self-hosted Actions
+runner as a wake-up transport; the foreground Shipyard controller owns the
+actual work outside the Actions job.
+
+Prerequisites are an initialized repository, Docker Desktop, `gh` authenticated
+to GitHub.com with repository-administration access, and the credentials needed
+by the selected agent in `.shipyard/.env`. Install from the repository root:
+
+```sh
+npx shipyard runner install
+git add .github/workflows/shipyard-wake.yml .shipyard/.gitignore
+git commit -m "Add Shipyard wake workflow"
+git push
+npx shipyard runner start
+```
+
+`--registration-token` can supply the one-time registration credential, but it
+does not replace administrative `gh` access: Shipyard still uses that access to
+verify that the repository has no conflicting `shipyard` runner.
+
+Interactive `shipyard init` also offers installation after it creates a valid
+scaffold, defaulting to No. Non-interactive init skips installation unless
+`--install-runner true` is passed. Installation creates the workflow locally;
+it never commits or pushes it. `runner start` requires the exact generated
+workflow on the repository's default branch.
+
+The activation label is the exact, lowercase label `shipyard`. Init attempts to
+create it, and start creates it if it is missing. Adding that label or manually
+dispatching the **Shipyard wake-up** workflow wakes the controller. Labels with
+different casing do not match. Issue edits and comments do not wake it.
+
+The controller first checks the current backlog, so restarting it recovers work
+labelled while the Mac was off. It invokes exactly `npx shipyard run`, then
+compares the eligible issue-number set. An empty set returns it to idle; a
+changed nonempty set starts another finite invocation; an unchanged set records
+no progress and returns it to idle instead of looping. A later label event,
+manual dispatch, or restart retries that backlog. Wake-ups delivered while
+Shipyard is busy are coalesced.
+
+The Actions job only reports whether its wake-up reached the controller. It
+does not report the later agent outcome and does not own the agent's runtime.
+The controller stays available only while `runner start` remains open in its
+foreground terminal. Ctrl-C, closing that terminal, or `runner stop` stops it
+and cancels active work; it does not start at login. A nonzero Shipyard exit or
+infrastructure failure records the error and takes the controller offline.
+
+Use these commands from the same repository root:
+
+```sh
+npx shipyard runner status
+npx shipyard runner stop
+npx shipyard runner remove
+```
+
+Status reports local process state, GitHub connectivity, repository identity,
+and the last outcome without showing credentials. Runner binaries, credentials,
+state, and diagnostics are protected and ignored under `.shipyard/runner/`;
+normal removal unregisters the runner and deletes those files while preserving
+the Shipyard config, workflow, issues, logs, and worktrees. If GitHub
+unregistration is unavailable, retry after restoring access. As a last resort,
+`runner remove --force` deletes local files and prints the GitHub registration
+that must be removed manually.
+
+There is no Mac sleep/wake detector. GitHub can discard a queued self-hosted job
+after 24 hours, so after a long sleep use manual workflow dispatch or restart
+the controller. GitHub removes self-hosted runner registrations after 14 days
+offline; the next start automatically re-registers with the current
+administrative `gh` login. A Mac rename does not rename an existing
+registration. Remove and reinstall it explicitly.
+
+GitHub does not charge Actions minutes for the self-hosted wake job. The brief
+exact-case gate runs on `ubuntu-latest` and may consume hosted Actions minutes
+for private repositories. Model costs apply only when a preflight finds eligible
+issues and starts Shipyard; the host owner still pays for hardware, electricity,
+network, Docker, and model usage. GitHub warns that self-hosted runners on public repositories can be
+exposed to untrusted repository activity. Use this deployment only where label
+authority, workflows, collaborators, and agent credentials have an acceptable
+trust boundary. See GitHub's
+[self-hosted runner security guidance](https://docs.github.com/en/actions/reference/security/secure-use#hardening-for-self-hosted-runners).
+
+For setup failures, run `runner status`, inspect the foreground terminal and
+`.shipyard/runner/.shipyard-last-failure.json`, then verify Docker, GitHub
+authentication with `gh auth status --hostname github.com`, `.shipyard/.env`,
+the lowercase label, and the published workflow. The
+[Apple Silicon validation runbook](docs/runbooks/repository-runner-macos-validation.md)
+covers the complete lifecycle.
+
 To run directly on the host without isolation:
 
 ```ts
@@ -100,6 +193,7 @@ it only with trusted repositories and prompts.
 | `.shipyard/logs/`                 | Run logs                                                     |
 | `.shipyard/worktrees/`            | Worktrees for separate-branch runs                           |
 | `.shipyard/patches/`              | Recovery artifacts preserved after some failures             |
+| `.shipyard/runner/`               | Protected self-hosted runner files and diagnostics           |
 
 ## Workflow templates
 

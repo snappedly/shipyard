@@ -63,6 +63,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     expect(stdout).toContain("docker");
     expect(stdout).toContain("init");
     expect(stdout).toContain("run");
+    expect(stdout).toContain("runner install");
     expect(stdout).not.toContain("interactive");
     // build-image and remove-image are namespaced under docker, not top-level
     expect(stdout).toContain("docker build-image");
@@ -72,6 +73,27 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     expect(stdout).not.toContain("cleanup-sandbox");
     expect(stdout).not.toContain("sync-in");
     expect(stdout).not.toContain("sync-out");
+  });
+
+  it("runner --help exposes foreground lifecycle commands", async () => {
+    const { stdout } = await runCli("runner --help", process.cwd());
+    expect(stdout).toContain("install");
+    expect(stdout).toContain("start");
+    expect(stdout).toContain("status");
+    expect(stdout).toContain("stop");
+    expect(stdout).toContain("remove");
+  });
+
+  it("runner remove --help exposes explicit forced local removal", async () => {
+    const { stdout } = await runCli("runner remove --help", process.cwd());
+    expect(stdout).toContain("--force");
+    expect(stdout).toContain("GitHub");
+  });
+
+  it("runner install --help exposes one-time registration token input", async () => {
+    const { stdout } = await runCli("runner install --help", process.cwd());
+    expect(stdout).toContain("--registration-token");
+    expect(stdout).toContain("one-time");
   });
 
   it("docker --help shows build-image and remove-image subcommands", async () => {
@@ -265,9 +287,9 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     expect(stdout).toContain("--issue-tracker");
   });
 
-  it("init --help exposes --create-label flag", async () => {
+  it("init --help does not expose the obsolete --create-label flag", async () => {
     const { stdout } = await runCli("init --help", process.cwd());
-    expect(stdout).toContain("--create-label");
+    expect(stdout).not.toContain("--create-label");
   });
 
   it("init --help exposes --build-image flag", async () => {
@@ -278,6 +300,11 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
   it("init --help exposes --install-template-deps flag", async () => {
     const { stdout } = await runCli("init --help", process.cwd());
     expect(stdout).toContain("--install-template-deps");
+  });
+
+  it("init --help exposes the optional repository runner choice", async () => {
+    const { stdout } = await runCli("init --help", process.cwd());
+    expect(stdout).toContain("--install-runner");
   });
 
   it("init --issue-tracker nonexistent produces error listing available trackers", async () => {
@@ -305,14 +332,19 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     // vitest workers have no TTY, so this confirms the fully-non-interactive
     // path runs to completion without clack crashing on a missing prompt.
     const { stdout } = await runCli(
-      "init --agent claude-code --template blank --sandbox docker --issue-tracker github-issues --create-label false --build-image false",
+      "init --agent claude-code --template blank --sandbox docker --issue-tracker github-issues --build-image false",
       hostDir,
     );
 
     expect(stdout).toContain("Init complete");
+    expect(stdout).toContain("npx shipyard run");
     const entries = await readdir(join(hostDir, ".shipyard"));
     expect(entries).toContain("Dockerfile");
     expect(entries).toContain("prompt.md");
+    expect(entries).not.toContain("runner");
+    expect(
+      await readdir(join(hostDir, ".github", "workflows")).catch(() => []),
+    ).not.toContain("shipyard-wake.yml");
   });
 
   it("init requires --codex-auth for Codex in a non-TTY env", async () => {
@@ -340,7 +372,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     await writeFile(join(isolatedHome, ".codex", "auth.json"), "{}\n");
 
     await runCli(
-      "init --agent codex --codex-auth chatgpt --template blank --sandbox docker --issue-tracker github-issues --create-label false --build-image false",
+      "init --agent codex --codex-auth chatgpt --template blank --sandbox docker --issue-tracker github-issues --build-image false",
       hostDir,
       { HOME: isolatedHome },
     );
@@ -367,7 +399,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     let error: unknown;
     try {
       await runCli(
-        "init --agent codex --codex-auth chatgpt --template blank --sandbox docker --issue-tracker github-issues --create-label false --build-image false",
+        "init --agent codex --codex-auth chatgpt --template blank --sandbox docker --issue-tracker github-issues --build-image false",
         hostDir,
         { HOME: isolatedHome },
       );
@@ -398,21 +430,51 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     }
   });
 
-  it("init --issue-tracker github-issues without --create-label fails fast in non-interactive mode", async () => {
+  it("init force-creates the lowercase shipyard activation label", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
     await initRepo(hostDir);
+    await commitFile(hostDir, "hello.txt", "hello", "initial commit");
+    const binDir = join(hostDir, "bin");
+    const ghArgsFile = join(hostDir, "gh-args.txt");
+    await mkdir(binDir);
+    await writeFile(
+      join(binDir, "gh"),
+      '#!/bin/sh\nprintf \'%s\\n\' "$*" > "$GH_ARGS_FILE"\n',
+      { mode: 0o755 },
+    );
 
-    try {
-      await runCli(
-        "init --agent claude-code --template blank --sandbox docker --issue-tracker github-issues",
-        hostDir,
-      );
-      expect.fail("Expected command to fail");
-    } catch (err: unknown) {
-      const { stdout, stderr } = err as { stdout: string; stderr: string };
-      const output = stdout + stderr;
-      expect(output).toContain("--create-label");
-      expect(output).toContain("non-interactive");
-    }
+    const { stdout } = await runCli(
+      "init --agent claude-code --template blank --sandbox docker --issue-tracker github-issues --build-image false",
+      hostDir,
+      {
+        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        GH_ARGS_FILE: ghArgsFile,
+      },
+    );
+
+    expect(stdout).toContain("Init complete");
+    expect(await readFile(ghArgsFile, "utf8")).toBe(
+      "label create shipyard --description Issues for Shipyard to work on --color F9A825 --force\n",
+    );
+  });
+
+  it("init continues when activation-label creation fails", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
+    await initRepo(hostDir);
+    await commitFile(hostDir, "hello.txt", "hello", "initial commit");
+    const binDir = join(hostDir, "bin");
+    await mkdir(binDir);
+    await writeFile(join(binDir, "gh"), "#!/bin/sh\nexit 1\n", {
+      mode: 0o755,
+    });
+
+    const { stdout } = await runCli(
+      "init --agent claude-code --template blank --sandbox docker --issue-tracker github-issues --build-image false",
+      hostDir,
+      { PATH: `${binDir}:${process.env.PATH ?? ""}` },
+    );
+
+    expect(stdout).toContain("Init complete");
+    expect(await readdir(join(hostDir, ".shipyard"))).toContain("prompt.md");
   });
 });

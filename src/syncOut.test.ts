@@ -612,6 +612,43 @@ describe("syncOut", () => {
     }
   });
 
+  it.each(["untracked", "committed"])(
+    "refuses %s repository runner files from an isolated sandbox",
+    async (mode) => {
+      const hostDir = await mkdtemp(join(tmpdir(), "host-runner-"));
+      await initRepo(hostDir);
+      await commitFile(hostDir, "initial.txt", "initial", "initial commit");
+      const handle = await testIsolated().create({ env: {} });
+      try {
+        await Effect.runPromise(syncIn(hostDir, handle));
+        await mkdir(join(handle.worktreePath, ".shipyard", "runner"), {
+          recursive: true,
+        });
+        await writeFile(
+          join(handle.worktreePath, ".shipyard", "runner", ".credentials"),
+          "sandbox data",
+        );
+        if (mode === "committed") {
+          await handle.exec("git add -f .shipyard/runner/.credentials", {
+            cwd: handle.worktreePath,
+          });
+          await handle.exec('git commit -m "try runner file"', {
+            cwd: handle.worktreePath,
+          });
+        }
+
+        await expect(
+          Effect.runPromise(syncOut(hostDir, handle)),
+        ).rejects.toThrow("repository runner");
+        expect(
+          existsSync(join(hostDir, ".shipyard", "runner", ".credentials")),
+        ).toBe(false);
+      } finally {
+        await handle.close();
+      }
+    },
+  );
+
   it.each([
     ["git diff --binary HEAD", "diff"],
     ["git ls-files --others --exclude-standard -z", "untracked files"],

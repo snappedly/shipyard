@@ -258,6 +258,7 @@ const attachPreservedPath = <E>(
 export interface MountEntry {
   readonly hostPath: string;
   readonly sandboxPath: string;
+  readonly readonly?: boolean;
 }
 
 /**

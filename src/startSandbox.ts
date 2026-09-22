@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import { existsSync } from "node:fs";
-import { posix } from "node:path";
+import { join, posix } from "node:path";
 import {
   ContainerStartTimeoutError,
   CopyToWorktreeTimeoutError,
@@ -31,6 +31,15 @@ import {
   assertNoSymlinkComponents,
   resolveSafeRelativePath,
 } from "./pathSecurity.js";
+import {
+  assertExcludesRepositoryRunner,
+  assertSafeRepositoryRunnerDirectories,
+} from "./runnerSecurity.js";
+import {
+  CONFIG_DIR,
+  RUNNER_DIR,
+  RUNNER_SANDBOX_MASK_DIR,
+} from "./runtimeNames.js";
 
 export interface StartSandboxBindMountOptions {
   provider: BindMountSandboxProvider;
@@ -138,12 +147,38 @@ const startBindMountSandbox = (
 > =>
   Effect.tryPromise({
     try: () => {
+      const usesRunnerMask =
+        options.worktreeOrRepoPath === options.hostRepoDir &&
+        existsSync(join(options.hostRepoDir, CONFIG_DIR, RUNNER_DIR)) &&
+        existsSync(
+          join(options.hostRepoDir, CONFIG_DIR, RUNNER_SANDBOX_MASK_DIR),
+        );
+      if (usesRunnerMask) {
+        assertSafeRepositoryRunnerDirectories(options.hostRepoDir);
+      }
       const rawMounts = [
         {
           hostPath: options.worktreeOrRepoPath,
           sandboxPath: options.repoDir,
         },
         ...options.gitMounts,
+        ...(usesRunnerMask
+          ? [
+              {
+                hostPath: join(
+                  options.hostRepoDir,
+                  CONFIG_DIR,
+                  RUNNER_SANDBOX_MASK_DIR,
+                ),
+                sandboxPath: posix.join(
+                  options.repoDir,
+                  CONFIG_DIR,
+                  RUNNER_DIR,
+                ),
+                readonly: true,
+              },
+            ]
+          : []),
       ];
       const mounts = normalizeMounts(
         rawMounts,
@@ -233,6 +268,7 @@ const startIsolatedSandbox = (
             let hostPath: string;
             let sandboxPath: string;
             try {
+              assertExcludesRepositoryRunner(relativePath);
               hostPath = resolveSafeRelativePath(
                 options.sourceRepoDir ?? options.hostRepoDir,
                 relativePath,

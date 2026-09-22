@@ -36,6 +36,6 @@ describe("Shipyard runtime naming", () => {
     await runScaffold(dir);
 
     const prompt = await readFile(join(dir, ".shipyard", "prompt.md"), "utf8");
-    expect(prompt).toContain("Shipyard");
+    expect(prompt).toContain("--label shipyard");
   });
 });

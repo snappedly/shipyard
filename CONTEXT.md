@@ -249,3 +249,19 @@ _Avoid_: "configuration" when the value controls an authorization or lifecycle r
 **Coordinator**:
 The authority that owns workflow identity, authorization, lifecycle transitions, leases, publication, and evidence. A worker may produce commits and evidence, but cannot authorize or publish its own result.
 _Avoid_: "agent" (the coordinator may use an **agent**, but is not one)
+
+**Self-hosted deployment**:
+A supported Shipyard deployment in which a user-managed **host** receives **wake-up triggers** and invokes Shipyard for a repository.
+_Avoid_: "Mac mode", "local mode", "pilot"
+
+**Wake-up trigger**:
+A signal that starts a finite Shipyard run because eligible **tasks** may exist. It neither identifies nor reserves a particular **task**.
+_Avoid_: "task event", "work assignment"
+
+**Activation label**:
+The lowercase `shipyard` GitHub issue label that marks an issue as eligible to become a **task** and whose addition emits a **wake-up trigger**.
+_Avoid_: `Shipyard`, "trigger label", "runner label"
+
+**Repository runner**:
+A **host**-side executor assigned to one repository that consumes **wake-up triggers** and invokes Shipyard against that repository.
+_Avoid_: "agent runner", "daemon", "service"
