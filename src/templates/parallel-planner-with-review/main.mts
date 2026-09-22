@@ -6,10 +6,12 @@
 //                               listing unblocked issues with branch names.
 //   Phase 2 (Execute + Review): For each issue, a sandbox is created via
 //                               createSandbox(). The implementer runs first
-//                               (100 iterations). If it produces commits, a
-//                               reviewer runs in the same sandbox on the same
-//                               branch (1 iteration). All issue pipelines run
-//                               concurrently via Promise.allSettled().
+//                               (100 iterations). If it completes, a reviewer
+//                               runs in the same sandbox on the same branch
+//                               (1 iteration). All issue pipelines run
+//                               concurrently via Promise.allSettled(). A completion
+//                               signal also qualifies a branch whose work predates
+//                               the current run.
 //   Phase 3 (Merge):            A strong Codex agent merges all completed
 //                               branches into the current branch.
 //
@@ -135,8 +137,12 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
           },
         });
 
-        // Only review if the implementer produced commits
-        if (implement.commits.length > 0) {
+        // Review new work and deterministic branches that completed with work
+        // from an earlier run but produced no new commit this time.
+        if (
+          implement.commits.length > 0 ||
+          implement.completionSignal !== undefined
+        ) {
           const review = await sandbox.run({
             name: "reviewer",
             maxIterations: 1,
@@ -152,6 +158,8 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
           return {
             ...review,
             commits: [...implement.commits, ...review.commits],
+            completionSignal:
+              review.completionSignal ?? implement.completionSignal,
           };
         }
 
@@ -171,30 +179,32 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
     }
   }
 
-  // Only pass branches that actually produced commits to the merge phase.
-  // An agent that ran successfully but made no commits has nothing to merge.
+  // A run's commits are limited to changes made during that run. A deterministic
+  // branch can already contain the implementation from an earlier run, so an
+  // explicit completion signal must also make the branch eligible for merge.
   const completedIssues = settled
     .map((outcome, i) => ({ outcome, issue: issues[i]! }))
     .filter(
       (entry) =>
         entry.outcome.status === "fulfilled" &&
-        entry.outcome.value.commits.length > 0,
+        (entry.outcome.value.commits.length > 0 ||
+          entry.outcome.value.completionSignal !== undefined),
     )
     .map((entry) => entry.issue);
 
   const completedBranches = completedIssues.map((i) => i.branch);
 
   console.log(
-    `\nExecution complete. ${completedBranches.length} branch(es) with commits:`,
+    `\nExecution complete. ${completedBranches.length} completed branch(es):`,
   );
   for (const branch of completedBranches) {
     console.log(`  ${branch}`);
   }
 
   if (completedBranches.length === 0) {
-    // All agents ran but none made commits — nothing to merge this cycle.
-    console.log("No commits produced. Nothing to merge.");
-    continue;
+    // No agent completed and retrying the same plan would repeat unchanged work.
+    console.log("No implementations completed. Stopping.");
+    break;
   }
 
   // -------------------------------------------------------------------------

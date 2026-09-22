@@ -80,7 +80,10 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
           },
         });
 
-        if (result.commits.length > 0) {
+        if (
+          result.commits.length > 0 ||
+          result.completionSignal !== undefined
+        ) {
           await sandbox.run({
             name: "Reviewer #" + issue.number,
             agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
@@ -120,22 +123,23 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
         issue: (typeof issues)[number];
       } =>
         entry.outcome.status === "fulfilled" &&
-        entry.outcome.value.commits.length > 0,
+        (entry.outcome.value.commits.length > 0 ||
+          entry.outcome.value.completionSignal !== undefined),
     )
     .map((entry) => entry.issue);
 
   const completedBranches = completedIssues.map((i) => i.branch);
 
   console.log(
-    `\nExecution complete. ${completedBranches.length} branch(es) with commits:`,
+    `\nExecution complete. ${completedBranches.length} completed branch(es):`,
   );
   for (const branch of completedBranches) {
     console.log(`  ${branch}`);
   }
 
   if (completedBranches.length === 0) {
-    console.log("No commits produced. Nothing to merge.");
-    continue;
+    console.log("No implementations completed. Stopping.");
+    break;
   }
 
   // Phase 3: Merge — one agent merges all branches together

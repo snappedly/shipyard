@@ -228,6 +228,10 @@ per run:
 These are scaffold defaults and can be adjusted in the generated
 `.shipyard/main.mts` file.
 
+Parallel workflows merge a branch when its agent signals completion even if
+that run created no new commit, which allows resumed work to finish instead of
+being retried indefinitely. They stop after a wave with no completed agents.
+
 Read generated prompts before running an issue or merge workflow. Those
 templates can close issues, create branches, and merge work.
 

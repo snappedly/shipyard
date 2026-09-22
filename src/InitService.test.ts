@@ -763,6 +763,30 @@ describe("InitService scaffold", () => {
       expect(mainTs).not.toContain("completedBranches.length === 1");
     });
 
+    it("main.mts merges completed existing branches and stops on no progress", async () => {
+      const dir = await makeDir();
+      await runScaffold(dir, { templateName: "parallel-planner" });
+
+      const mainTs = await readFile(
+        join(dir, ".shipyard", "main.mts"),
+        "utf-8",
+      );
+      expect(mainTs).toContain("entry.outcome.value.commits.length > 0 ||");
+      expect(mainTs).toContain(
+        "entry.outcome.value.completionSignal !== undefined",
+      );
+
+      const noProgressIndex = mainTs.indexOf(
+        "if (completedBranches.length === 0)",
+      );
+      const noProgressSection = mainTs.slice(
+        noProgressIndex,
+        noProgressIndex + 350,
+      );
+      expect(noProgressSection).toContain("break");
+      expect(noProgressSection).not.toContain("continue");
+    });
+
     it("common files are still generated with parallel-planner template", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "parallel-planner" });
@@ -857,6 +881,32 @@ describe("InitService scaffold", () => {
       // Commits from both implementer and reviewer must be merged
       expect(mainTs).toContain("implement.commits");
       expect(mainTs).toContain("review.commits");
+    });
+
+    it("main.mts reviews completed existing branches and stops on no progress", async () => {
+      const dir = await makeDir();
+      await runScaffold(dir, { templateName: "parallel-planner-with-review" });
+
+      const mainTs = await readFile(
+        join(dir, ".shipyard", "main.mts"),
+        "utf-8",
+      );
+      expect(mainTs).toContain("implement.commits.length > 0 ||");
+      expect(mainTs).toContain("implement.completionSignal !== undefined");
+      expect(mainTs).toContain("entry.outcome.value.commits.length > 0 ||");
+      expect(mainTs).toContain(
+        "entry.outcome.value.completionSignal !== undefined",
+      );
+
+      const noProgressIndex = mainTs.indexOf(
+        "if (completedBranches.length === 0)",
+      );
+      const noProgressSection = mainTs.slice(
+        noProgressIndex,
+        noProgressIndex + 350,
+      );
+      expect(noProgressSection).toContain("break");
+      expect(noProgressSection).not.toContain("continue");
     });
 
     it("main.mts uses Promise.allSettled for parallel execution", async () => {
