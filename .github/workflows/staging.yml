@@ -46,7 +46,7 @@ jobs:
           PACKAGE_FILE=$(npm pack --silent | tail -n 1)
           mv "$PACKAGE_FILE" shipyard-staging.tgz
           sha256sum shipyard-staging.tgz > shipyard-staging.tgz.sha256
-      - uses: actions/upload-artifact@043fb46d1a93c77f36085b0efc47a31fe5020 # v7.0.1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: npm-staging-package-${{ github.sha }}
           path: |
