@@ -11,10 +11,11 @@ Init creates `.shipyard/` in the target repository:
 - `Dockerfile`: the local sandbox image definition.
 - `prompt.md` (or several template-specific prompts): the agent's task instructions.
 - `.env.example`: environment entries for the chosen agent and issue tracker.
+- `.env`: untracked credentials copied from `.env.example` during init.
 - `.gitignore`: excludes credentials, logs, worktrees, and locks.
 
-Copy `.env.example` to `.env` and supply credentials. Shipyard also writes logs,
-worktrees, and recovery patches under this directory.
+Init creates `.env` from `.env.example`; supply credentials in `.env`. Shipyard
+also writes logs, worktrees, and recovery patches under this directory.
 
 ## Run configuration
 

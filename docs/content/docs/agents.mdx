@@ -19,8 +19,8 @@ inside the sandbox.
 Codex supports two authentication modes:
 
 - `--codex-auth api-key`: the generated scaffold declares `OPENAI_API_KEY`.
-  Copy `.shipyard/.env.example` to `.shipyard/.env` and fill it in. API usage
-  is billed through the OpenAI API Platform.
+  Init creates `.shipyard/.env` from the generated example; fill it in. API
+  usage is billed through the OpenAI API Platform.
 - `--codex-auth chatgpt`: run `codex login` on the host and ensure
   `~/.codex/auth.json` exists. Interactive init starts that login flow when
   needed and asks it to use a one-time file-based credential store;

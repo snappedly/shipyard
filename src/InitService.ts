@@ -404,9 +404,7 @@ export const getSandboxProvider = (
 export function getNextStepsLines(): string[] {
   return [
     "Next steps:",
-    "1. Create your env file:",
-    `   cp ${CONFIG_DIR}/.env.example ${CONFIG_DIR}/.env`,
-    "   Fill in the values you need.",
+    `1. Fill in the values you need in \`${CONFIG_DIR}/.env\`.`,
     "2. If using a model subscription, sign in. For Codex:",
     `   codex --config 'cli_auth_credentials_store="file"' login`,
     "   test -f ~/.codex/auth.json",
@@ -715,6 +713,7 @@ export const scaffold = (
       envExampleParts.push(issueTracker.envExample);
     }
     const envExampleContent = envExampleParts.join("\n") + "\n";
+    const envExamplePath = join(configDir, ".env.example");
 
     yield* Effect.all(
       [
@@ -728,7 +727,10 @@ export const scaffold = (
           .writeFileString(join(configDir, ".gitignore"), GITIGNORE)
           .pipe(Effect.mapError((e) => new Error(e.message))),
         fs
-          .writeFileString(join(configDir, ".env.example"), envExampleContent)
+          .writeFileString(envExamplePath, envExampleContent)
+          .pipe(Effect.mapError((e) => new Error(e.message))),
+        fs
+          .writeFileString(join(configDir, ".env"), envExampleContent)
           .pipe(Effect.mapError((e) => new Error(e.message))),
         copyTemplateFiles(templateDir, configDir, mainFilename),
       ],
