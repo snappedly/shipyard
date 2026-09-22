@@ -64,7 +64,8 @@ takes the controller offline.
 The controller runs only while its `runner start` terminal remains open. It
 does not start at login. Ctrl-C, closing the terminal, and `runner stop` use the
 bounded shutdown path and cancel active work while preserving Shipyard logs and
-worktrees.
+worktrees. `runner stop` can be run from another terminal: it signals the live
+PID recorded by the repository even when the stored process identity is stale.
 
 ```sh
 npx shipyard runner status

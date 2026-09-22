@@ -1134,9 +1134,9 @@ export const stopRepositoryRunner = async (
   if (!lock || !Number.isInteger(lock.pid)) {
     throw new RunnerControlError("The repository runner is not running.");
   }
-  if (!(await lockOwnsProcess(lock, adapters))) {
+  if (!adapters.isProcessRunning(lock.pid)) {
     throw new RunnerControlError(
-      `The repository runner process ${lock.pid} no longer matches the recorded controller identity; recovery is required.`,
+      `The recorded repository runner process ${lock.pid} is no longer running.`,
     );
   }
   try {

@@ -1143,7 +1143,7 @@ describe("stopRepositoryRunner", () => {
     expect(base.files.has(lockPath)).toBe(true);
   });
 
-  it("does not signal a reused PID whose start identity differs", async () => {
+  it("signals a live recorded PID even when its start identity differs", async () => {
     const base = makeAdapters();
     base.files.set(
       lockPath,
@@ -1157,7 +1157,25 @@ describe("stopRepositoryRunner", () => {
 
     await expect(
       stopRepositoryRunner({ repoDir }, base.adapters),
-    ).rejects.toThrow("no longer matches");
+    ).resolves.toEqual({ pid: 321 });
+    expect(base.signals).toEqual([{ pid: 321, signal: "SIGTERM" }]);
+  });
+
+  it("does not signal a recorded PID after its process exits", async () => {
+    const base = makeAdapters({ isProcessRunning: () => false });
+    base.files.set(
+      lockPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        pid: 321,
+        repository: "snappedly/shipyard",
+        processStartedAt: "old-process",
+      }),
+    );
+
+    await expect(
+      stopRepositoryRunner({ repoDir }, base.adapters),
+    ).rejects.toThrow("no longer running");
     expect(base.signals).toHaveLength(0);
   });
 });
