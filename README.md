@@ -123,7 +123,9 @@ The Actions job only reports whether its wake-up reached the controller. It
 does not report the later agent outcome and does not own the agent's runtime.
 The controller stays available only while `runner start` remains open in its
 foreground terminal. Ctrl-C, closing that terminal, or `runner stop` stops it
-and cancels active work; it does not start at login. A nonzero Shipyard exit or
+and cancels active work; `runner stop` can be run from another terminal and
+signals the live PID recorded by the repository, even when its stored process
+identity is stale. It does not start at login. A nonzero Shipyard exit or
 infrastructure failure records the error and takes the controller offline.
 
 Use these commands from the same repository root:
