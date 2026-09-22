@@ -15,6 +15,10 @@ You need Apple Silicon macOS, Docker Desktop, an initialized Shipyard
 repository, `gh` authenticated with repository-administration access, and agent
 credentials in `.shipyard/.env`.
 
+The `GH_TOKEN` in `.shipyard/.env` is the issue-agent credential and may be
+limited to Issues and Metadata. Runner startup uses the host `gh` login for
+administrative checks, including reading the published wake workflow.
+
 Interactive `npx shipyard init` offers runner installation after scaffolding
 and defaults to Yes. Non-interactive init skips it unless you pass
 `--install-runner true`. You can install later:

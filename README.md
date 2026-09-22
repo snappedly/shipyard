@@ -87,6 +87,10 @@ Prerequisites are an initialized repository, Docker Desktop, `gh` authenticated
 to GitHub.com with repository-administration access, and the credentials needed
 by the selected agent in `.shipyard/.env`. Install from the repository root:
 
+The `GH_TOKEN` in `.shipyard/.env` is the issue-agent credential and may be
+limited to Issues and Metadata. Runner startup uses the host `gh` login for
+administrative checks, including reading the published wake workflow.
+
 ```sh
 npx shipyard runner install
 git add .github/workflows/shipyard-wake.yml .shipyard/.gitignore

@@ -524,7 +524,10 @@ const requireRunnerContext = async (
     {
       repoDir,
       repository,
-      environment: runtimeEnvironment,
+      // The published workflow is an administrative runner preflight. Keep
+      // it on the host's gh login instead of the issue-agent token from
+      // .shipyard/.env, which intentionally only needs issue permissions.
+      environment: hostEnvironment,
     },
     adapters,
   ).catch((error) => {
@@ -1087,9 +1090,6 @@ export const getRepositoryRunnerStatus = async (
   const running = await lockOwnsProcess(lock, adapters);
   let github: RepositoryRunnerStatus["github"] = "unreachable";
   try {
-    const resolvedEnvironment = await adapters.resolveEnvironment(
-      options.repoDir,
-    );
     const response = await adapters.run(
       "gh",
       [
@@ -1100,7 +1100,9 @@ export const getRepositoryRunnerStatus = async (
       ],
       {
         cwd: options.repoDir,
-        env: { ...adapters.environment(), ...resolvedEnvironment },
+        // Runner connectivity is an administrative check. Do not let the
+        // issue-agent token from .shipyard/.env shadow the host gh login.
+        env: adapters.environment(),
       },
     );
     github = response.stdout.trim() === "online" ? "online" : "offline";
