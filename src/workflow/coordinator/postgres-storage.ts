@@ -323,7 +323,10 @@ const jobFromRow = (value: Record<string, unknown>): WorkflowJob => {
         value.delivery_repository === null ||
         value.delivery_repository === undefined
           ? key.repository
-          : requiredString(value.delivery_repository, "job.delivery_repository"),
+          : requiredString(
+              value.delivery_repository,
+              "job.delivery_repository",
+            ),
       itemId:
         value.delivery_item_id === null || value.delivery_item_id === undefined
           ? key.itemId
@@ -461,7 +464,8 @@ const deliveryFromRow = (value: Record<string, unknown>): DeliveryRecord => {
   const updatedAt = timestamp(value.updated_at, "delivery.updated_at");
   const version = numberValue(value.version, "delivery.version");
   if (
-    delivery.key.repository !== requiredString(value.repository, "delivery.repository") ||
+    delivery.key.repository !==
+      requiredString(value.repository, "delivery.repository") ||
     delivery.key.itemId !== requiredString(value.item_id, "delivery.item_id")
   ) {
     throw new Error("Stored delivery key does not match its routing data");
@@ -478,10 +482,7 @@ const deliveryLeaseFromRow = (
     "delivery lease.resource_key",
   ),
   key: {
-    repository: requiredString(
-      value.repository,
-      "delivery lease.repository",
-    ),
+    repository: requiredString(value.repository, "delivery lease.repository"),
     itemId: requiredString(value.item_id, "delivery lease.item_id"),
   },
   workerId: requiredString(value.worker_id, "delivery lease.worker_id"),
@@ -758,7 +759,10 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
       values.push(selector.dispatchId);
       predicates.push(`d.id = $${values.length}`);
     }
-    if (selector.excludedDeliveryIds !== undefined && selector.excludedDeliveryIds.length > 0) {
+    if (
+      selector.excludedDeliveryIds !== undefined &&
+      selector.excludedDeliveryIds.length > 0
+    ) {
       values.push(selector.excludedDeliveryIds);
       predicates.push(
         `NOT ((j.delivery_repository || '#' || j.delivery_item_id) = ANY($${values.length}::text[]))`,
@@ -907,6 +911,48 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
       [repository],
     );
     return result.rows.map(leaseFromRow);
+  }
+
+  async getDeliveryLease(key: DeliveryKey): Promise<DeliveryLease | undefined> {
+    const result = await this.client.query<Record<string, unknown>>(
+      "SELECT * FROM shipyard_delivery_leases WHERE repository = $1 AND item_id = $2 FOR UPDATE",
+      [key.repository, key.itemId],
+    );
+    const value = optionalRow(result);
+    return value === undefined ? undefined : deliveryLeaseFromRow(value);
+  }
+
+  async lockDeliveryLeaseResource(key: DeliveryKey): Promise<void> {
+    await this.client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+      [deliveryKeyToString(key)],
+    );
+  }
+
+  async saveDeliveryLease(lease: DeliveryLease): Promise<void> {
+    await this.client.query(
+      `INSERT INTO shipyard_delivery_leases (
+         resource_key, lease_id, repository, item_id, worker_id,
+         fencing_token, acquired_at, heartbeat_at, expires_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT (resource_key) DO UPDATE SET
+         lease_id = EXCLUDED.lease_id, worker_id = EXCLUDED.worker_id,
+         fencing_token = EXCLUDED.fencing_token,
+         acquired_at = EXCLUDED.acquired_at,
+         heartbeat_at = EXCLUDED.heartbeat_at,
+         expires_at = EXCLUDED.expires_at`,
+      [
+        lease.resourceKey,
+        lease.leaseId,
+        lease.key.repository,
+        lease.key.itemId,
+        lease.workerId,
+        lease.fencingToken,
+        lease.acquiredAt,
+        lease.heartbeatAt,
+        lease.expiresAt,
+      ],
+    );
   }
 
   async getRepositoryControl(repository: string) {

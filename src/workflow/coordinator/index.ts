@@ -302,7 +302,10 @@ export class WorkflowCoordinator {
         root: existing.root,
         graph: existing.graph,
       };
-      if (deliveryGroupFingerprint(existingGroup) === deliveryGroupFingerprint(group)) {
+      if (
+        deliveryGroupFingerprint(existingGroup) ===
+        deliveryGroupFingerprint(group)
+      ) {
         return existing;
       }
       const updated: DeliveryRecord = {
@@ -1348,6 +1351,7 @@ export class WorkflowCoordinator {
           error: input.error,
           updatedAt: this.clock.now(),
         });
+        await this.releaseDeliveryLeaseForRetry(transaction, job, dispatch);
         return { status: "exhausted", job: blocked };
       }
       const retried = {
@@ -1368,7 +1372,23 @@ export class WorkflowCoordinator {
         updatedAt: this.clock.now(),
       };
       await transaction.saveDispatch(pending);
+      await this.releaseDeliveryLeaseForRetry(transaction, job, dispatch);
       return { status: "retry-scheduled", job: retried, dispatch: pending };
+    });
+  }
+
+  private async releaseDeliveryLeaseForRetry(
+    transaction: CoordinatorStorageTransaction,
+    job: WorkflowJob,
+    dispatch: DispatchIntent,
+  ): Promise<void> {
+    const lease = await transaction.getDeliveryLease(job.deliveryKey);
+    if (lease === undefined || lease.workerId !== dispatch.workerId) return;
+    const now = this.clock.nowMilliseconds();
+    await transaction.saveDeliveryLease({
+      ...lease,
+      expiresAt: now,
+      heartbeatAt: now,
     });
   }
 

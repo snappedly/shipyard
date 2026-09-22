@@ -18,8 +18,12 @@ CREATE TABLE IF NOT EXISTS shipyard_events (
   ignore_reason TEXT,
   job_id TEXT,
   received_at TIMESTAMPTZ NOT NULL,
-  payload JSONB
+  payload JSONB,
+  delivery JSONB
 );
+
+ALTER TABLE shipyard_events
+  ADD COLUMN IF NOT EXISTS delivery JSONB;
 
 CREATE TABLE IF NOT EXISTS shipyard_jobs (
   id TEXT PRIMARY KEY,
@@ -29,6 +33,8 @@ CREATE TABLE IF NOT EXISTS shipyard_jobs (
   brief_revision INTEGER NOT NULL,
   phase TEXT NOT NULL,
   relevant_revision TEXT NOT NULL,
+  delivery_repository TEXT,
+  delivery_item_id TEXT,
   brief JSONB NOT NULL,
   policy JSONB NOT NULL,
   state TEXT NOT NULL,
@@ -47,8 +53,37 @@ CREATE TABLE IF NOT EXISTS shipyard_jobs (
   version INTEGER NOT NULL
 );
 
+ALTER TABLE shipyard_jobs
+  ADD COLUMN IF NOT EXISTS delivery_repository TEXT,
+  ADD COLUMN IF NOT EXISTS delivery_item_id TEXT;
+
 CREATE INDEX IF NOT EXISTS shipyard_jobs_identity_idx
   ON shipyard_jobs (repository, item_id, item_kind, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS shipyard_deliveries (
+  repository TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  delivery JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  version INTEGER NOT NULL,
+  PRIMARY KEY (repository, item_id)
+);
+
+CREATE TABLE IF NOT EXISTS shipyard_delivery_leases (
+  resource_key TEXT PRIMARY KEY,
+  lease_id TEXT NOT NULL UNIQUE,
+  repository TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  worker_id TEXT NOT NULL,
+  fencing_token BIGINT NOT NULL,
+  acquired_at BIGINT NOT NULL,
+  heartbeat_at BIGINT NOT NULL,
+  expires_at BIGINT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS shipyard_delivery_leases_key_idx
+  ON shipyard_delivery_leases (repository, item_id);
 
 CREATE INDEX IF NOT EXISTS shipyard_jobs_key_idx
   ON shipyard_jobs (

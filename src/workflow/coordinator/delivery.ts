@@ -75,6 +75,11 @@ const normalizeDependencies = (
           `Delivery dependency ${dependency.itemId} cannot depend on itself`,
         );
       }
+      if (!childIds.has(dependencyId)) {
+        throw new Error(
+          `Delivery dependency target ${dependencyId} is not a child in the delivery graph`,
+        );
+      }
       dependsOn.add(dependencyId);
     }
     byItem.set(dependency.itemId, dependsOn);
@@ -89,6 +94,27 @@ const normalizeDependencies = (
     .sort((left, right) =>
       left.itemId.localeCompare(right.itemId, undefined, { numeric: true }),
     );
+};
+
+const assertAcyclic = (dependencies: readonly DeliveryDependency[]): void => {
+  const graph = new Map(
+    dependencies.map((dependency) => [dependency.itemId, dependency.dependsOn]),
+  );
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const visit = (itemId: string): void => {
+    if (visited.has(itemId)) return;
+    if (visiting.has(itemId)) {
+      throw new Error(
+        `Delivery graph contains a dependency cycle at ${itemId}`,
+      );
+    }
+    visiting.add(itemId);
+    for (const dependencyId of graph.get(itemId) ?? []) visit(dependencyId);
+    visiting.delete(itemId);
+    visited.add(itemId);
+  };
+  for (const itemId of graph.keys()) visit(itemId);
 };
 
 const modeFor = (root: WorkIdentity): DeliveryMode =>
@@ -116,14 +142,19 @@ export const resolveDeliveryGroup = (
   const children = uniqueIdentities(
     mode === "planning-spec"
       ? [issue, ...(input.children ?? [])]
-      : input.children ?? [],
+      : (input.children ?? []),
     root.repository,
   ).filter((child) => child.itemId !== root.itemId);
   if (mode === "standalone" && children.length > 0) {
     throw new Error("Standalone deliveries cannot contain child issues");
   }
-  if (mode === "planning-spec" && children.some((child) => child.kind === "planning-spec")) {
-    throw new Error("A planning-spec delivery cannot dispatch another planning spec");
+  if (
+    mode === "planning-spec" &&
+    children.some((child) => child.kind === "planning-spec")
+  ) {
+    throw new Error(
+      "A planning-spec delivery cannot dispatch another planning spec",
+    );
   }
 
   const key: DeliveryKey = {
@@ -135,6 +166,7 @@ export const resolveDeliveryGroup = (
     children,
     dependencies: normalizeDependencies(input.dependencies, children),
   };
+  assertAcyclic(graph.dependencies);
   return {
     key,
     id: deliveryIdFor(key),
@@ -144,9 +176,8 @@ export const resolveDeliveryGroup = (
   };
 };
 
-export const defaultDeliveryGroup = (
-  identity: WorkIdentity,
-): DeliveryGroup => resolveDeliveryGroup({ issue: identity });
+export const defaultDeliveryGroup = (identity: WorkIdentity): DeliveryGroup =>
+  resolveDeliveryGroup({ issue: identity });
 
 export const deliveryContainsIdentity = (
   delivery: DeliveryGroup,
@@ -182,11 +213,7 @@ export const parseDeliveryRecord = (value: unknown): DeliveryRecord => {
   const rootRecord = root as Record<string, unknown>;
   const graphRecord = graph as Record<string, unknown>;
   const identity = (value: unknown, path: string): WorkIdentity => {
-    if (
-      typeof value !== "object" ||
-      value === null ||
-      Array.isArray(value)
-    ) {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
       throw new Error(`${path} must be an object`);
     }
     const record = value as Record<string, unknown>;
@@ -247,7 +274,10 @@ export const parseDeliveryRecord = (value: unknown): DeliveryRecord => {
   if (typeof repository !== "string" || typeof itemId !== "string") {
     throw new Error("Stored delivery key is invalid");
   }
-  if (normalized.key.repository !== repository || normalized.key.itemId !== itemId) {
+  if (
+    normalized.key.repository !== repository ||
+    normalized.key.itemId !== itemId
+  ) {
     throw new Error("Stored delivery key does not match its root");
   }
   const createdAt = candidate.createdAt;
@@ -267,4 +297,3 @@ export const parseDeliveryRecord = (value: unknown): DeliveryRecord => {
 
 export const deliveryGroupFingerprint = (delivery: DeliveryGroup): string =>
   JSON.stringify(delivery);
-
