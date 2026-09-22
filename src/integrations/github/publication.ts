@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { GITHUB_PUBLICATION_METADATA_VERSION } from "./types.js";
 import type {
   GitHubBranchPublicationInput,
   GitHubBranchSnapshot,
@@ -8,10 +9,14 @@ import type {
   GitHubCommentPublicationInput,
   GitHubCommentSnapshot,
   GitHubIssueSnapshot,
+  GitHubIssueClosurePublicationInput,
   GitHubPublicationOptions,
   GitHubPublicationResult,
+  GitHubPullRequestDraftPublicationInput,
+  GitHubPullRequestHandoffPublicationInput,
   GitHubPullRequestPublicationInput,
   GitHubPullRequestSnapshot,
+  GitHubPublicationMetadata,
   GitHubRepairIssuePublicationInput,
   GitHubRepairLinkPublicationInput,
 } from "./types.js";
@@ -26,6 +31,52 @@ const markerPart = (value: string | number): string =>
 
 const markerHash = (value: string): string =>
   createHash("sha256").update(value).digest("hex").slice(0, 16);
+
+const metadataLine = (metadata: GitHubPublicationMetadata): string =>
+  `<!-- shipyard:metadata ${JSON.stringify(metadata)} -->`;
+
+const nonEmptyMetadataString = (value: unknown): value is string =>
+  typeof value === "string" && value.trim().length > 0;
+
+/** Read the stable candidate identity embedded in a coordinator-owned PR body. */
+export const parseGitHubPublicationMetadata = (
+  body: string,
+): GitHubPublicationMetadata | undefined => {
+  const match = /<!-- shipyard:metadata ([\s\S]*?) -->/.exec(body);
+  if (match?.[1] === undefined) return undefined;
+  try {
+    const value: unknown = JSON.parse(match[1]);
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      return undefined;
+    }
+    const candidate = value as Record<string, unknown>;
+    if (
+      candidate.version !== GITHUB_PUBLICATION_METADATA_VERSION ||
+      !nonEmptyMetadataString(candidate.repository) ||
+      !nonEmptyMetadataString(candidate.itemId) ||
+      !["planning-spec", "executable-issue", "pr-repair"].includes(
+        candidate.kind as string,
+      ) ||
+      typeof candidate.briefRevision !== "number" ||
+      !Number.isInteger(candidate.briefRevision) ||
+      candidate.briefRevision < 1 ||
+      !nonEmptyMetadataString(candidate.briefHash) ||
+      !nonEmptyMetadataString(candidate.baseBranch) ||
+      !nonEmptyMetadataString(candidate.baseSha) ||
+      !nonEmptyMetadataString(candidate.branch) ||
+      !nonEmptyMetadataString(candidate.headSha)
+    ) {
+      return undefined;
+    }
+    return candidate as unknown as GitHubPublicationMetadata;
+  } catch {
+    return undefined;
+  }
+};
+
+export const serializeGitHubPublicationMetadata = (
+  metadata: GitHubPublicationMetadata,
+): string => metadataLine(metadata);
 
 const result = <T>(
   marker: string,
@@ -156,15 +207,31 @@ export class GitHubPublication {
   async publishPullRequest(
     input: GitHubPullRequestPublicationInput,
   ): Promise<GitHubPublicationResult<GitHubPullRequestSnapshot>> {
-    const marker = `pull-request:${markerPart(input.jobId)}:${markerPart(input.branch)}`;
+    const job = await this.options.coordinator.getJob(input.jobId);
+    const itemId = input.metadata?.itemId ?? job?.key.itemId;
+    const marker =
+      itemId === undefined
+        ? `pull-request:${markerPart(input.jobId)}:${markerPart(input.branch)}`
+        : `pull-request:${markerPart(input.lease.repository)}:${markerPart(itemId)}:${markerPart(input.branch)}`;
+    const effectMarker = `${marker}:candidate:${markerPart(input.headSha)}`;
+    const body = [
+      markerText(marker),
+      ...(input.metadata === undefined ? [] : [metadataLine(input.metadata)]),
+      input.body,
+    ].join("\n");
     const execution = await this.options.coordinator.publishEffect({
       jobId: input.jobId,
       lease: input.lease,
       branch: input.branch,
       headSha: input.headSha,
       kind: "github-pull-request",
-      marker,
-      payload: { repository: input.lease.repository, branch: input.branch },
+      marker: effectMarker,
+      payload: {
+        repository: input.lease.repository,
+        branch: input.branch,
+        candidate: input.headSha,
+        workflowItem: itemId,
+      },
       reconcile: () =>
         this.options.transport.findPullRequestByMarker({
           repository: input.lease.repository,
@@ -174,7 +241,7 @@ export class GitHubPublication {
         this.options.transport.createPullRequest({
           repository: input.lease.repository,
           title: input.title,
-          body: `${markerText(marker)}\n${input.body}`,
+          body,
           branch: input.branch,
           baseBranch: input.baseBranch,
           draft: input.draft ?? true,
@@ -188,7 +255,6 @@ export class GitHubPublication {
       publication.remote.baseBranch === input.baseBranch &&
       publication.remote.headSha === input.headSha
     ) {
-      const job = await this.options.coordinator.getJob(input.jobId);
       if (job !== undefined) {
         await this.options.trackingStore.saveTrackedPullRequest({
           repository: input.lease.repository,
@@ -197,7 +263,7 @@ export class GitHubPublication {
           itemId: job.key.itemId,
           branch: input.branch,
           headSha: input.headSha,
-          marker,
+          marker: markerText(marker),
           brief: job.brief,
           policy: job.policy,
           createdAt: this.options.now?.() ?? new Date().toISOString(),
@@ -205,6 +271,248 @@ export class GitHubPublication {
       }
     }
     return publication;
+  }
+
+  async publishPullRequestHandoff(
+    input: GitHubPullRequestHandoffPublicationInput,
+  ): Promise<GitHubPublicationResult<GitHubPullRequestSnapshot>> {
+    const marker = `pull-request-ready:${markerPart(input.lease.repository)}:${markerPart(input.pullRequestNumber)}:${markerPart(input.headSha)}`;
+    const matchesCandidate = (
+      pullRequest: GitHubPullRequestSnapshot,
+    ): boolean =>
+      pullRequest.state === "open" &&
+      !pullRequest.draft &&
+      pullRequest.branch === input.branch &&
+      pullRequest.baseBranch === input.baseBranch &&
+      pullRequest.headSha === input.headSha &&
+      (pullRequest.labels ?? []).includes("ready-for-human") &&
+      !(pullRequest.labels ?? []).includes("shipyard-blocked");
+    const execution = await this.options.coordinator.publishEffect({
+      jobId: input.jobId,
+      lease: input.lease,
+      branch: input.branch,
+      headSha: input.headSha,
+      kind: "github-pull-request-handoff",
+      marker,
+      payload: {
+        repository: input.lease.repository,
+        pullRequestNumber: input.pullRequestNumber,
+        headSha: input.headSha,
+        briefHash: input.briefHash,
+      },
+      reconcile: async () => {
+        const pullRequest = await this.options.transport.fetchPullRequest({
+          repository: input.lease.repository,
+          pullRequestNumber: input.pullRequestNumber,
+        });
+        return pullRequest !== undefined && matchesCandidate(pullRequest)
+          ? pullRequest
+          : undefined;
+      },
+      publish: async () => {
+        const pullRequest = await this.options.transport.fetchPullRequest({
+          repository: input.lease.repository,
+          pullRequestNumber: input.pullRequestNumber,
+        });
+        if (pullRequest === undefined) {
+          throw new Error("Tracked pull request is not published");
+        }
+        if (
+          pullRequest.state !== "open" ||
+          pullRequest.branch !== input.branch ||
+          pullRequest.baseBranch !== input.baseBranch ||
+          pullRequest.headSha !== input.headSha
+        ) {
+          throw new Error(
+            "Pull request candidate changed before human handoff",
+          );
+        }
+        if (this.options.transport.updatePullRequest === undefined) {
+          throw new Error("GitHub transport cannot mark a pull request ready");
+        }
+        const labels = new Set(pullRequest.labels ?? []);
+        labels.delete("shipyard-blocked");
+        labels.add("ready-for-human");
+        return this.options.transport.updatePullRequest({
+          repository: input.lease.repository,
+          pullRequestNumber: input.pullRequestNumber,
+          draft: false,
+          labels: [...labels],
+          marker: markerText(marker),
+        });
+      },
+    });
+    return result(marker, execution);
+  }
+
+  /** Return a tracked PR to active draft work when its candidate changes. */
+  async invalidatePullRequestHandoff(
+    input: GitHubPullRequestDraftPublicationInput,
+  ): Promise<GitHubPublicationResult<GitHubPullRequestSnapshot>> {
+    const marker = `pull-request-draft:${markerPart(input.lease.repository)}:${markerPart(input.pullRequestNumber)}:${markerPart(input.headSha)}`;
+    const matchesCandidate = (
+      pullRequest: GitHubPullRequestSnapshot,
+    ): boolean =>
+      pullRequest.state === "open" &&
+      pullRequest.draft &&
+      pullRequest.branch === input.branch &&
+      pullRequest.baseBranch === input.baseBranch &&
+      pullRequest.headSha === input.headSha &&
+      !(pullRequest.labels ?? []).includes("ready-for-human") &&
+      !(pullRequest.labels ?? []).includes("shipyard-blocked");
+    const execution = await this.options.coordinator.publishEffect({
+      jobId: input.jobId,
+      lease: input.lease,
+      branch: input.branch,
+      headSha: input.headSha,
+      kind: "github-pull-request-draft",
+      marker,
+      payload: {
+        repository: input.lease.repository,
+        pullRequestNumber: input.pullRequestNumber,
+        headSha: input.headSha,
+        reason: input.reason,
+      },
+      reconcile: async () => {
+        const pullRequest = await this.options.transport.fetchPullRequest({
+          repository: input.lease.repository,
+          pullRequestNumber: input.pullRequestNumber,
+        });
+        return pullRequest !== undefined && matchesCandidate(pullRequest)
+          ? pullRequest
+          : undefined;
+      },
+      publish: async () => {
+        const pullRequest = await this.options.transport.fetchPullRequest({
+          repository: input.lease.repository,
+          pullRequestNumber: input.pullRequestNumber,
+        });
+        if (pullRequest === undefined) {
+          throw new Error("Tracked pull request is not published");
+        }
+        if (
+          pullRequest.state !== "open" ||
+          pullRequest.branch !== input.branch ||
+          pullRequest.baseBranch !== input.baseBranch ||
+          pullRequest.headSha !== input.headSha
+        ) {
+          throw new Error(
+            "Pull request candidate changed before draft invalidation",
+          );
+        }
+        if (this.options.transport.updatePullRequest === undefined) {
+          throw new Error(
+            "GitHub transport cannot return a pull request to draft",
+          );
+        }
+        const labels = new Set(pullRequest.labels ?? []);
+        labels.delete("ready-for-human");
+        labels.delete("shipyard-blocked");
+        return this.options.transport.updatePullRequest({
+          repository: input.lease.repository,
+          pullRequestNumber: input.pullRequestNumber,
+          draft: true,
+          labels: [...labels],
+          marker: markerText(marker),
+        });
+      },
+    });
+    return result(marker, execution);
+  }
+
+  async publishStandaloneIssueClosure(
+    input: GitHubIssueClosurePublicationInput,
+  ): Promise<{
+    readonly comment: GitHubPublicationResult<GitHubCommentSnapshot>;
+    readonly issue: GitHubPublicationResult<GitHubIssueSnapshot>;
+  }> {
+    if (!input.cleanupCompleted) {
+      throw new Error(
+        "Cannot close an issue before cleanup/self-check completes",
+      );
+    }
+    if (input.commitSha.trim().length === 0) {
+      throw new Error("Cannot close an issue without a published commit");
+    }
+    const job = await this.options.coordinator.getJob(input.jobId);
+    if (job === undefined)
+      throw new Error(`Workflow job ${input.jobId} does not exist`);
+    const requiredChecks = job.policy.checks
+      .filter((check) => check.required)
+      .map((check) => check.name);
+    for (const name of requiredChecks) {
+      const check = input.checks.find(
+        (candidate) =>
+          candidate.name === name &&
+          candidate.status === "passed" &&
+          candidate.baseSha === job.brief.base.sha &&
+          candidate.headSha === input.commitSha &&
+          candidate.briefHash === job.brief.hash,
+      );
+      if (check === undefined) {
+        throw new Error(
+          `Cannot close an issue before check ${name} passes for the current candidate`,
+        );
+      }
+    }
+    const pullRequest = await this.options.transport.fetchPullRequest({
+      repository: input.lease.repository,
+      pullRequestNumber: input.pullRequestNumber,
+    });
+    if (
+      pullRequest === undefined ||
+      pullRequest.branch !== input.branch ||
+      pullRequest.headSha !== input.commitSha
+    ) {
+      throw new Error(
+        "Cannot close an issue before its candidate is published",
+      );
+    }
+
+    const comment = await this.publishComment({
+      jobId: input.jobId,
+      lease: input.lease,
+      issueNumber: input.issueNumber,
+      key: `closure:${input.commitSha}:${input.pullRequestNumber}`,
+      body: [
+        "Shipyard completed the standalone implementation.",
+        `- Commit: \`${input.commitSha}\``,
+        `- Pull request: #${input.pullRequestNumber}`,
+        `- Branch: \`${input.branch}\``,
+        "- Focused checks passed and cleanup/self-check completed.",
+      ].join("\n"),
+    });
+    const marker = `issue-close:${markerPart(input.lease.repository)}:${markerPart(input.issueNumber)}:${markerPart(input.commitSha)}`;
+    const execution = await this.options.coordinator.publishEffect({
+      jobId: input.jobId,
+      lease: input.lease,
+      itemId: String(input.issueNumber),
+      kind: "github-issue-close",
+      marker,
+      payload: {
+        repository: input.lease.repository,
+        issueNumber: input.issueNumber,
+        pullRequestNumber: input.pullRequestNumber,
+        commitSha: input.commitSha,
+      },
+      reconcile: async () => {
+        const issue = await this.options.transport.fetchIssue({
+          repository: input.lease.repository,
+          issueNumber: input.issueNumber,
+        });
+        return issue?.state === "closed" ? issue : undefined;
+      },
+      publish: async () => {
+        if (this.options.transport.closeIssue === undefined) {
+          throw new Error("GitHub transport cannot close source issues");
+        }
+        return this.options.transport.closeIssue({
+          repository: input.lease.repository,
+          issueNumber: input.issueNumber,
+        });
+      },
+    });
+    return { comment, issue: result(marker, execution) };
   }
 
   async publishCheck(

@@ -7,6 +7,10 @@ export {
   createGitHubIssueBrief,
   reviewDecisionFor,
 } from "./integration.js";
-export { GitHubPublication } from "./publication.js";
+export {
+  GitHubPublication,
+  parseGitHubPublicationMetadata,
+  serializeGitHubPublicationMetadata,
+} from "./publication.js";
 export { InMemoryGitHubStore } from "./store.js";
 export type * from "./types.js";

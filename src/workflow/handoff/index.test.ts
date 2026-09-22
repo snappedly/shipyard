@@ -14,6 +14,8 @@ import {
 } from "../coordinator/index.js";
 import {
   completeSourceIssue,
+  completeStandaloneIssue,
+  closeStandaloneSourceIssue,
   closeSourceIssue,
   evaluateHandoffReadiness,
   mergeProtectedCandidate,
@@ -536,5 +538,59 @@ describe("handoff gates", () => {
     expect(
       resolveHumanReviewDecision({ decision: "changes-requested" }).outcome,
     ).toBe("repair-needed");
+  });
+
+  it("closes a standalone issue only after remote publication, checks, and cleanup", async () => {
+    const published = {
+      branch: head.branch,
+      headSha: head.sha,
+      pullRequestNumber: 100,
+      state: "open" as const,
+    };
+    const input = {
+      policy,
+      candidate: { base, head, briefHash: brief.hash },
+      published,
+      commitSha: head.sha,
+      checks: [check],
+      cleanupCompleted: true,
+    };
+    expect(completeStandaloneIssue(input).outcome).toBe("completed");
+
+    const closeIssue = vi.fn(async (input: { readonly comment: string }) => {
+      void input;
+    });
+    const closed = await closeStandaloneSourceIssue({
+      ...input,
+      sourceIssueNumber: 42,
+      closer: { closeIssue },
+    });
+    expect(closed).toMatchObject({ outcome: "completed", closed: true });
+    expect(closeIssue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        issueNumber: 42,
+        commitSha: head.sha,
+        pullRequestNumber: 100,
+        branch: head.branch,
+      }),
+    );
+    const closureInput = closeIssue.mock.calls[0]?.[0];
+    expect(closureInput?.comment).toContain(`#${published.pullRequestNumber}`);
+
+    expect(
+      completeStandaloneIssue({ ...input, cleanupCompleted: false }).reason,
+    ).toContain("cleanup");
+    expect(
+      completeStandaloneIssue({
+        ...input,
+        published: { ...published, headSha: "c".repeat(40) },
+      }).reason,
+    ).toContain("current candidate");
+    expect(
+      completeStandaloneIssue({
+        ...input,
+        checks: [{ ...check, headSha: "c".repeat(40) }],
+      }).reason,
+    ).toContain("stale");
   });
 });

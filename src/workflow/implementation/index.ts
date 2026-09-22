@@ -526,29 +526,24 @@ export const runAuthorizedImplementation = async (
   const checkIssue = checkReadiness(policy, phaseResult);
   const readinessIssue = evidenceIssue ?? checkIssue;
   const publicationChecks: GitHubPublicationResult<unknown>[] = [];
-  for (const check of phaseResult.checks) {
-    const published = await options.publication.publishCheck({
-      jobId: job.id,
-      lease,
-      branch,
-      name: check.name,
-      headSha: phaseResult.head.sha,
-      status: "completed",
-      conclusion: checkConclusion(check),
-      summary: checkSummary(check),
-    });
-    publicationChecks.push(published as GitHubPublicationResult<unknown>);
-  }
   const branchPublication = await options.publication.publishBranch({
     jobId: job.id,
     lease,
     branch,
     headSha: phaseResult.head.sha,
   });
-  if (
-    branchPublication.remote !== undefined &&
-    branchPublication.remote.headSha !== phaseResult.head.sha
-  ) {
+  if (branchPublication.remote === undefined) {
+    return blocked("Issue branch publication is still in flight", {
+      job,
+      dispatch,
+      assignment,
+      lease,
+      phaseResult,
+      execution,
+      publication: { checks: publicationChecks, branch: branchPublication },
+    });
+  }
+  if (branchPublication.remote.headSha !== phaseResult.head.sha) {
     return blocked("A pre-existing branch points at a different head", {
       job,
       dispatch,
@@ -574,12 +569,39 @@ export const runAuthorizedImplementation = async (
     baseBranch: policy.baseBranch,
     headSha: phaseResult.head.sha,
     draft: true,
+    metadata: {
+      version: 1,
+      repository: brief.identity.repository,
+      itemId: brief.identity.itemId,
+      kind: brief.identity.kind,
+      briefRevision: brief.revision,
+      briefHash: brief.hash,
+      baseBranch: policy.baseBranch,
+      baseSha: brief.base.sha,
+      branch,
+      headSha: phaseResult.head.sha,
+    },
   });
+  if (pullRequest.remote === undefined) {
+    return blocked("Draft pull request publication is still in flight", {
+      job,
+      dispatch,
+      assignment,
+      lease,
+      phaseResult,
+      execution,
+      publication: {
+        brief: briefPublication as GitHubPublicationResult<unknown>,
+        checks: publicationChecks,
+        branch: branchPublication,
+        pullRequest,
+      },
+    });
+  }
   if (
-    pullRequest.remote !== undefined &&
-    (pullRequest.remote.headSha !== phaseResult.head.sha ||
-      pullRequest.remote.branch !== branch ||
-      pullRequest.remote.baseBranch !== policy.baseBranch)
+    pullRequest.remote.headSha !== phaseResult.head.sha ||
+    pullRequest.remote.branch !== branch ||
+    pullRequest.remote.baseBranch !== policy.baseBranch
   ) {
     return blocked("An existing pull request has a different candidate", {
       job,
@@ -595,6 +617,19 @@ export const runAuthorizedImplementation = async (
         pullRequest,
       },
     });
+  }
+  for (const check of phaseResult.checks) {
+    const published = await options.publication.publishCheck({
+      jobId: job.id,
+      lease,
+      branch,
+      name: check.name,
+      headSha: phaseResult.head.sha,
+      status: "completed",
+      conclusion: checkConclusion(check),
+      summary: checkSummary(check),
+    });
+    publicationChecks.push(published as GitHubPublicationResult<unknown>);
   }
   const publication = {
     brief: briefPublication as GitHubPublicationResult<unknown>,

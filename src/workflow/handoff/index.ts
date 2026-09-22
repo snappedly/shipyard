@@ -206,6 +206,52 @@ export interface SourceIssueClosureResult extends CompletionResult {
   readonly closed: boolean;
 }
 
+export interface PublishedStandaloneCandidate {
+  readonly branch: string;
+  readonly headSha: string;
+  readonly pullRequestNumber: number;
+  readonly state: "open" | "closed";
+}
+
+export interface StandaloneCompletionInput {
+  readonly policy: RepositoryPolicy;
+  readonly candidate: HandoffCandidate;
+  readonly published: PublishedStandaloneCandidate;
+  readonly commitSha: string;
+  readonly checks: readonly CheckEvidence[];
+  /** The worker/coordinator cleanup self-check completed successfully. */
+  readonly cleanupCompleted: boolean;
+}
+
+export interface StandaloneCompletionResult {
+  readonly outcome: "completed" | "open";
+  readonly reason?: string;
+  readonly commitSha: string;
+  readonly pullRequestNumber: number;
+  readonly checks: readonly CheckEvidence[];
+}
+
+export interface StandaloneSourceIssueCloser {
+  closeIssue(input: {
+    readonly issueNumber: number;
+    readonly commitSha: string;
+    readonly pullRequestNumber: number;
+    readonly branch: string;
+    readonly checks: readonly CheckEvidence[];
+    /** Stable evidence text to retain on the source issue. */
+    readonly comment: string;
+  }): Promise<void>;
+}
+
+export interface CloseStandaloneSourceIssueOptions extends StandaloneCompletionInput {
+  readonly sourceIssueNumber: number;
+  readonly closer: StandaloneSourceIssueCloser;
+}
+
+export interface StandaloneSourceIssueClosureResult extends StandaloneCompletionResult {
+  readonly closed: boolean;
+}
+
 const defaultAxes: readonly ReviewAxis[] = ["standards", "spec"];
 
 const isFreshTimestamp = (
@@ -775,3 +821,101 @@ export const closeSourceIssue = async (
     };
   }
 };
+
+const standaloneOpen = (
+  input: StandaloneCompletionInput,
+  reason: string,
+): StandaloneCompletionResult => ({
+  outcome: "open",
+  reason,
+  commitSha: input.commitSha,
+  pullRequestNumber: input.published.pullRequestNumber,
+  checks: input.checks,
+});
+
+/** Gate standalone issue closure on a remotely published, open PR candidate. */
+export const completeStandaloneIssue = (
+  input: StandaloneCompletionInput,
+): StandaloneCompletionResult => {
+  const policy = parseRepositoryPolicy(input.policy);
+  if (input.commitSha.trim().length === 0) {
+    return standaloneOpen(input, "Published commit is missing");
+  }
+  if (
+    !Number.isInteger(input.published.pullRequestNumber) ||
+    input.published.pullRequestNumber < 1
+  ) {
+    return standaloneOpen(input, "Published pull request is missing");
+  }
+  if (input.published.state !== "open") {
+    return standaloneOpen(input, "Published pull request is not open");
+  }
+  if (
+    input.published.branch !== input.candidate.head.branch ||
+    input.published.headSha !== input.candidate.head.sha ||
+    input.commitSha !== input.candidate.head.sha
+  ) {
+    return standaloneOpen(
+      input,
+      "Published pull request does not point at the current candidate",
+    );
+  }
+  if (!input.cleanupCompleted) {
+    return standaloneOpen(
+      input,
+      "Implementation cleanup/self-check is incomplete",
+    );
+  }
+  const checkReasons = allRequiredChecksPassed(policy, input.checks, {
+    baseSha: input.candidate.base.sha,
+    headSha: input.candidate.head.sha,
+    briefHash: input.candidate.briefHash,
+  });
+  if (checkReasons.length > 0) {
+    return standaloneOpen(input, checkReasons.join("; "));
+  }
+  return {
+    outcome: "completed",
+    commitSha: input.commitSha,
+    pullRequestNumber: input.published.pullRequestNumber,
+    checks: input.checks,
+  };
+};
+
+/** Close a standalone source issue with durable commit/PR evidence. */
+export const closeStandaloneSourceIssue = async (
+  input: CloseStandaloneSourceIssueOptions,
+): Promise<StandaloneSourceIssueClosureResult> => {
+  const completion = completeStandaloneIssue(input);
+  if (completion.outcome === "open") {
+    return { ...completion, closed: false };
+  }
+  const comment = [
+    "Shipyard completed the standalone implementation.",
+    `- Commit: \`${completion.commitSha}\``,
+    `- Pull request: #${completion.pullRequestNumber}`,
+    `- Branch: \`${input.published.branch}\``,
+    "- Focused checks passed and cleanup/self-check completed.",
+  ].join("\n");
+  try {
+    await input.closer.closeIssue({
+      issueNumber: input.sourceIssueNumber,
+      commitSha: completion.commitSha,
+      pullRequestNumber: completion.pullRequestNumber,
+      branch: input.published.branch,
+      checks: completion.checks,
+      comment,
+    });
+    return { ...completion, closed: true };
+  } catch (error) {
+    return {
+      ...completion,
+      outcome: "open",
+      closed: false,
+      reason: `Could not close source issue: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+};
+
+export const completePublishedSourceIssue = completeStandaloneIssue;
+export const closePublishedSourceIssue = closeStandaloneSourceIssue;

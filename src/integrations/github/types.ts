@@ -1,9 +1,11 @@
 import type {
   Authorization,
+  CheckEvidence,
   RepositoryPolicy,
   RevisionReference,
   RiskLevel,
   WorkBrief,
+  WorkItemKind,
   WorkflowPhase,
 } from "../../workflow/contracts/index.js";
 import type {
@@ -71,6 +73,23 @@ export interface GitHubPullRequestSnapshot {
   readonly updatedAt: string;
   readonly htmlUrl?: string;
   readonly authorLogin?: string;
+  readonly labels?: readonly string[];
+}
+
+/** Stable identity written to every coordinator-owned pull request. */
+export const GITHUB_PUBLICATION_METADATA_VERSION = 1 as const;
+
+export interface GitHubPublicationMetadata {
+  readonly version: typeof GITHUB_PUBLICATION_METADATA_VERSION;
+  readonly repository: string;
+  readonly itemId: string;
+  readonly kind: WorkItemKind;
+  readonly briefRevision: number;
+  readonly briefHash: string;
+  readonly baseBranch: string;
+  readonly baseSha: string;
+  readonly branch: string;
+  readonly headSha: string;
 }
 
 export type GitHubPullRequestReviewState =
@@ -366,6 +385,23 @@ export interface GitHubWriteTransport {
     readonly draft: boolean;
     readonly marker: string;
   }): Promise<GitHubPullRequestSnapshot>;
+  /** Update an existing PR's candidate projection, draft state, and labels. */
+  readonly updatePullRequest?: (input: {
+    readonly repository: string;
+    readonly pullRequestNumber: number;
+    readonly title?: string;
+    readonly body?: string;
+    readonly draft?: boolean;
+    readonly labels?: readonly string[];
+    readonly marker: string;
+  }) => Promise<GitHubPullRequestSnapshot>;
+  /** Move an existing remote branch to a newly published candidate. */
+  readonly updateBranch?: (input: {
+    readonly repository: string;
+    readonly branch: string;
+    readonly headSha: string;
+    readonly marker: string;
+  }) => Promise<GitHubBranchSnapshot>;
   createCheck(input: {
     readonly repository: string;
     readonly name: string;
@@ -382,6 +418,11 @@ export interface GitHubWriteTransport {
     readonly marker: string;
     readonly labels: readonly string[];
   }): Promise<GitHubIssueSnapshot>;
+  /** Close a source issue only after the coordinator has recorded its evidence. */
+  readonly closeIssue?: (input: {
+    readonly repository: string;
+    readonly issueNumber: number;
+  }) => Promise<GitHubIssueSnapshot>;
 }
 
 export interface GitHubPublicationOptions {
@@ -429,6 +470,32 @@ export interface GitHubPullRequestPublicationInput {
   readonly baseBranch: string;
   readonly headSha: string;
   readonly draft?: boolean;
+  readonly metadata?: GitHubPublicationMetadata;
+}
+
+export interface GitHubPullRequestHandoffPublicationInput {
+  readonly jobId: string;
+  readonly lease: BranchLease;
+  readonly pullRequestNumber: number;
+  readonly branch: string;
+  readonly baseBranch: string;
+  readonly headSha: string;
+  readonly briefHash: string;
+}
+
+export interface GitHubPullRequestDraftPublicationInput extends GitHubPullRequestHandoffPublicationInput {
+  readonly reason?: string;
+}
+
+export interface GitHubIssueClosurePublicationInput {
+  readonly jobId: string;
+  readonly lease: BranchLease;
+  readonly issueNumber: number;
+  readonly pullRequestNumber: number;
+  readonly branch: string;
+  readonly commitSha: string;
+  readonly checks: readonly CheckEvidence[];
+  readonly cleanupCompleted: boolean;
 }
 
 export interface GitHubCheckPublicationInput {

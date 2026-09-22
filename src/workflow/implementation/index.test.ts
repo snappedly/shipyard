@@ -15,6 +15,7 @@ import {
 import {
   GitHubPublication,
   InMemoryGitHubStore,
+  parseGitHubPublicationMetadata,
   type GitHubReadTransport,
   type GitHubWriteTransport,
 } from "../../integrations/github/index.js";
@@ -250,6 +251,21 @@ describe("authorized implementation", () => {
     expect(first.pullRequest?.draft).toBe(true);
     expect(second.pullRequest?.number).toBe(100);
     expect(harness.createdPullRequests).toHaveLength(1);
+
+    expect(
+      parseGitHubPublicationMetadata(harness.createdPullRequests[0] ?? ""),
+    ).toMatchObject({
+      version: 1,
+      repository,
+      itemId: "42",
+      kind: "executable-issue",
+      briefRevision: 1,
+      briefHash: brief().hash,
+      baseBranch: "main",
+      baseSha,
+      branch: "shipyard/42-executable-issue",
+      headSha,
+    });
   });
 
   it("does not publish a candidate from an unapproved or stale brief", async () => {

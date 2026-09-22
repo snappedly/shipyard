@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  WORKFLOW_CONTRACT_VERSION,
   createRepositoryPolicy,
   createWorkBrief,
 } from "../../workflow/contracts/index.js";
@@ -106,6 +107,43 @@ const prepareJob = async (coordinator: WorkflowCoordinator) => {
     ttlMs: 60_000,
   });
   return { jobId: received.job!.id, lease, dispatched };
+};
+
+const prepareCandidateJob = async (coordinator: WorkflowCoordinator) => {
+  const prepared = await prepareJob(coordinator);
+  await coordinator.recordPhaseResult({
+    jobId: prepared.jobId,
+    lease: prepared.lease,
+    result: {
+      contractVersion: WORKFLOW_CONTRACT_VERSION,
+      assignmentId: prepared.dispatched.assignment!.id,
+      phase: "implementation",
+      outcome: "completed",
+      identity: brief.identity,
+      briefHash: brief.hash,
+      base: brief.base,
+      head: { branch: "shipyard/issue-42", sha: "b".repeat(40) },
+      summary: "Published candidate",
+      evidence: ["The change is verified."],
+      checks: [
+        {
+          name: "typecheck",
+          command: "npm run typecheck",
+          status: "passed",
+          summary: "passed",
+          baseSha: brief.base.sha,
+          headSha: "b".repeat(40),
+          briefHash: brief.hash,
+        },
+      ],
+      commits: ["b".repeat(40)],
+      artifacts: [],
+      questions: [],
+      findings: [],
+      completedAt: "2026-09-17T12:00:01.000Z",
+    },
+  });
+  return prepared;
 };
 
 describe("GitHubPublication", () => {
@@ -330,5 +368,177 @@ describe("GitHubPublication", () => {
 
     expect(result.disposition).toBe("reconciled");
     expect(result.remote?.id).toBe("comment-2");
+  });
+
+  it("marks only the current published PR candidate ready for human review", async () => {
+    const { coordinator } = createPublication();
+    const { jobId, lease } = await prepareCandidateJob(coordinator);
+    let pullRequest = {
+      number: 100,
+      title: "Candidate",
+      body: "candidate",
+      state: "open" as const,
+      draft: true,
+      branch: "shipyard/issue-42",
+      baseBranch: "main",
+      headSha: "b".repeat(40),
+      updatedAt: "2026-09-17T12:00:01.000Z",
+      labels: [] as string[],
+    };
+    const updatePullRequest = vi.fn(
+      async (input: {
+        readonly draft?: boolean;
+        readonly labels?: readonly string[];
+      }) => {
+        pullRequest = {
+          ...pullRequest,
+          draft: input.draft ?? pullRequest.draft,
+          labels: [...(input.labels ?? pullRequest.labels)],
+        };
+        return pullRequest;
+      },
+    );
+    const transport = {
+      fetchIssue: async () => undefined,
+      fetchPullRequest: async () => pullRequest,
+      findCommentByMarker: async () => undefined,
+      findBranchByName: async () => undefined,
+      findPullRequestByMarker: async () => pullRequest,
+      findCheckByMarker: async () => undefined,
+      findIssueByMarker: async () => undefined,
+      createComment: async () => {
+        throw new Error("unused");
+      },
+      createBranch: async () => {
+        throw new Error("unused");
+      },
+      createPullRequest: async () => {
+        throw new Error("unused");
+      },
+      updatePullRequest,
+      createCheck: async () => {
+        throw new Error("unused");
+      },
+      createRepairIssue: async () => {
+        throw new Error("unused");
+      },
+    } satisfies GitHubReadTransport & GitHubWriteTransport;
+    const publication = new GitHubPublication({
+      coordinator,
+      transport,
+      trackingStore: new InMemoryGitHubStore(),
+    });
+
+    const input = {
+      jobId,
+      lease,
+      pullRequestNumber: 100,
+      branch: "shipyard/issue-42",
+      baseBranch: "main",
+      headSha: "b".repeat(40),
+      briefHash: brief.hash,
+    };
+    const first = await publication.publishPullRequestHandoff(input);
+    const replay = await publication.publishPullRequestHandoff(input);
+
+    expect(first.disposition).toBe("published");
+    expect(replay.disposition).toBe("already-succeeded");
+    expect(pullRequest.draft).toBe(false);
+    expect(pullRequest.labels).toEqual(["ready-for-human"]);
+    expect(updatePullRequest).toHaveBeenCalledOnce();
+  });
+
+  it("records closure evidence and closes a published issue idempotently", async () => {
+    const { coordinator } = createPublication();
+    const { jobId, lease } = await prepareCandidateJob(coordinator);
+    let issue = {
+      number: 42,
+      title: "Candidate",
+      body: "source",
+      state: "open" as "open" | "closed",
+      updatedAt: "2026-09-17T12:00:01.000Z",
+      labels: [] as string[],
+    };
+    const createComment = vi.fn(async (input: { readonly body: string }) => ({
+      id: "closure-comment",
+      body: input.body,
+      updatedAt: "2026-09-17T12:00:01.000Z",
+    }));
+    const closeIssue = vi.fn(async () => {
+      issue = { ...issue, state: "closed" };
+      return issue;
+    });
+    const transport = {
+      fetchIssue: async () => issue,
+      fetchPullRequest: async () => ({
+        number: 100,
+        title: "Candidate",
+        body: "candidate",
+        state: "open" as const,
+        draft: true,
+        branch: "shipyard/issue-42",
+        baseBranch: "main",
+        headSha: "b".repeat(40),
+        updatedAt: "2026-09-17T12:00:01.000Z",
+      }),
+      findCommentByMarker: async () => undefined,
+      findBranchByName: async () => undefined,
+      findPullRequestByMarker: async () => undefined,
+      findCheckByMarker: async () => undefined,
+      findIssueByMarker: async () => undefined,
+      createComment,
+      createBranch: async () => {
+        throw new Error("unused");
+      },
+      createPullRequest: async () => {
+        throw new Error("unused");
+      },
+      createCheck: async () => {
+        throw new Error("unused");
+      },
+      createRepairIssue: async () => {
+        throw new Error("unused");
+      },
+      closeIssue,
+    } satisfies GitHubReadTransport & GitHubWriteTransport;
+    const publication = new GitHubPublication({
+      coordinator,
+      transport,
+      trackingStore: new InMemoryGitHubStore(),
+    });
+    const input = {
+      jobId,
+      lease,
+      issueNumber: 42,
+      pullRequestNumber: 100,
+      branch: "shipyard/issue-42",
+      commitSha: "b".repeat(40),
+      checks: [
+        {
+          name: "typecheck",
+          command: "npm run typecheck",
+          status: "passed" as const,
+          summary: "passed",
+          baseSha: brief.base.sha,
+          headSha: "b".repeat(40),
+          briefHash: brief.hash,
+        },
+      ],
+      cleanupCompleted: true,
+    };
+
+    const first = await publication.publishStandaloneIssueClosure(input);
+    const replay = await publication.publishStandaloneIssueClosure(input);
+
+    expect(first.comment.disposition).toBe("published");
+    expect(first.issue.disposition).toBe("published");
+    expect(replay.comment.disposition).toBe("already-succeeded");
+    expect(replay.issue.disposition).toBe("already-succeeded");
+    expect(createComment).toHaveBeenCalledOnce();
+    expect(closeIssue).toHaveBeenCalledOnce();
+    expect(issue.state).toBe("closed");
+    expect(createComment.mock.calls[0]?.[0].body).toContain(
+      "Pull request: #100",
+    );
   });
 });
