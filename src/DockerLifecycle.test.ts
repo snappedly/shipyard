@@ -77,6 +77,37 @@ describe("startContainer", () => {
     expect(runCall![1]).toContain("--init");
   });
 
+  it("adds an exact repository-runner owner label when requested", async () => {
+    mockExecFile.mockImplementation((_cmd, _args, _opts, cb: any) => {
+      cb(null, "", "");
+      return undefined as any;
+    });
+
+    await Effect.runPromise(
+      startContainer(
+        "ctr",
+        "img",
+        {},
+        {
+          labels: {
+            "com.snappedly.shipyard.repository-runner-owner":
+              "snappedly/shipyard",
+          },
+        },
+      ),
+    );
+
+    const runCall = mockExecFile.mock.calls.find(
+      ([, args]) => Array.isArray(args) && args[0] === "run",
+    );
+    expect(runCall?.[1]).toEqual(
+      expect.arrayContaining([
+        "--label",
+        "com.snappedly.shipyard.repository-runner-owner=snappedly/shipyard",
+      ]),
+    );
+  });
+
   it("passes --network flag when network is a string", async () => {
     mockExecFile.mockImplementation((_cmd, _args, _opts, cb: any) => {
       cb(null, "", "");

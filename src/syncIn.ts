@@ -13,7 +13,7 @@ import { Effect } from "effect";
 import type { IsolatedSandboxHandle } from "./SandboxProvider.js";
 import { SyncError } from "./errors.js";
 import { execHostGit as execSafeHostGit } from "./hostGit.js";
-import { RUNTIME_NAMESPACE } from "./runtimeNames.js";
+import { CONFIG_DIR, RUNNER_DIR, RUNTIME_NAMESPACE } from "./runtimeNames.js";
 import { shellQuote } from "./shellQuote.js";
 
 /**
@@ -76,6 +76,19 @@ export const syncIn = (
   handle: IsolatedSandboxHandle,
 ): Effect.Effect<{ branch: string }, SyncError> =>
   Effect.gen(function* () {
+    const protectedRunnerPath = `${CONFIG_DIR}/${RUNNER_DIR}`;
+    const runnerObjects = yield* execHostGit(
+      ["rev-list", "--objects", "--all", "--", protectedRunnerPath],
+      hostRepoDir,
+    );
+    if (runnerObjects.trim().length > 0) {
+      return yield* Effect.fail(
+        new SyncError({
+          message: `Refusing to copy repository history into the sandbox because it contains protected repository runner files under ${protectedRunnerPath}. Remove those files from all refs before retrying.`,
+        }),
+      );
+    }
+
     // Get current branch from host
     const branch = (yield* execHostGit(
       ["rev-parse", "--abbrev-ref", "HEAD"],

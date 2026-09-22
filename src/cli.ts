@@ -37,7 +37,18 @@ import {
   type CodexAuthMode,
 } from "./CodexAuth.js";
 import { requireCanonicalConfigDir } from "./runtimeConfig.js";
-import { CONFIG_DIR, CLI_NAME, PRODUCT_NAME } from "./runtimeNames.js";
+import { installRepositoryRunner } from "./RepositoryRunner.js";
+import {
+  initializeRepositoryRunner,
+  repositoryRunnerNextSteps,
+} from "./InitRepositoryRunner.js";
+import { runnerCommand } from "./RepositoryRunnerCommands.js";
+import {
+  ACTIVATION_LABEL,
+  CONFIG_DIR,
+  CLI_NAME,
+  PRODUCT_NAME,
+} from "./runtimeNames.js";
 import { VERSION } from "./version.js";
 
 // --- Shared options ---
@@ -279,16 +290,6 @@ const issueTrackerOption = Options.text("issue-tracker").pipe(
 // Tri-state booleans (Some(true) / Some(false) / None) so we can tell "user
 // chose false" from "user didn't pass the flag at all" — only the latter
 // triggers the interactive prompt.
-const createLabelOption = Options.choice("create-label", [
-  "true",
-  "false",
-]).pipe(
-  Options.withDescription(
-    `Whether to create the "${PRODUCT_NAME}" GitHub label (only meaningful with --issue-tracker github-issues)`,
-  ),
-  Options.optional,
-);
-
 const buildImageOption = Options.choice("build-image", ["true", "false"]).pipe(
   Options.withDescription("Whether to build the sandbox image now"),
   Options.optional,
@@ -300,6 +301,16 @@ const installTemplateDepsOption = Options.choice("install-template-deps", [
 ]).pipe(
   Options.withDescription(
     "Whether to install the template's host dependencies (e.g. zod for the planner templates)",
+  ),
+  Options.optional,
+);
+
+const installRunnerOption = Options.choice("install-runner", [
+  "true",
+  "false",
+]).pipe(
+  Options.withDescription(
+    "Whether to install a foreground repository runner after scaffolding",
   ),
   Options.optional,
 );
@@ -323,9 +334,9 @@ const initCommand = Command.make(
     model: initModelOption,
     sandbox: sandboxOption,
     issueTracker: issueTrackerOption,
-    createLabel: createLabelOption,
     buildImage: buildImageOption,
     installTemplateDeps: installTemplateDepsOption,
+    installRunner: installRunnerOption,
   },
   ({
     imageName: imageNameFlag,
@@ -335,9 +346,9 @@ const initCommand = Command.make(
     model: modelFlag,
     sandbox: sandboxFlag,
     issueTracker: issueTrackerFlag,
-    createLabel: createLabelFlag,
     buildImage: buildImageFlag,
     installTemplateDeps: installTemplateDepsFlag,
+    installRunner: installRunnerFlag,
   }) =>
     Effect.gen(function* () {
       const d = yield* Display;
@@ -386,11 +397,11 @@ const initCommand = Command.make(
         }
       }
 
-      const createLabelChoice = choiceToTriBool(createLabelFlag);
       const buildImageChoice = choiceToTriBool(buildImageFlag);
       const installTemplateDepsChoice = choiceToTriBool(
         installTemplateDepsFlag,
       );
+      const installRunnerChoice = choiceToTriBool(installRunnerFlag);
 
       const isInteractive = process.stdin.isTTY === true;
       const failIfNonInteractive = (flag: string) =>
@@ -608,27 +619,18 @@ const initCommand = Command.make(
         selectedTemplate = selected as string;
       }
 
-      // Offer to create the "Shipyard" label on the repo (skip for non-GitHub issue trackers).
-      // CLI flag > interactive confirm. The flag is only meaningful for the github-issues tracker.
-      let shouldCreateLabel = false;
+      // The GitHub Issues integration has one fixed activation-label contract.
+      // Label creation remains best-effort so init can still scaffold when gh
+      // is unavailable or the current identity cannot manage labels.
       if (selectedIssueTracker.name === "github-issues") {
-        shouldCreateLabel = yield* resolveConfirmFlag({
-          choice: createLabelChoice,
-          flag: "--create-label",
-          promptMessage: `Create a "${PRODUCT_NAME}" GitHub label? (Templates filter issues by this label)`,
-          cancelMessage: "Label selection cancelled.",
-        });
-
-        if (shouldCreateLabel) {
-          yield* Effect.try({
-            try: () =>
-              execSync(
-                `gh label create "${PRODUCT_NAME}" --description "Issues for ${PRODUCT_NAME} to work on" --color "F9A825" 2>/dev/null`,
-                { cwd, stdio: "ignore" },
-              ),
-            catch: () => undefined,
-          }).pipe(Effect.ignore);
-        }
+        yield* Effect.try({
+          try: () =>
+            execSync(
+              `gh label create "${ACTIVATION_LABEL}" --description "Issues for ${PRODUCT_NAME} to work on" --color "F9A825" --force 2>/dev/null`,
+              { cwd, stdio: "ignore" },
+            ),
+          catch: () => undefined,
+        }).pipe(Effect.ignore);
       }
 
       const scaffoldResult = yield* d.spinner(
@@ -637,7 +639,6 @@ const initCommand = Command.make(
           agent: selectedAgent,
           model: selectedModel,
           templateName: selectedTemplate,
-          createLabel: shouldCreateLabel,
           issueTracker: selectedIssueTracker,
           sandboxProvider: selectedSandboxProvider,
           codexAuth: selectedCodexAuth,
@@ -704,13 +705,63 @@ const initCommand = Command.make(
             buildArgs: defaultUidBuildArgs(),
           }),
         );
-        yield* d.status("Init complete! Image built successfully.", "success");
+        yield* d.status("Image built successfully.", "success");
       } else {
         yield* d.status(
-          `Init complete! Run \`${CLI_NAME} ${selectedSandboxProvider.cliNamespace} build-image\` to build the ${providerLabel} image later.`,
-          "success",
+          `Run \`${CLI_NAME} ${selectedSandboxProvider.cliNamespace} build-image\` to build the ${providerLabel} image later.`,
+          "info",
         );
       }
+
+      const runnerInit = yield* Effect.tryPromise({
+        try: () =>
+          initializeRepositoryRunner({
+            interactive: isInteractive,
+            requested:
+              installRunnerChoice._tag === "Some"
+                ? installRunnerChoice.value
+                : undefined,
+            confirm: async ({ message, initialValue }) => {
+              const confirmed = await clack.confirm({ message, initialValue });
+              if (clack.isCancel(confirmed)) {
+                throw new InitError({
+                  message:
+                    "Repository-runner installation selection cancelled.",
+                });
+              }
+              return confirmed === true;
+            },
+            install: () => installRepositoryRunner({ repoDir: cwd }),
+          }),
+        catch: (error) =>
+          error instanceof InitError
+            ? error
+            : new InitError({
+                message: `Repository-runner setup failed: ${error instanceof Error ? error.message : String(error)}`,
+              }),
+      });
+
+      if (runnerInit.status === "installed") {
+        yield* d.status(
+          `Installed ${runnerInit.result.name} for ${runnerInit.result.repository}.`,
+          "success",
+        );
+        yield* d.text("Repository runner next steps:");
+        for (const [index, line] of repositoryRunnerNextSteps().entries()) {
+          yield* d.text(styleText("dim", `${index + 1}. ${line}`));
+        }
+      } else if (runnerInit.status === "failed") {
+        yield* d.status(
+          `Shipyard scaffolding is ready, but repository runner installation failed: ${runnerInit.message}`,
+          "warn",
+        );
+        yield* d.status(
+          `Retry from this repository with \`npx ${CLI_NAME} runner install\`.`,
+          "warn",
+        );
+      }
+
+      yield* d.status("Init complete!", "success");
 
       // Show template-specific next steps
       const nextSteps = getNextStepsLines(
@@ -810,7 +861,12 @@ const rootCommand = Command.make(CLI_NAME, {}, () =>
 );
 
 export const shipyard = rootCommand.pipe(
-  Command.withSubcommands([initCommand, runCommand, dockerCommand]),
+  Command.withSubcommands([
+    initCommand,
+    runCommand,
+    dockerCommand,
+    runnerCommand,
+  ]),
 );
 
 export const cli = Command.run(shipyard, {

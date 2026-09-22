@@ -1,7 +1,7 @@
 export const SKELETON_PROMPT = `# Context
 
 <!-- Use !\`command\` to pull in dynamic context. Commands run inside the sandbox. -->
-<!-- Example: !\`git log --oneline -10\` or !\`gh issue list --label Shipyard --json number,title\` -->
+<!-- Example: !\`git log --oneline -10\` or !\`gh issue list --label shipyard --json number,title\` -->
 
 # Task
 
