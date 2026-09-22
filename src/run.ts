@@ -55,7 +55,10 @@ import {
   LOGS_DIR,
   PRODUCT_NAME,
 } from "./runtimeNames.js";
+import { buildLogDirectoryName } from "./LogRetention.js";
 import { validateMaxIterations } from "./validateMaxIterations.js";
+
+export { buildLogDirectoryName } from "./LogRetention.js";
 
 /**
  * Build the token-efficient feedback prompt sent to the agent when retrying
@@ -153,12 +156,6 @@ export const buildLogFilename = (
     return `${sanitizeBranchForFilename(targetBranch)}-${sanitized}${nameSuffix}.log`;
   }
   return `${sanitized}${nameSuffix}.log`;
-};
-
-/** Build the local calendar date directory used for default run logs. */
-export const buildLogDirectoryName = (date: Date = new Date()): string => {
-  const pad = (value: number): string => String(value).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 };
 
 /** Build the default date-organized path for a run log. */

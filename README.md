@@ -91,6 +91,12 @@ git push
 npx shipyard runner start
 ```
 
+Run `npx shipyard runner purge` to remove every dated run-log folder and
+root-level `.log` file under `.shipyard/logs/`. Shipyard automatically removes
+entries older than eight days before `shipyard run`, at runner startup, and
+daily while the runner stays active. Use a path outside `.shipyard/logs/` for
+logs that must be retained separately.
+
 See the [repository runner guide](docs/content/docs/repository-runner.mdx) for
 requirements, lifecycle commands, and the security model.
 

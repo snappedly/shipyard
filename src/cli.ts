@@ -6,7 +6,7 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { styleText } from "node:util";
 
-import { Display } from "./Display.js";
+import { Display, type DisplayService } from "./Display.js";
 import { buildImage, removeImage } from "./DockerLifecycle.js";
 import {
   scaffold,
@@ -41,6 +41,7 @@ import {
   installRepositoryRunner,
   RunnerInstallError,
 } from "./RepositoryRunner.js";
+import { DEFAULT_LOG_RETENTION_DAYS, purgeRunLogs } from "./LogRetention.js";
 import {
   initializeRepositoryRunner,
   repositoryRunnerNextSteps,
@@ -84,6 +85,40 @@ const requireConfigDir = (
   cwd: string,
 ): ReturnType<typeof requireCanonicalConfigDir> =>
   requireCanonicalConfigDir(cwd);
+
+/**
+ * Apply the default log-retention policy without making an agent run depend on
+ * maintenance. Explicit `runner purge` remains available when an operator
+ * wants to run it directly or use a host scheduler.
+ */
+const purgeRunLogsBestEffort = (
+  display: DisplayService,
+  repoDir: string,
+): Effect.Effect<void> =>
+  Effect.tryPromise({
+    try: () =>
+      purgeRunLogs({
+        repoDir,
+        retentionDays: DEFAULT_LOG_RETENTION_DAYS,
+      }),
+    catch: (error) => error,
+  }).pipe(
+    Effect.flatMap((result) => {
+      const removed = result.removedCount;
+      return removed === 0
+        ? Effect.void
+        : display.status(
+            `Purged ${removed} outdated run-log ${removed === 1 ? "entry" : "entries"}.`,
+            "info",
+          );
+    }),
+    Effect.catchAll((error) =>
+      display.status(
+        `Automatic run-log purge skipped: ${error instanceof Error ? error.message : String(error)}`,
+        "warn",
+      ),
+    ),
+  );
 
 // --- Run command ---
 
@@ -218,6 +253,7 @@ const runCommand = Command.make(
       const d = yield* Display;
       const cwd = process.cwd();
       const configDir = yield* requireConfigDir(cwd);
+      yield* purgeRunLogsBestEffort(d, cwd);
       const resolvedEntrypoint = resolveRunEntrypoint(
         cwd,
         configDir,

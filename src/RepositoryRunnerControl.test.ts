@@ -7,6 +7,7 @@ import {
   type RepositoryRunnerChild,
   type RunnerControlAdapters,
 } from "./RepositoryRunnerControl.js";
+import type { PurgeRunLogsOptions } from "./LogRetention.js";
 import { REPOSITORY_RUNNER_WORKFLOW } from "./RepositoryRunnerWake.js";
 
 const repoDir = "/repo";
@@ -52,6 +53,12 @@ const makeAdapters = (
     env: NodeJS.ProcessEnv;
   }>;
   signals: Array<{ pid: number; signal: NodeJS.Signals }>;
+  purges: PurgeRunLogsOptions[];
+  schedules: Array<{
+    task: () => Promise<void>;
+    milliseconds: number;
+    cancelled: boolean;
+  }>;
 } => {
   const files = new Map<string, string>([
     [join(repoDir, ".shipyard", ".env"), "GH_TOKEN=repo-token\n"],
@@ -71,6 +78,12 @@ const makeAdapters = (
     env: NodeJS.ProcessEnv;
   }> = [];
   const signals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
+  const purges: PurgeRunLogsOptions[] = [];
+  const schedules: Array<{
+    task: () => Promise<void>;
+    milliseconds: number;
+    cancelled: boolean;
+  }> = [];
   let childPid = 200;
 
   const adapters: RunnerControlAdapters = {
@@ -161,11 +174,39 @@ const makeAdapters = (
     onShutdown: () => () => undefined,
     pause: async () => undefined,
     now: () => new Date("2026-01-02T03:04:05.000Z"),
+    purgeRunLogs: async (options) => {
+      purges.push(options);
+      return {
+        logsDir: join(options.repoDir, ".shipyard", "logs"),
+        ...(options.retentionDays === undefined
+          ? {}
+          : { retentionDays: options.retentionDays }),
+        scannedDirectories: 0,
+        removedCount: 0,
+        removedDirectories: [],
+        removedFiles: [],
+      };
+    },
+    scheduleRecurring: (task, milliseconds) => {
+      const schedule = { task, milliseconds, cancelled: false };
+      schedules.push(schedule);
+      return () => {
+        schedule.cancelled = true;
+      };
+    },
     report: () => undefined,
     ...overrides,
   };
 
-  return { adapters, files, commands, spawns, signals };
+  return {
+    adapters,
+    files,
+    commands,
+    spawns,
+    signals,
+    purges,
+    schedules,
+  };
 };
 
 describe("startRepositoryRunner", () => {
@@ -235,6 +276,69 @@ describe("startRepositoryRunner", () => {
     });
     expect(base.spawns[0]!.env).not.toHaveProperty("GH_TOKEN");
     expect(base.spawns[0]!.env).not.toHaveProperty("OPENAI_API_KEY");
+  });
+
+  it("purges logs at startup and daily, then cancels maintenance when the controller exits", async () => {
+    let resolveListener!: (result: {
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }) => void;
+    let listenerStarted!: () => void;
+    const listenerStartedPromise = new Promise<void>(
+      (resolve) => (listenerStarted = resolve),
+    );
+    const listenerExit = new Promise<{
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }>((resolve) => (resolveListener = resolve));
+    const base = makeAdapters({
+      spawn: () => {
+        listenerStarted();
+        return {
+          pid: 200,
+          wait: () => listenerExit,
+          terminate: () => undefined,
+        };
+      },
+    });
+
+    const started = startRepositoryRunner({ repoDir }, base.adapters);
+    await listenerStartedPromise;
+
+    expect(base.purges).toEqual([
+      {
+        repoDir,
+        retentionDays: 8,
+        now: new Date("2026-01-02T03:04:05.000Z"),
+      },
+    ]);
+    expect(base.schedules).toHaveLength(1);
+    expect(base.schedules[0]!.milliseconds).toBe(24 * 60 * 60 * 1000);
+
+    await base.schedules[0]!.task();
+    expect(base.purges).toHaveLength(2);
+
+    resolveListener({ code: 0, signal: null });
+    await started;
+    expect(base.schedules[0]!.cancelled).toBe(true);
+  });
+
+  it("reports a log-purge failure without stopping the controller", async () => {
+    const reports: string[] = [];
+    const base = makeAdapters({
+      purgeRunLogs: async () => {
+        throw new Error("log directory unavailable");
+      },
+      report: (message) => reports.push(message),
+    });
+
+    await expect(
+      startRepositoryRunner({ repoDir }, base.adapters),
+    ).resolves.toMatchObject({ initialWorkFound: false });
+    expect(base.spawns.map(({ command }) => command)).toEqual(["./run.sh"]);
+    expect(reports).toContain(
+      "[repository runner] log purge skipped: log directory unavailable",
+    );
   });
 
   it("runs exactly npx shipyard run before listening when an eligible task exists", async () => {
@@ -906,6 +1010,8 @@ describe("startRepositoryRunner", () => {
       state: "stopped",
       lastOutcome: "Stopped by signal",
     });
+    expect(base.schedules).toHaveLength(1);
+    expect(base.schedules[0]!.cancelled).toBe(true);
   });
 
   it("cancels children and removes transient state even when shutdown state writes fail", async () => {
