@@ -15,6 +15,8 @@ import type {
   EffectExecution,
   EffectIntent,
   IngestResult,
+  InfrastructureFailureInput,
+  InfrastructureRetryResult,
   WorkflowCoordinator,
   WorkflowEventInput,
 } from "../../workflow/coordinator/index.js";
@@ -63,6 +65,26 @@ export interface GitHubIssueSnapshot {
   readonly authorLogin?: string;
   readonly labels: readonly string[];
   readonly pullRequestNumber?: number;
+}
+
+/** Provider reads for native sub-issues, with issue fetches for body fallback. */
+export interface GitHubIssueRelationshipReader {
+  fetchIssue(input: {
+    readonly repository: string;
+    readonly issueNumber: number;
+  }): Promise<GitHubIssueSnapshot | undefined>;
+  fetchParentIssue?(input: {
+    readonly repository: string;
+    readonly issueNumber: number;
+  }): Promise<GitHubIssueSnapshot | undefined>;
+  fetchSubIssues?(input: {
+    readonly repository: string;
+    readonly issueNumber: number;
+  }): Promise<readonly GitHubIssueSnapshot[]>;
+  fetchBlockedBy?(input: {
+    readonly repository: string;
+    readonly issueNumber: number;
+  }): Promise<readonly GitHubIssueSnapshot[]>;
 }
 
 export interface GitHubCommentSnapshot {
@@ -291,6 +313,9 @@ export interface GitHubTrackingStore {
     pullRequestNumber: number,
   ): Promise<GitHubTrackedPullRequest | undefined>;
   saveTrackedPullRequest(pullRequest: GitHubTrackedPullRequest): Promise<void>;
+  findTrackedPullRequestByJob?(
+    jobId: string,
+  ): Promise<GitHubTrackedPullRequest | undefined>;
 }
 
 export interface GitHubBriefFactoryInput {
@@ -313,6 +338,8 @@ export interface GitHubIntegrationOptions {
   readonly deliveryStore: GitHubDeliveryStore;
   readonly webhookSecret: string | Uint8Array;
   readonly trackingStore?: GitHubTrackingStore;
+  readonly publication?: import("./publication.js").GitHubPublication;
+  readonly relationships?: GitHubIssueRelationshipReader;
   /** Review events fail closed unless the caller wires candidate-bound handoff handling. */
   readonly reviewHandler?: GitHubPullRequestReviewHandler;
   /** Optional current-provider aggregate reconciliation for planning-spec PRs. */
@@ -325,6 +352,15 @@ export interface GitHubIntegrationOptions {
     readonly investigator?: TriageInvestigator;
   };
   readonly now?: () => string;
+}
+
+export interface GitHubInfrastructureFailureInput extends InfrastructureFailureInput {
+  /** Reuse the current worker lease when it still owns the candidate branch. */
+  readonly lease?: BranchLease;
+}
+
+export interface GitHubInfrastructureFailureResult extends InfrastructureRetryResult {
+  readonly blockedProjected?: boolean;
 }
 
 export interface GitHubWebhookReceipt {

@@ -74,6 +74,12 @@ All templates are generated TypeScript. Adjust prompts, models, iteration
 limits, branch strategy, hooks, and checks in `.shipyard/main.ts` or
 `.shipyard/main.mts`.
 
+The bundled GitHub workflows select or plan issues on the host, publish one
+draft PR per delivery, and leave source issues open. The host `gh` login needs
+Contents and Pull requests write access. Set `SHIPYARD_BASE_BRANCH` if the
+integration branch is not `staging`. Required checks and review findings must
+be resolved before a draft PR is marked ready for merge.
+
 The coordinator owns delivery identity, branches, pull requests, checks,
 review, repairs, and evidence. Workers return commits and cannot publish,
 merge, or close source issues. A planning spec uses one integration branch and

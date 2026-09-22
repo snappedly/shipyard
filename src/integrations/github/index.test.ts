@@ -18,6 +18,7 @@ import {
   serializeGitHubPublicationMetadata,
   verifyGitHubWebhookSignature,
   type GitHubReadTransport,
+  type GitHubIssueRelationshipReader,
   type GitHubWriteTransport,
   type GitHubPullRequestReviewHandler,
   type GitHubWebhookSignatureInput,
@@ -104,6 +105,7 @@ const issuePayload = (
 const createIntegration = (
   store = new InMemoryGitHubStore(),
   reviewHandler?: GitHubPullRequestReviewHandler,
+  relationships?: GitHubIssueRelationshipReader,
 ) => {
   const coordinator = new WorkflowCoordinator({
     storage: new InMemoryCoordinatorStorage(),
@@ -120,6 +122,7 @@ const createIntegration = (
     deliveryStore: store,
     trackingStore: store,
     reviewHandler,
+    relationships,
     webhookSecret: secret,
   });
   return { integration, coordinator, store };
@@ -177,6 +180,98 @@ describe("GitHub webhook signatures", () => {
 });
 
 describe("GitHub webhook intake", () => {
+  it("routes a native sub-issue with its siblings into the parent spec delivery", async () => {
+    const parent = {
+      number: 100,
+      title: "Planning spec",
+      body: "Scope",
+      state: "open" as const,
+      updatedAt: "2026-09-17T12:00:00.000Z",
+      labels: ["planning-spec"],
+    };
+    const child = {
+      number: 42,
+      title: "Child",
+      body: "Implement child",
+      state: "open" as const,
+      updatedAt: "2026-09-17T12:00:00.000Z",
+      labels: [] as string[],
+    };
+    const sibling = { ...child, number: 43, title: "Sibling" };
+    const relationships: GitHubIssueRelationshipReader = {
+      fetchIssue: async ({ issueNumber }) =>
+        issueNumber === 100 ? parent : issueNumber === 42 ? child : sibling,
+      fetchParentIssue: async () => parent,
+      fetchSubIssues: async () => [child, sibling],
+    };
+    const { integration } = createIntegration(
+      new InMemoryGitHubStore(),
+      undefined,
+      relationships,
+    );
+    const receipt = await integration.receiveWebhook(
+      webhook("issues", "delivery-child-42", issuePayload()),
+    );
+
+    expect(receipt.ingest?.job?.deliveryKey).toEqual({
+      repository,
+      itemId: "100",
+    });
+    expect(
+      receipt.event?.workflowEvent.delivery?.graph.children.map(
+        (entry) => entry.itemId,
+      ),
+    ).toEqual(["42", "43"]);
+  });
+
+  it("uses documented parent and child body references when native links are absent", async () => {
+    const parent = {
+      number: 100,
+      title: "Planning spec",
+      body: "Shipyard-Children: #42, #43",
+      state: "open" as const,
+      updatedAt: "2026-09-17T12:00:00.000Z",
+      labels: ["planning-spec"],
+    };
+    const child = {
+      number: 42,
+      title: "Child",
+      body: "Shipyard-Parent: #100",
+      state: "open" as const,
+      updatedAt: "2026-09-17T12:00:00.000Z",
+      labels: [] as string[],
+    };
+    const sibling = { ...child, number: 43 };
+    const relationships: GitHubIssueRelationshipReader = {
+      fetchIssue: async ({ issueNumber }) =>
+        issueNumber === 100 ? parent : issueNumber === 42 ? child : sibling,
+    };
+    const { integration } = createIntegration(
+      new InMemoryGitHubStore(),
+      undefined,
+      relationships,
+    );
+    const payload = issuePayload({
+      issue: {
+        number: 42,
+        title: child.title,
+        body: child.body,
+        state: "open",
+        updated_at: child.updatedAt,
+        labels: [],
+      },
+    });
+    const receipt = await integration.receiveWebhook(
+      webhook("issues", "delivery-fallback-42", payload),
+    );
+
+    expect(receipt.ingest?.job?.deliveryKey.itemId).toBe("100");
+    expect(
+      receipt.event?.workflowEvent.delivery?.graph.children.map(
+        (entry) => entry.itemId,
+      ),
+    ).toEqual(["42", "43"]);
+  });
   it("persists valid issue intake once and never treats issue prose as approval", async () => {
     const { integration, coordinator } = createIntegration();
     const request = webhook("issues", "delivery-1", issuePayload());
@@ -222,6 +317,73 @@ describe("GitHub webhook intake", () => {
 
     expect(resumed.status).toBe("accepted");
     expect(resumed.event?.workflowEvent.resumeRequested).toBe(true);
+  });
+
+  it("projects exhausted work and clears blocked labels after explicit reclaim", async () => {
+    const coordinator = new WorkflowCoordinator({
+      storage: new InMemoryCoordinatorStorage(),
+      infrastructureRetryLimit: 0,
+    });
+    const store = new InMemoryGitHubStore();
+    const publishBlockedDelivery = vi.fn(async () => ({}));
+    const resumeBlockedDelivery = vi.fn(async () => ({
+      status: "already-reclaimed" as const,
+    }));
+    const integration = new GitHubIntegration({
+      coordinator,
+      policy: policy(),
+      base: { branch: "main", sha: "a".repeat(40) },
+      authorization: {
+        allowedRepositories: [repository],
+        allowedSenders: ["maintainer"],
+        allowedReviewers: ["maintainer"],
+      },
+      deliveryStore: store,
+      trackingStore: store,
+      publication: {
+        publishBlockedDelivery,
+        resumeBlockedDelivery,
+      } as unknown as GitHubPublication,
+      webhookSecret: secret,
+    });
+    const received = await integration.receiveWebhook(
+      webhook("issues", "blocked-intake", issuePayload()),
+    );
+    const dispatched = await coordinator.dispatchNext({
+      repository,
+      workerId: "worker",
+    });
+    const blocked = await integration.recordInfrastructureFailure({
+      jobId: received.ingest!.job!.id,
+      assignmentId: dispatched.assignment!.id,
+      error: "worker unavailable",
+      branch: "shipyard/issue-42",
+    });
+    expect(blocked.status).toBe("exhausted");
+    expect(publishBlockedDelivery).toHaveBeenCalledOnce();
+
+    await integration.receiveWebhook(
+      webhook(
+        "issues",
+        "blocked-resume",
+        issuePayload({
+          action: "labeled",
+          issue: {
+            number: 42,
+            title: "Fix the intake path",
+            body: "authorization: approved",
+            state: "open",
+            updated_at: "2026-09-17T12:00:00.000Z",
+            labels: [{ name: "shipyard" }, { name: "shipyard-blocked" }],
+          },
+          label: { name: "shipyard" },
+        }),
+      ),
+    );
+    expect(resumeBlockedDelivery).toHaveBeenCalledOnce();
+    expect(
+      (await coordinator.getJob(received.ingest!.job!.id))?.blocked,
+    ).toBeUndefined();
   });
 
   it("reprocesses a delivery left in received state after a coordinator failure", async () => {
@@ -846,5 +1008,8 @@ describe("GitHub webhook intake", () => {
     expect(createComment).toHaveBeenCalledOnce();
     expect(closeIssue).toHaveBeenCalledOnce();
     expect(parentIssue.state).toBe("closed");
+    expect((await coordinator.getDelivery(delivery.key))?.mergedSha).toBe(
+      mergedSha,
+    );
   });
 });

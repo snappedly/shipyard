@@ -346,11 +346,43 @@ export class GitHubPublication {
         candidate: input.headSha,
         workflowItem: itemId,
       },
-      reconcile: () =>
-        this.options.transport.findPullRequestByMarker({
+      reconcile: async () => {
+        const existing = await this.options.transport.findPullRequestByMarker({
           repository: input.lease.repository,
           marker: markerText(marker),
-        }),
+        });
+        if (existing === undefined) return undefined;
+        if (
+          existing.state !== "open" ||
+          existing.branch !== input.branch ||
+          existing.baseBranch !== input.baseBranch ||
+          existing.headSha !== input.headSha
+        ) {
+          throw new Error(
+            "Existing pull request does not match the current delivery candidate",
+          );
+        }
+        if (
+          existing.title === input.title &&
+          existing.body === body &&
+          existing.draft === (input.draft ?? true)
+        ) {
+          return existing;
+        }
+        if (this.options.transport.updatePullRequest === undefined) {
+          throw new Error(
+            "GitHub transport cannot update an existing pull request candidate",
+          );
+        }
+        return this.options.transport.updatePullRequest({
+          repository: input.lease.repository,
+          pullRequestNumber: existing.number,
+          title: input.title,
+          body,
+          draft: input.draft ?? true,
+          marker: markerText(marker),
+        });
+      },
       publish: () =>
         this.options.transport.createPullRequest({
           repository: input.lease.repository,

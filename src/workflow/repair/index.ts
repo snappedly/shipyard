@@ -272,6 +272,12 @@ export const scheduleBoundedRepair = async (
   }
   const job = await input.coordinator.getJob(input.jobId);
   if (job === undefined) return blocked(batch, "Workflow job does not exist");
+  const delivery = await input.coordinator.getDelivery(job.deliveryKey);
+  if (delivery?.mergedAt !== undefined) {
+    return blocked(batch, "Post-merge repair requires a follow-up delivery", {
+      followUpRequired: true,
+    });
+  }
   if (job.control !== "active") {
     return blocked(batch, `Workflow job is ${job.control}`);
   }

@@ -61,6 +61,11 @@ ALTER TABLE shipyard_jobs
   ADD COLUMN IF NOT EXISTS delivery_item_id TEXT,
   ADD COLUMN IF NOT EXISTS blocked_evidence JSONB;
 
+UPDATE shipyard_jobs
+SET delivery_repository = COALESCE(delivery_repository, repository),
+    delivery_item_id = COALESCE(delivery_item_id, item_id)
+WHERE delivery_repository IS NULL OR delivery_item_id IS NULL;
+
 CREATE INDEX IF NOT EXISTS shipyard_jobs_identity_idx
   ON shipyard_jobs (repository, item_id, item_kind, updated_at DESC);
 

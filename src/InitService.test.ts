@@ -307,7 +307,7 @@ describe("InitService scaffold", () => {
     expect(mainTs).toContain("maxIterations");
     expect(mainTs).toContain("1");
     expect(mainTs).not.toContain("merge-to-head");
-    expect(mainTs).toContain("runAuthorizedImplementation");
+    expect(mainTs).toContain("await publishTemplateDelivery({");
     // When scaffolded with default model, simple-loop uses claude-opus-4-8
     // (rewritten from template's claude-sonnet-4-6)
     expect(mainTs).toContain("promptFile");
@@ -405,7 +405,7 @@ describe("InitService scaffold", () => {
       expect(prompt).toContain("coordinator-owned standalone delivery");
       expect(prompt).toContain("Do not publish a branch or pull request");
       expect(prompt).not.toContain("{{ISSUE_NUMBER}}");
-      expect(prompt).not.toContain("{{ISSUE_TITLE}}");
+      expect(prompt).toContain("{{ISSUE_TITLE}}");
       expect(prompt).not.toContain("{{BRANCH}}");
     });
 
@@ -641,12 +641,7 @@ describe("InitService scaffold", () => {
     },
   );
 
-  it("scaffolded prompts that lack a runtime TASK_ID do not contain {{TASK_ID}}", async () => {
-    // Regression test for #477: the {{TASK_ID}} placeholder inside
-    // VIEW_TASK_COMMAND / CLOSE_TASK_COMMAND used to leak into prompts
-    // whose runtime promptArgs do not include TASK_ID (simple-loop and
-    // sequential-reviewer's implement),
-    // causing PromptArgumentSubstitution to throw on every iteration.
+  it("scaffolded standalone prompts receive their selected runtime TASK_ID", async () => {
     const cases: Array<{ template: string; file: string }> = [
       { template: "simple-loop", file: "prompt.md" },
       { template: "sequential-reviewer", file: "implement-prompt.md" },
@@ -655,7 +650,9 @@ describe("InitService scaffold", () => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName: template });
       const prompt = await readFile(join(dir, ".shipyard", file), "utf-8");
-      expect(prompt, `${template}/${file}`).not.toContain("{{TASK_ID}}");
+      expect(prompt, `${template}/${file}`).toContain("{{TASK_ID}}");
+      const main = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
+      expect(main).toContain("TASK_ID: String(issue.number)");
     }
   });
 
@@ -861,7 +858,8 @@ describe("InitService scaffold", () => {
       );
       expect(mainTs).toContain("implement-prompt.md");
       expect(mainTs).toContain("review-prompt.md");
-      expect(mainTs).toContain("implementation.commits.length > 0");
+      expect(mainTs).toContain("implementation.commits.at(-1)");
+      expect(mainTs).toContain("publishTemplateDelivery");
     });
 
     it("main.mts captures reviewer results without merging reviewer commits", async () => {
@@ -876,7 +874,7 @@ describe("InitService scaffold", () => {
       expect(mainTs).toContain("const review = await runReview");
       // Review commits are intentionally not adopted by the delivery.
       expect(mainTs).toContain("implementation.commits");
-      expect(mainTs).not.toContain("review.commits");
+      expect(mainTs).toContain("if (review.commits.length > 0)");
     });
 
     it("main.mts resumes completed branches and stops on no progress", async () => {
@@ -887,8 +885,8 @@ describe("InitService scaffold", () => {
         join(dir, ".shipyard", "main.mts"),
         "utf-8",
       );
-      expect(mainTs).toContain("implementation.commits.length > 0 ||");
-      expect(mainTs).toContain("implementation.completionSignal !== undefined");
+      expect(mainTs).toContain("entry.value.published");
+      expect(mainTs).toContain("integrateTemplateDelivery");
       expect(mainTs).toContain("deliveryGroups");
       expect(mainTs).toContain("No delivery group made progress");
 

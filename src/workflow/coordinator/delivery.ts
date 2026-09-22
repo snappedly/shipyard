@@ -292,7 +292,24 @@ export const parseDeliveryRecord = (value: unknown): DeliveryRecord => {
   ) {
     throw new Error("Stored delivery metadata is invalid");
   }
-  return { ...normalized, createdAt, updatedAt, version };
+  const mergedAt = candidate.mergedAt;
+  const mergedSha = candidate.mergedSha;
+  if (
+    (mergedAt !== undefined && typeof mergedAt !== "string") ||
+    (mergedSha !== undefined && typeof mergedSha !== "string") ||
+    (mergedAt === undefined) !== (mergedSha === undefined)
+  ) {
+    throw new Error("Stored delivery merge metadata is invalid");
+  }
+  return {
+    ...normalized,
+    createdAt,
+    updatedAt,
+    version,
+    ...(mergedAt === undefined
+      ? {}
+      : { mergedAt, mergedSha: mergedSha as string }),
+  };
 };
 
 export const deliveryGroupFingerprint = (delivery: DeliveryGroup): string =>

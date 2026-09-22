@@ -20,6 +20,8 @@ import {
 import type { WorkflowCoordinator } from "../../workflow/coordinator/index.js";
 import {
   LeaseBusyError,
+  resolveDeliveryGroup,
+  type DeliveryGroup,
   type DeliveryWorkflowState,
 } from "../../workflow/coordinator/index.js";
 import {
@@ -38,6 +40,8 @@ import type {
   GitHubIgnoredEvent,
   GitHubIntegrationOptions,
   GitHubIssueSnapshot,
+  GitHubInfrastructureFailureInput,
+  GitHubInfrastructureFailureResult,
   GitHubNormalizationResult,
   GitHubNormalizedEvent,
   GitHubPullRequestReviewSnapshot,
@@ -309,6 +313,22 @@ const issueKind = (issue: GitHubIssueSnapshot): WorkItemKind => {
   return "executable-issue";
 };
 
+const issueReferences = (body: string, field: string): number[] => {
+  const line = body
+    .split(/\r?\n/)
+    .find((entry) =>
+      entry.toLowerCase().startsWith(`shipyard-${field.toLowerCase()}:`),
+    );
+  if (line === undefined) return [];
+  const value = line.slice(line.indexOf(":") + 1).trim();
+  if (!/^(?:#\d+)(?:[\s,]+#\d+)*$/.test(value)) {
+    throw new Error(`Invalid Shipyard-${field} issue references`);
+  }
+  return [
+    ...new Set([...value.matchAll(/#(\d+)/g)].map((match) => Number(match[1]))),
+  ];
+};
+
 const sameIssueContent = (
   brief: WorkBrief,
   issue: GitHubIssueSnapshot,
@@ -394,6 +414,21 @@ const expectedPlanningSpecMetadata = (
   branch: tracked.branch,
   headSha: tracked.headSha,
 });
+
+const matchesPlanningSpecMetadata = (
+  actual: PlanningSpecCandidateMetadata | undefined,
+  expected: PlanningSpecCandidateMetadata,
+): boolean =>
+  actual !== undefined &&
+  actual.repository === expected.repository &&
+  actual.itemId === expected.itemId &&
+  actual.kind === expected.kind &&
+  actual.briefRevision === expected.briefRevision &&
+  actual.briefHash === expected.briefHash &&
+  actual.baseBranch === expected.baseBranch &&
+  actual.baseSha === expected.baseSha &&
+  actual.branch === expected.branch &&
+  actual.headSha === expected.headSha;
 
 const providerCheckEvidence = (
   checks: readonly {
@@ -520,6 +555,21 @@ export const createGitHubPlanningSpecCompletionHandler = (
         repairChildren: [],
         blockers: [],
       };
+    }
+    if (
+      pullRequest.state === "closed" &&
+      pullRequest.merged === true &&
+      pullRequest.mergedSha !== undefined &&
+      pullRequest.mergedSha.length > 0 &&
+      pullRequest.branch === expected.branch &&
+      pullRequest.baseBranch === expected.baseBranch &&
+      pullRequest.headSha === expected.headSha &&
+      matchesPlanningSpecMetadata(metadata, expected)
+    ) {
+      await options.coordinator.markDeliveryMerged(
+        delivery.delivery.key,
+        pullRequest.mergedSha,
+      );
     }
     const scope = await options.scope.read({
       repository,
@@ -653,6 +703,165 @@ export class GitHubIntegration {
     this.now = options.now ?? (() => new Date().toISOString());
   }
 
+  private async projectionLease(jobId: string, branch: string) {
+    const job = await this.options.coordinator.getJob(jobId);
+    if (job === undefined) throw new Error("Workflow job does not exist");
+    return this.options.coordinator.acquireBranchLease({
+      repository: job.key.repository,
+      branch,
+      jobId,
+      workerId: `github-projection:${jobId}`,
+      ttlMs: 60_000,
+    });
+  }
+
+  /** Record bounded failure and project exhausted work to its source issue. */
+  async recordInfrastructureFailure(
+    input: GitHubInfrastructureFailureInput,
+  ): Promise<GitHubInfrastructureFailureResult> {
+    if (this.options.publication === undefined) {
+      throw new Error("Blocked delivery publication is not configured");
+    }
+    const result =
+      await this.options.coordinator.recordInfrastructureFailure(input);
+    if (result.status !== "exhausted") return result;
+    await this.projectBlockedJob(result.job.id, input.lease);
+    return { ...result, blockedProjected: true };
+  }
+
+  /** Retryable projection after a crash between durable blocking and GitHub. */
+  async projectBlockedJob(
+    jobId: string,
+    lease?: GitHubInfrastructureFailureInput["lease"],
+  ): Promise<boolean> {
+    const publication = this.options.publication;
+    if (publication === undefined) {
+      throw new Error("Blocked delivery publication is not configured");
+    }
+    const job = await this.options.coordinator.getJob(jobId);
+    if (job?.blocked === undefined) return false;
+    const issueNumber = Number(job.key.itemId);
+    if (!Number.isSafeInteger(issueNumber) || issueNumber <= 0) {
+      throw new Error("GitHub workflow item has no issue number");
+    }
+    const tracked =
+      await this.options.trackingStore?.findTrackedPullRequestByJob?.(jobId);
+    const branch =
+      tracked?.branch ??
+      job.blocked.evidence.branch ??
+      `shipyard/issue-${job.key.itemId}`;
+    const currentLease = lease ?? (await this.projectionLease(jobId, branch));
+    const parentIssueNumber = Number(job.deliveryKey.itemId);
+    await publication.publishBlockedDelivery({
+      jobId,
+      lease: currentLease,
+      issueNumber,
+      evidence: job.blocked.evidence,
+      parentIssueNumber:
+        job.deliveryKey.itemId === job.key.itemId ||
+        !Number.isSafeInteger(parentIssueNumber)
+          ? undefined
+          : parentIssueNumber,
+      pullRequest:
+        tracked === undefined
+          ? undefined
+          : {
+              number: tracked.pullRequestNumber,
+              branch: tracked.branch,
+              baseBranch: tracked.policy.baseBranch,
+              headSha: tracked.headSha,
+            },
+    });
+    return true;
+  }
+
+  private async deliveryForIssue(
+    repository: string,
+    issue: GitHubIssueSnapshot,
+    kind: WorkItemKind,
+  ): Promise<DeliveryGroup | undefined> {
+    const relationships = this.options.relationships;
+    const fallbackParent = issueReferences(issue.body, "Parent")[0];
+    if (relationships === undefined) {
+      if (
+        fallbackParent !== undefined ||
+        issueReferences(issue.body, "Children").length > 0
+      ) {
+        throw new Error(
+          "Issue relationships require a GitHub relationship reader",
+        );
+      }
+      return undefined;
+    }
+    const parent =
+      kind === "planning-spec"
+        ? issue
+        : ((await relationships.fetchParentIssue?.({
+            repository,
+            issueNumber: issue.number,
+          })) ??
+          (fallbackParent === undefined
+            ? undefined
+            : await relationships.fetchIssue({
+                repository,
+                issueNumber: fallbackParent,
+              })));
+    if (parent === undefined) return undefined;
+    if (issueKind(parent) !== "planning-spec") {
+      throw new Error(`Parent issue ${parent.number} is not a planning spec`);
+    }
+    const nativeChildren = await relationships.fetchSubIssues?.({
+      repository,
+      issueNumber: parent.number,
+    });
+    const fallbackChildren = nativeChildren?.length
+      ? []
+      : issueReferences(parent.body, "Children");
+    const fetched = await Promise.all(
+      fallbackChildren.map((issueNumber) =>
+        relationships.fetchIssue({ repository, issueNumber }),
+      ),
+    );
+    if (fetched.some((child) => child === undefined)) {
+      throw new Error(
+        `Planning spec ${parent.number} has a missing child issue`,
+      );
+    }
+    const children = new Map<number, GitHubIssueSnapshot>();
+    for (const child of [...(nativeChildren ?? []), ...fetched]) {
+      if (child !== undefined) children.set(child.number, child);
+    }
+    if (parent.number !== issue.number) children.set(issue.number, issue);
+    const dependencies = await Promise.all(
+      [...children.values()].map(async (child) => {
+        const native = await relationships.fetchBlockedBy?.({
+          repository,
+          issueNumber: child.number,
+        });
+        return {
+          itemId: String(child.number),
+          dependsOn: (native?.length
+            ? native.map((dependency) => dependency.number)
+            : issueReferences(child.body, "Depends-On")
+          ).map(String),
+        };
+      }),
+    );
+    return resolveDeliveryGroup({
+      issue: {
+        repository,
+        itemId: String(parent.number),
+        kind: "planning-spec",
+      },
+      children: [...children.values()].map((child) => ({
+        repository,
+        itemId: String(child.number),
+        kind: issueKind(child),
+      })),
+      dependencies,
+    });
+  }
+
   async receiveWebhook(
     request: GitHubWebhookRequest,
   ): Promise<GitHubWebhookReceipt> {
@@ -777,6 +986,7 @@ export class GitHubIntegration {
         reply: name === "issue_comment" ? commentSnapshot(payload) : undefined,
       };
       const brief = await this.briefForIssue(draft, issue, kind);
+      const delivery = await this.deliveryForIssue(repository, issue, kind);
       return {
         disposition: "accepted",
         event: {
@@ -784,6 +994,7 @@ export class GitHubIntegration {
           workflowEvent: {
             deliveryId: envelope.deliveryId,
             brief,
+            delivery,
             policy: this.options.policy,
             phase: "triage",
             relevantRevision: draft.relevantRevision,
@@ -1063,9 +1274,50 @@ export class GitHubIntegration {
         event: normalized.event,
       };
     }
+    const resumeProjection =
+      normalized.event.resumeRequested === true &&
+      normalized.event.labels.includes("shipyard-blocked");
+    if (resumeProjection && this.options.publication === undefined) {
+      return this.rejectStored(
+        effectiveDelivery,
+        "blocked-publication-unconfigured",
+      );
+    }
     const ingest = await this.options.coordinator.ingest(
       normalized.event.workflowEvent,
     );
+    if (
+      resumeProjection &&
+      ingest.job !== undefined &&
+      ingest.job.blocked === undefined &&
+      ingest.job.control === "active"
+    ) {
+      const job = ingest.job;
+      const tracked =
+        await this.options.trackingStore?.findTrackedPullRequestByJob?.(job.id);
+      const branch =
+        tracked?.branch ??
+        job.lastInfrastructureFailure?.branch ??
+        `shipyard/issue-${job.key.itemId}`;
+      const lease = await this.projectionLease(job.id, branch);
+      const resumed = await this.options.publication!.resumeBlockedDelivery({
+        jobId: job.id,
+        lease,
+        issueNumber: normalized.event.issueNumber,
+        pullRequest:
+          tracked === undefined
+            ? undefined
+            : {
+                number: tracked.pullRequestNumber,
+                branch: tracked.branch,
+                baseBranch: tracked.policy.baseBranch,
+                headSha: tracked.headSha,
+              },
+      });
+      if (resumed.status === "not-reclaimed") {
+        throw new Error(resumed.reason ?? "Blocked delivery was not reclaimed");
+      }
+    }
     await this.options.deliveryStore.updateDelivery({
       ...effectiveDelivery,
       status: ingest.disposition === "ignored" ? "ignored" : "accepted",

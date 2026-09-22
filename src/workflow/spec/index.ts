@@ -135,7 +135,8 @@ export const planSpecDelivery = (delivery: DeliveryGroup): SpecDeliveryPlan => {
 export const expandSpecDeliveryScope = async (
   input: SpecScopeExpansionInput,
 ): Promise<SpecScopeExpansionResult> => {
-  if (input.parentState === "merged") {
+  const current = await input.coordinator.getDelivery(input.delivery.key);
+  if (input.parentState === "merged" || current?.mergedAt !== undefined) {
     return {
       status: "follow-up-required",
       candidateInvalidated: false,
@@ -640,6 +641,9 @@ export const deliverSpec = async (
   let lease: DeliveryLease;
   try {
     delivery = await options.coordinator.resolveDelivery(plan.delivery);
+    if (delivery.mergedAt !== undefined) {
+      throw new Error("Merged delivery cannot run another spec delivery");
+    }
     plan = planSpecDelivery(delivery);
     lease = await options.coordinator.acquireDeliveryLease({
       repository: delivery.key.repository,

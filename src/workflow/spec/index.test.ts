@@ -192,6 +192,39 @@ describe("spec delivery planning", () => {
     });
     expect(merged.status).toBe("follow-up-required");
   });
+
+  it("keeps a merged delivery immutable even when callers omit parent state", async () => {
+    const owner = coordinator();
+    const delivery = deliveryFor(["101"]);
+    await owner.resolveDelivery(delivery);
+    await owner.markDeliveryMerged(delivery.key, "d".repeat(40));
+
+    const expansion = await expandSpecDeliveryScope({
+      coordinator: owner,
+      delivery,
+      addedChildren: [identity("102")],
+    });
+
+    expect(expansion.status).toBe("follow-up-required");
+    expect((await owner.getDelivery(delivery.key))?.graph.children).toEqual([
+      identity("101"),
+    ]);
+    await expect(
+      owner.resolveDelivery(deliveryFor(["101", "103"])),
+    ).rejects.toThrow(/merged/i);
+    const replay = await owner.ingest({
+      deliveryId: "merged-replay",
+      brief,
+      policy,
+      phase: "triage",
+      relevantRevision: base.sha,
+      observedAt: "2026-09-23T00:00:00.000Z",
+      delivery,
+      sourceState: "open",
+    });
+    expect(replay.disposition).toBe("ignored");
+    expect(replay.reason).toBe("merged-delivery");
+  });
 });
 
 describe("spec delivery orchestration", () => {

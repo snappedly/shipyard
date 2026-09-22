@@ -340,6 +340,10 @@ describe("bounded PR repair", () => {
 
   it("rejects post-merge mutation and requires a follow-up delivery", async () => {
     const harness = await createHarness();
+    await harness.coordinator.markDeliveryMerged(
+      { repository, itemId: "42" },
+      "d".repeat(40),
+    );
     const result = await scheduleBoundedRepair({
       ...harness,
       store: harness.repairStore,
@@ -347,7 +351,6 @@ describe("bounded PR repair", () => {
       policy,
       candidate: { base, head, briefHash: brief.hash },
       workerId: "worker-a",
-      deliveryState: "merged",
       findings: [finding("post-merge")],
     });
 

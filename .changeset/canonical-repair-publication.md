@@ -3,4 +3,4 @@
 ---
 
 Ensure pre-merge repairs invalidate human handoff state and advance existing
-remote branches to the exact candidate revision before publication.
+remote branches and pull-request metadata to the exact candidate revision.

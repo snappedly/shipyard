@@ -13,6 +13,9 @@
 
 import * as shipyard from "@snappedly-tools/shipyard";
 import { docker } from "@snappedly-tools/shipyard/sandboxes/docker";
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { promisify } from "node:util";
 import { z } from "zod";
 
 const childSchema = z.object({
@@ -39,6 +42,12 @@ const hooks = {
   sandbox: { onSandboxReady: [{ command: "npm install" }] },
 };
 const copyToWorktree = ["node_modules"];
+const exec = promisify(execFile);
+const command = async (file: string, args: string[]) =>
+  (await exec(file, args, { encoding: "utf8" })).stdout.trim();
+const baseBranch = process.env.SHIPYARD_BASE_BRANCH ?? "staging";
+await command("git", ["fetch", "origin", baseBranch]);
+const baseSha = await command("git", ["rev-parse", "FETCH_HEAD"]);
 
 type DeliveryGroup = z.infer<typeof deliveryGroupSchema>;
 type Child = z.infer<typeof childSchema>;
@@ -49,6 +58,13 @@ const branchFor = (group: DeliveryGroup, child: Child): string =>
     : `shipyard/spec-${group.root.id}/child-${child.id}`;
 
 const canonicalGroup = (group: DeliveryGroup) => {
+  const expectedBranch =
+    group.mode === "planning-spec"
+      ? `shipyard/spec-${group.root.id}`
+      : `shipyard/issue-${group.root.id}`;
+  if (group.integrationBranch !== expectedBranch) {
+    throw new Error(`Delivery ${group.id} has an unstable integration branch`);
+  }
   const kind =
     group.mode === "planning-spec" ? "planning-spec" : "executable-issue";
   const delivery = shipyard.resolveDeliveryGroup({
@@ -67,12 +83,50 @@ const canonicalGroup = (group: DeliveryGroup) => {
   return delivery;
 };
 
-const runChild = async (group: DeliveryGroup, child: Child) =>
+const publishGroup = async (
+  group: DeliveryGroup,
+  headSha: string,
+  retainActivation = false,
+) => {
+  const briefHash = createHash("sha256")
+    .update(JSON.stringify(group))
+    .digest("hex");
+  const published = await shipyard.publishTemplateDelivery({
+    repository: group.repository,
+    itemId: group.root.id,
+    kind: group.mode === "planning-spec" ? "planning-spec" : "executable-issue",
+    branch: group.integrationBranch,
+    baseBranch,
+    headSha,
+    title: `[Shipyard] ${group.root.title}`,
+    body: `Source issue: #${group.root.id}\n\nScoped children: ${group.children.map((child) => `#${child.id}`).join(", ")}\n\nIntegration candidate: ${headSha}\n\nRequired checks and independent review must pass before this draft is ready for merge.`,
+    metadata: {
+      version: 1,
+      repository: group.repository,
+      itemId: group.root.id,
+      kind:
+        group.mode === "planning-spec" ? "planning-spec" : "executable-issue",
+      briefRevision: 1,
+      briefHash,
+      baseBranch,
+      baseSha,
+      branch: group.integrationBranch,
+    },
+    retainActivation,
+  });
+  console.log(`Draft PR for ${group.id}: ${published.url}`);
+};
+
+const runChild = async (group: DeliveryGroup, child: Child, baseRef: string) =>
   shipyard.run({
     hooks,
     copyToWorktree,
     sandbox: docker(),
-    branchStrategy: { type: "branch", branch: branchFor(group, child) },
+    branchStrategy: {
+      type: "branch",
+      branch: branchFor(group, child),
+      baseBranch: baseRef,
+    },
     name: group.mode === "planning-spec" ? "spec-child" : "implementer",
     maxIterations: 100,
     agent: shipyard.codex(shipyard.CODEX_MODELS.routine),
@@ -88,10 +142,15 @@ const runChild = async (group: DeliveryGroup, child: Child) =>
 
 const runStandaloneGroup = async (group: DeliveryGroup) => {
   const child = group.children[0];
-  if (child === undefined) return { group, children: [] as const };
+  if (child === undefined)
+    return { group, children: [] as const, published: false };
+  const result = await runChild(group, child, baseSha);
+  const headSha = result.commits.at(-1)?.sha;
+  if (headSha !== undefined) await publishGroup(group, headSha);
   return {
     group,
-    children: [{ child, result: await runChild(group, child) }],
+    children: [{ child, result }],
+    published: headSha !== undefined,
   };
 };
 
@@ -101,6 +160,8 @@ const runSpecGroup = async (group: DeliveryGroup) => {
     child: Child;
     result: Awaited<ReturnType<typeof runChild>>;
   }> = [];
+  let currentHead = baseSha;
+  let published = false;
   while (completed.size < group.children.length) {
     const ready = group.children.filter(
       (child) =>
@@ -115,7 +176,7 @@ const runSpecGroup = async (group: DeliveryGroup) => {
     const settled = await Promise.allSettled(
       ready.map(async (child) => ({
         child,
-        result: await runChild(group, child),
+        result: await runChild(group, child, currentHead),
       })),
     );
     let madeProgress = false;
@@ -129,8 +190,27 @@ const runSpecGroup = async (group: DeliveryGroup) => {
       }
     }
     if (!madeProgress) break;
+    const commits = settled.flatMap((outcome) =>
+      outcome.status === "fulfilled"
+        ? outcome.value.result.commits.map((commit) => commit.sha)
+        : [],
+    );
+    if (commits.length > 0) {
+      const integrated = await shipyard.integrateTemplateDelivery({
+        repositoryPath: process.cwd(),
+        branch: group.integrationBranch,
+        baseBranch,
+        commits,
+      });
+      currentHead = integrated.headSha;
+      await publishGroup(group, currentHead, true);
+      published = true;
+    }
   }
-  return { group, children: results };
+  if (published && completed.size === group.children.length) {
+    await publishGroup(group, currentHead);
+  }
+  return { group, children: results, published };
 };
 
 for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
@@ -170,13 +250,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
     ),
   );
   const completed = settled.filter(
-    (entry) =>
-      entry.status === "fulfilled" &&
-      entry.value.children.some(
-        (child) =>
-          child.result.commits.length > 0 ||
-          child.result.completionSignal !== undefined,
-      ),
+    (entry) => entry.status === "fulfilled" && entry.value.published,
   );
 
   if (completed.length === 0) {
@@ -185,9 +259,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
   }
 
   console.log(
-    "Workers completed. A coordinator-owned integration adapter must now " +
-      "publish one draft PR per delivery, review the exact candidate, and " +
-      "stop at human handoff; this template never merges or closes issues.",
+    "Delivery candidates are published as draft PRs for review and human handoff.",
   );
 }
 

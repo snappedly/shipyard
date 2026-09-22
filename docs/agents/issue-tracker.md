@@ -30,3 +30,10 @@ Run `gh issue view <number> --comments` for an issue reference. Fetch a PR with 
 ## Blocking relationships
 
 When the workflow supports parent and child work, prefer GitHub's native sub-issue and issue-dependency relationships. If unavailable, record the parent or blocker in the issue body using the convention named by the calling skill.
+
+GitHub intake accepts these fallback lines when native links are unavailable:
+`Shipyard-Parent: #100` on a child, `Shipyard-Children: #101, #102` on a
+planning spec, and `Shipyard-Depends-On: #101` on a child. Configure the
+relationship reader so intake can fetch and validate every referenced issue.
+Hosts using `gh` can pass `createGitHubCliRelationshipReader()` as the
+`GitHubIntegration` `relationships` option.

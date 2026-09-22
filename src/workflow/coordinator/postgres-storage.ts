@@ -787,7 +787,7 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
     ) {
       values.push(selector.excludedDeliveryIds);
       predicates.push(
-        `NOT ((j.delivery_repository || '#' || j.delivery_item_id) = ANY($${values.length}::text[]))`,
+        `NOT ((COALESCE(j.delivery_repository, j.repository) || '#' || COALESCE(j.delivery_item_id, j.item_id)) = ANY($${values.length}::text[]))`,
       );
     }
     const result = await this.client.query<Record<string, unknown>>(

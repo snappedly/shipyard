@@ -61,4 +61,12 @@ export class InMemoryGitHubStore
       pullRequest,
     );
   }
+
+  async findTrackedPullRequestByJob(
+    jobId: string,
+  ): Promise<GitHubTrackedPullRequest | undefined> {
+    return [...this.trackedPullRequests.values()].find(
+      (pullRequest) => pullRequest.jobId === jobId,
+    );
+  }
 }

@@ -331,6 +331,36 @@ export class WorkflowCoordinator {
     );
   }
 
+  /** Freeze a provider-verified merged delivery before any later scope event. */
+  async markDeliveryMerged(
+    key: DeliveryKey,
+    mergedSha: string,
+  ): Promise<DeliveryRecord> {
+    if (mergedSha.trim().length === 0) {
+      throw new Error("Merged delivery needs a merge commit");
+    }
+    return this.storage.transaction(async (transaction) => {
+      await transaction.lockDelivery(key);
+      const existing = await transaction.getDelivery(key);
+      if (existing === undefined) throw new Error("Delivery does not exist");
+      if (existing.mergedSha !== undefined) {
+        if (existing.mergedSha !== mergedSha) {
+          throw new Error("Delivery is already merged at another revision");
+        }
+        return existing;
+      }
+      const merged = {
+        ...existing,
+        mergedAt: this.clock.now(),
+        mergedSha,
+        updatedAt: this.clock.now(),
+        version: existing.version + 1,
+      };
+      await transaction.saveDelivery(merged);
+      return merged;
+    });
+  }
+
   private async upsertDelivery(
     transaction: CoordinatorStorageTransaction,
     group: DeliveryGroup,
@@ -350,6 +380,9 @@ export class WorkflowCoordinator {
         deliveryGroupFingerprint(group)
       ) {
         return existing;
+      }
+      if (existing.mergedAt !== undefined) {
+        throw new Error("Merged delivery graph is immutable");
       }
       const updated: DeliveryRecord = {
         ...group,
@@ -420,7 +453,20 @@ export class WorkflowCoordinator {
         };
       }
 
-      await this.upsertDelivery(transaction, delivery);
+      const resolvedDelivery = await this.upsertDelivery(transaction, delivery);
+      if (resolvedDelivery.mergedAt !== undefined) {
+        const ignored: StoredEvent = {
+          ...storedBase,
+          status: "ignored",
+          ignoreReason: "merged-delivery",
+        };
+        await transaction.saveEvent(ignored);
+        return {
+          disposition: "ignored" as const,
+          event: ignored,
+          reason: ignored.ignoreReason,
+        };
+      }
       await transaction.lockWorkIdentity(brief.identity);
       const current = await transaction.findCurrentJob(brief.identity);
       if (input.sourceState === "closed") {

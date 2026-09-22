@@ -57,7 +57,7 @@ const TEMPLATES: TemplateMetadata[] = [
   },
   {
     name: "simple-loop",
-    description: "Picks issues one by one and closes them",
+    description: "Selects a standalone issue and publishes a draft PR",
   },
   {
     name: "sequential-reviewer",
@@ -67,13 +67,12 @@ const TEMPLATES: TemplateMetadata[] = [
   {
     name: "parallel-planner",
     description:
-      "Plans parallelizable issues, executes on separate branches, merges",
+      "Plans delivery groups, integrates child commits, and publishes draft PRs",
     dependencies: ["zod"],
   },
   {
     name: "parallel-planner-with-review",
-    description:
-      "Plans parallelizable issues, executes with per-branch review, merges",
+    description: "Plans delivery groups with review and publishes draft PRs",
     dependencies: ["zod"],
   },
 ];
@@ -350,7 +349,8 @@ const ISSUE_TRACKER_REGISTRY: IssueTrackerEntry[] = [
     envExample: `# GitHub personal access token — the agent uses it to read and manage GitHub Issues
 # Runner installation/start uses the host \`gh\` login for repository administration.
 # Create a fine-grained token: https://github.com/settings/personal-access-tokens/new
-# Required repository permissions: Issues (Read and write) and Metadata (Read)
+# Host publication also requires Contents (Read and write) and Pull requests (Read and write).
+# Worker issue lookup requires Issues (Read) and Metadata (Read).
 # Or leave blank and run: GH_TOKEN="$(gh auth token)" npx shipyard run
 GH_TOKEN=
 # GitHub repository (owner/repository)

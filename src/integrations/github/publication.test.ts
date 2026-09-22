@@ -363,6 +363,98 @@ describe("GitHubPublication", () => {
     );
   });
 
+  it("refreshes an existing pull request's candidate metadata and draft state", async () => {
+    const { coordinator } = createPublication();
+    const { jobId, lease } = await prepareCandidateJob(coordinator);
+    const candidate = "b".repeat(40);
+    const previous = "c".repeat(40);
+    let remote = {
+      number: 12,
+      title: "Old title",
+      body: `<!-- shipyard:pull-request:${repository}:42:shipyard%2Fissue-42 -->\n<!-- shipyard:metadata ${JSON.stringify({ version: 1, repository, itemId: "42", kind: "executable-issue", briefRevision: 1, briefHash: brief.hash, baseBranch: "main", baseSha: brief.base.sha, branch: "shipyard/issue-42", headSha: previous })} -->\nOld body`,
+      state: "open" as const,
+      draft: false,
+      branch: "shipyard/issue-42",
+      baseBranch: "main",
+      headSha: candidate,
+      updatedAt: "2026-09-17T12:00:01.000Z",
+    };
+    const updatePullRequest = vi.fn(
+      async (input: {
+        readonly title?: string;
+        readonly body?: string;
+        readonly draft?: boolean;
+      }) => {
+        remote = {
+          ...remote,
+          title: input.title ?? remote.title,
+          body: input.body ?? remote.body,
+          draft: input.draft ?? remote.draft,
+        };
+        return remote;
+      },
+    );
+    const createPullRequest = vi.fn(async () => {
+      throw new Error("must reuse existing pull request");
+    });
+    const transport = {
+      fetchIssue: async () => undefined,
+      fetchPullRequest: async () => remote,
+      findCommentByMarker: async () => undefined,
+      findBranchByName: async () => undefined,
+      findPullRequestByMarker: async () => remote,
+      findCheckByMarker: async () => undefined,
+      findIssueByMarker: async () => undefined,
+      createComment: async () => {
+        throw new Error("unused");
+      },
+      createBranch: async () => {
+        throw new Error("unused");
+      },
+      createPullRequest,
+      updatePullRequest,
+      createCheck: async () => {
+        throw new Error("unused");
+      },
+      createRepairIssue: async () => {
+        throw new Error("unused");
+      },
+    } satisfies GitHubReadTransport & GitHubWriteTransport;
+    const publication = new GitHubPublication({
+      coordinator,
+      transport,
+      trackingStore: new InMemoryGitHubStore(),
+    });
+    const metadata = {
+      version: 1 as const,
+      repository,
+      itemId: "42",
+      kind: "executable-issue" as const,
+      briefRevision: brief.revision,
+      briefHash: brief.hash,
+      baseBranch: "main",
+      baseSha: brief.base.sha,
+      branch: "shipyard/issue-42",
+      headSha: candidate,
+    };
+
+    const published = await publication.publishPullRequest({
+      jobId,
+      lease,
+      title: "Updated title",
+      body: "Updated body",
+      branch: "shipyard/issue-42",
+      baseBranch: "main",
+      headSha: candidate,
+      metadata,
+    });
+
+    expect(published.remote?.body).toContain(`"headSha":"${candidate}"`);
+    expect(published.remote?.draft).toBe(true);
+    expect(updatePullRequest).toHaveBeenCalledOnce();
+    expect(createPullRequest).not.toHaveBeenCalled();
+  });
+
   it("does not let a job comment on a different workflow item", async () => {
     const { coordinator } = createPublication();
     const { jobId, lease } = await prepareJob(coordinator);

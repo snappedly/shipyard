@@ -1,5 +1,9 @@
 # Context
 
+## Assigned issue
+
+Work only on issue #{{TASK_ID}} ({{ISSUE_TITLE}}).
+
 ## Open issues
 
 !`{{LIST_TASKS_COMMAND}}`
@@ -26,7 +30,7 @@ Work on issues in this order:
 3. **Polish** — improving existing functionality (error messages, UX, docs)
 4. **Refactors** — internal cleanups with no user-visible change
 
-Pick the highest-priority open issue that is not blocked by another open issue.
+The host has selected issue #{{TASK_ID}}. Do not select another issue.
 
 ## Workflow
 

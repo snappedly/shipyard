@@ -59,4 +59,26 @@ describe("PostgresCoordinatorStorage", () => {
     expect(statements[2]).toContain("pg_advisory_xact_lock");
     expect(query.mock.calls[2]?.[1]).toEqual(["snappedly/shipyard\u0000main"]);
   });
+
+  it("uses legacy job identity when excluding busy delivery groups", async () => {
+    const query = vi.fn(
+      async (_text: string, _values?: readonly unknown[]) => ({ rows: [] }),
+    );
+    const storage = new PostgresCoordinatorStorage({ client: { query } });
+
+    await storage.transaction((transaction) =>
+      transaction.findPendingDispatch("snappedly/shipyard", 0, {
+        excludedDeliveryIds: ["snappedly/shipyard#100"],
+      }),
+    );
+
+    const selection = query.mock.calls.find(([statement]) =>
+      statement.includes("FROM shipyard_dispatches"),
+    );
+    expect(selection?.[0]).toContain(
+      "COALESCE(j.delivery_repository, j.repository)",
+    );
+    expect(selection?.[0]).toContain("COALESCE(j.delivery_item_id, j.item_id)");
+    expect(selection?.[1]).toContainEqual(["snappedly/shipyard#100"]);
+  });
 });

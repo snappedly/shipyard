@@ -17,7 +17,8 @@ export type EventIgnoreReason =
   | "closed-item"
   | "withdrawn-authorization"
   | "repository-stopped"
-  | "invalid-policy";
+  | "invalid-policy"
+  | "merged-delivery";
 
 export type DispatchStatus =
   | "pending"
@@ -69,6 +70,8 @@ export interface DeliveryRecord extends DeliveryGroup {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly version: number;
+  readonly mergedAt?: string;
+  readonly mergedSha?: string;
 }
 
 /** Current coordinator records associated with one delivery graph. */
