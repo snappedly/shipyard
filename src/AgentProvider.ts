@@ -27,6 +27,7 @@ import {
 import type { BindMountSandboxHandle } from "./SandboxProvider.js";
 import { CODEX_MODELS } from "./modelConfig.js";
 import type { CodexModelConfig, CodexReasoningEffort } from "./modelConfig.js";
+import { shellQuote } from "./shellQuote.js";
 
 const fileExists = async (path: string): Promise<boolean> => {
   try {
@@ -58,8 +59,6 @@ export type ParsedStreamEvent =
   | { type: "tool_call"; name: string; args: string }
   | { type: "session_id"; sessionId: string }
   | { type: "usage"; usage: IterationUsage };
-
-const shellEscape = (s: string): string => "'" + s.replace(/'/g, "'\\''") + "'";
 
 /** Maps allowlisted tool names to the input field containing the display arg */
 const TOOL_ARG_FIELDS: Record<string, string> = {
@@ -272,7 +271,7 @@ const writeSandboxFile = async (
   const tmpPath = join(tempDir, "session.jsonl");
   try {
     await writeFile(tmpPath, content, { mode: 0o600 });
-    await handle.exec(`mkdir -p ${shellEscape(posix.dirname(sandboxPath))}`);
+    await handle.exec(`mkdir -p ${shellQuote(posix.dirname(sandboxPath))}`);
     await handle.copyFileIn(tmpPath, sandboxPath);
   } finally {
     await rm(tempDir, { recursive: true, force: true }).catch(() => {});
@@ -576,7 +575,7 @@ export const codex = (
       forkSession,
     }: AgentCommandOptions): PrintCommand {
       const effortFlag = effort
-        ? ` -c ${shellEscape(`model_reasoning_effort="${effort}"`)}`
+        ? ` -c ${shellQuote(`model_reasoning_effort="${effort}"`)}`
         : "";
       // auto_review only fires on interactive approvals, so the bypass flag is
       // dropped in favour of `-a on-request`. `-s danger-full-access` disables
@@ -584,22 +583,22 @@ export const codex = (
       // here the reviewer agent owns the per-action approval boundary.
       const approvalsFlags =
         options?.approvalsReviewer === "auto_review"
-          ? ` -a on-request -s danger-full-access -c ${shellEscape(`approvals_reviewer="auto_review"`)}`
+          ? ` -a on-request -s danger-full-access -c ${shellQuote(`approvals_reviewer="auto_review"`)}`
           : " --dangerously-bypass-approvals-and-sandbox";
       // Codex distinguishes fork from resume at the verb level — `codex exec
       // fork <id>` leaves the parent rollout intact; `codex exec resume <id>`
       // appends to it. See ADR 0018.
       let base: string;
       if (resumeSession && forkSession) {
-        base = `codex exec fork ${shellEscape(resumeSession)}`;
+        base = `codex exec fork ${shellQuote(resumeSession)}`;
       } else if (resumeSession) {
-        base = `codex exec resume ${shellEscape(resumeSession)}`;
+        base = `codex exec resume ${shellQuote(resumeSession)}`;
       } else {
         base = "codex exec";
       }
       const stdinArg = resumeSession ? " -" : "";
       return {
-        command: `${base} --json${approvalsFlags} -m ${shellEscape(modelId)}${effortFlag}${stdinArg}`,
+        command: `${base} --json${approvalsFlags} -m ${shellQuote(modelId)}${effortFlag}${stdinArg}`,
         stdin: prompt,
       };
     },
@@ -674,14 +673,14 @@ export const claudeCode = (
         : "";
     const effortFlag = options?.effort ? ` --effort ${options.effort}` : "";
     const resumeFlag = resumeSession
-      ? ` --resume ${shellEscape(resumeSession)}`
+      ? ` --resume ${shellQuote(resumeSession)}`
       : "";
     // --fork-session is meaningful only alongside --resume; it tells Claude
     // to write the continuation as a new session rather than mutating the
     // resumed one. See ADR 0018.
     const forkFlag = resumeSession && forkSession ? " --fork-session" : "";
     return {
-      command: `claude --print --verbose${permissionFlag} --output-format stream-json --model ${shellEscape(model)}${effortFlag}${resumeFlag}${forkFlag} -p -`,
+      command: `claude --print --verbose${permissionFlag} --output-format stream-json --model ${shellQuote(model)}${effortFlag}${resumeFlag}${forkFlag} -p -`,
       stdin: prompt,
     };
   },

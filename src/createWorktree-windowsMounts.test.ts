@@ -44,6 +44,9 @@ import {
 } from "./SandboxProvider.js";
 import { SANDBOX_REPO_DIR } from "./SandboxFactory.js";
 import { claudeCode } from "./AgentProvider.js";
+import { silenceTerminalOutput } from "./testTerminalOutput.js";
+
+silenceTerminalOutput();
 
 /** Format a minimal stream-json response so the orchestrator parses agent output. */
 const toStreamJson = (output: string): string => {

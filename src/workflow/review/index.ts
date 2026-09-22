@@ -9,6 +9,7 @@ import {
   type ReviewEvidence,
   type WorkBrief,
 } from "../contracts/index.js";
+import { deepFreeze, sameRevision } from "../shared.js";
 
 export type ReviewRunOutcome =
   | "passed"
@@ -134,17 +135,6 @@ const uniqueAxes = (
     throw new Error(`${path} contains duplicate axes`);
   }
   return axes;
-};
-
-const sameRevision = (left: RevisionReference, right: RevisionReference) =>
-  left.branch === right.branch && left.sha === right.sha;
-
-const deepFreeze = <T>(value: T): T => {
-  if (typeof value !== "object" || value === null) return value;
-  for (const child of Object.values(value as Record<string, unknown>)) {
-    deepFreeze(child);
-  }
-  return Object.freeze(value);
 };
 
 const normalizeFinding = (

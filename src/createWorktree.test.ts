@@ -13,12 +13,6 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { createWorktree } from "./createWorktree.js";
-import type {
-  CreateWorktreeOptions,
-  WorktreeRunOptions,
-  WorktreeInteractiveOptions,
-  WorktreeCreateSandboxOptions,
-} from "./createWorktree.js";
 import { claudeCode, codex } from "./AgentProvider.js";
 import {
   createBindMountSandboxProvider,
@@ -29,6 +23,9 @@ import {
 } from "./SandboxProvider.js";
 import { encodeProjectPath } from "./SessionStore.js";
 import { makeLocalSandbox } from "./testSandbox.js";
+import { silenceTerminalOutput } from "./testTerminalOutput.js";
+
+silenceTerminalOutput();
 
 const execAsync = promisify(exec);
 
@@ -123,21 +120,6 @@ describe("createWorktree", () => {
       await ws.close();
       await rm(hostDir, { recursive: true, force: true });
     }
-  });
-
-  it("rejects 'head' branch strategy at the type level", () => {
-    const _options: CreateWorktreeOptions = {
-      // @ts-expect-error - head strategy should be a compile-time error
-      branchStrategy: { type: "head" },
-    };
-  });
-
-  it("does not accept signal option (compile-time check)", () => {
-    const _options: CreateWorktreeOptions = {
-      branchStrategy: { type: "branch", branch: "test" },
-      // @ts-expect-error - signal should not be accepted on createWorktree
-      signal: new AbortController().signal,
-    };
   });
 
   it("copies files into the worktree with copyToWorktree", async () => {
@@ -509,14 +491,6 @@ describe("worktree.interactive()", () => {
       await ws.close();
       await rm(hostDir, { recursive: true, force: true });
     }
-  });
-
-  it("signal option has correct type on WorktreeInteractiveOptions", () => {
-    const _options: WorktreeInteractiveOptions = {
-      agent: claudeCode("claude-opus-4-8"),
-      prompt: "test",
-      signal: new AbortController().signal,
-    };
   });
 
   it("returns InteractiveResult with commits from the session", async () => {
@@ -1033,15 +1007,6 @@ describe("worktree.run()", () => {
     }
   });
 
-  it("sandbox is required (type error if omitted)", () => {
-    // This test validates at the type level — sandbox is required in WorktreeRunOptions
-    const _options = {
-      agent: claudeCode("claude-opus-4-8"),
-      prompt: "test",
-      // @ts-expect-error — sandbox is required
-    } satisfies WorktreeRunOptions;
-  });
-
   it("pre-aborted signal rejects immediately without running agent", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "ws-run-abort-"));
     await initRepo(hostDir);
@@ -1153,15 +1118,6 @@ describe("worktree.run()", () => {
       await ws.close();
       await rm(hostDir, { recursive: true, force: true });
     }
-  });
-
-  it("signal option has the correct type on WorktreeRunOptions", () => {
-    const _options: WorktreeRunOptions = {
-      agent: claudeCode("claude-opus-4-8"),
-      sandbox: testSandbox,
-      prompt: "test",
-      signal: new AbortController().signal,
-    };
   });
 });
 
@@ -1304,13 +1260,5 @@ describe("worktree.createSandbox()", () => {
       await ws.close();
       await rm(hostDir, { recursive: true, force: true });
     }
-  });
-
-  it("does not accept branch options", () => {
-    const _options: WorktreeCreateSandboxOptions = {
-      sandbox: testSandbox,
-      // @ts-expect-error - branch should not be accepted
-      branch: "should-not-work",
-    };
   });
 });

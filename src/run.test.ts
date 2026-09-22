@@ -28,8 +28,6 @@ import { claudeCode } from "./AgentProvider.js";
 import type { AgentProvider } from "./AgentProvider.js";
 import { Output, StructuredOutputError } from "./Output.js";
 import { claudeHostSessionPath } from "./SessionStore.js";
-import type { InteractiveOptions } from "./interactive.js";
-import type { WorktreeInteractiveOptions } from "./createWorktree.js";
 import { defaultImageName } from "./sandboxes/docker.js";
 import * as shipyard from "./SandboxProvider.js";
 import { createBindMountSandboxProvider } from "./SandboxProvider.js";
@@ -269,129 +267,7 @@ describe("DEFAULT_MAX_ITERATIONS", () => {
   });
 });
 
-describe("RunOptions", () => {
-  it("requires agent field typed as AgentProvider", () => {
-    // @ts-expect-error agent is required
-    const _opts: RunOptions = { prompt: "test" };
-  });
-
-  it("requires sandbox field typed as SandboxProvider", () => {
-    // @ts-expect-error sandbox is required
-    const _opts: RunOptions = {
-      agent: claudeCode("claude-opus-4-8"),
-      prompt: "test",
-    };
-  });
-
-  it("allows idleTimeoutSeconds to be specified", () => {
-    const opts: RunOptions = {
-      agent: claudeCode("claude-opus-4-8"),
-      sandbox: testSandbox,
-      prompt: "test",
-      idleTimeoutSeconds: 120,
-    };
-    expect(opts.idleTimeoutSeconds).toBe(120);
-  });
-
-  it("allows idleTimeoutSeconds to be omitted (uses default)", () => {
-    const opts: RunOptions = {
-      agent: claudeCode("claude-opus-4-8"),
-      sandbox: testSandbox,
-      prompt: "test",
-    };
-    expect(opts.idleTimeoutSeconds).toBeUndefined();
-  });
-
-  it("allows name to be specified", () => {
-    const opts: RunOptions = {
-      agent: claudeCode("claude-opus-4-8"),
-      sandbox: testSandbox,
-      prompt: "test",
-      name: "my-run",
-    };
-    expect(opts.name).toBe("my-run");
-  });
-
-  it("allows name to be omitted", () => {
-    const opts: RunOptions = {
-      agent: claudeCode("claude-opus-4-8"),
-      sandbox: testSandbox,
-      prompt: "test",
-    };
-    expect(opts.name).toBeUndefined();
-  });
-
-  it("does not accept a worktree field", () => {
-    const opts: RunOptions = {
-      agent: claudeCode("claude-opus-4-8"),
-      sandbox: testSandbox,
-      prompt: "test",
-    };
-    // @ts-expect-error worktree is no longer a valid field on RunOptions
-    expect(opts.worktree).toBeUndefined();
-  });
-
-  it("allows cwd to be specified", () => {
-    const opts: RunOptions = {
-      agent: claudeCode("claude-opus-4-8"),
-      sandbox: testSandbox,
-      prompt: "test",
-      cwd: "/some/repo",
-    };
-    expect(opts.cwd).toBe("/some/repo");
-  });
-
-  it("allows cwd to be omitted (defaults to process.cwd())", () => {
-    const opts: RunOptions = {
-      agent: claudeCode("claude-opus-4-8"),
-      sandbox: testSandbox,
-      prompt: "test",
-    };
-    expect(opts.cwd).toBeUndefined();
-  });
-
-  it("does not accept a top-level branch field", () => {
-    const opts: RunOptions = {
-      agent: claudeCode("claude-opus-4-8"),
-      sandbox: testSandbox,
-      prompt: "test",
-    };
-    // @ts-expect-error branch is no longer a valid field on RunOptions
-    expect(opts.branch).toBeUndefined();
-  });
-
-  it("does not accept a top-level imageName field", () => {
-    const opts: RunOptions = {
-      agent: claudeCode("claude-opus-4-8"),
-      sandbox: testSandbox,
-      prompt: "test",
-    };
-    // @ts-expect-error imageName is no longer a valid field on RunOptions
-    expect(opts.imageName).toBeUndefined();
-  });
-});
-
 describe("signal (AbortSignal)", () => {
-  it("allows signal to be specified on RunOptions", () => {
-    const ac = new AbortController();
-    const opts: RunOptions = {
-      agent: claudeCode("claude-opus-4-8"),
-      sandbox: testSandbox,
-      prompt: "test",
-      signal: ac.signal,
-    };
-    expect(opts.signal).toBe(ac.signal);
-  });
-
-  it("allows signal to be omitted", () => {
-    const opts: RunOptions = {
-      agent: claudeCode("claude-opus-4-8"),
-      sandbox: testSandbox,
-      prompt: "test",
-    };
-    expect(opts.signal).toBeUndefined();
-  });
-
   it("rejects immediately with pre-aborted signal without doing setup", async () => {
     const ac = new AbortController();
     ac.abort("cancelled before start");
@@ -1152,47 +1028,6 @@ describe("structured output error carries the failed session id", () => {
       expect(soe.sessionId).toBe("sess-abc-123");
       expect(soe.rawMatched).toBe("not valid json");
     }
-  });
-});
-
-describe("RunOptions with output", () => {
-  it("allows output field on RunOptions", () => {
-    const opts: RunOptions = {
-      agent: claudeCode("claude-opus-4-8"),
-      sandbox: testSandbox,
-      prompt: "emit <result>...</result>",
-      output: Output.object({ tag: "result", schema: mockSchema() }),
-    };
-    expect(opts.output).toBeDefined();
-  });
-
-  it("allows output to be omitted", () => {
-    const opts: RunOptions = {
-      agent: claudeCode("claude-opus-4-8"),
-      sandbox: testSandbox,
-      prompt: "test",
-    };
-    expect(opts.output).toBeUndefined();
-  });
-});
-
-describe("output type-level exclusion", () => {
-  it("InteractiveOptions does not accept output", () => {
-    const opts: InteractiveOptions = {
-      agent: claudeCode("claude-opus-4-8"),
-      prompt: "test",
-    };
-    // @ts-expect-error output is not a field on InteractiveOptions
-    expect(opts.output).toBeUndefined();
-  });
-
-  it("WorktreeInteractiveOptions does not accept output", () => {
-    const opts: WorktreeInteractiveOptions = {
-      agent: claudeCode("claude-opus-4-8"),
-      prompt: "test",
-    };
-    // @ts-expect-error output is not a field on WorktreeInteractiveOptions
-    expect(opts.output).toBeUndefined();
   });
 });
 

@@ -14,7 +14,6 @@ import {
   type StdioOptions,
 } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { createInterface } from "node:readline";
 import { Effect } from "effect";
 import { startContainer, removeContainer } from "../DockerLifecycle.js";
 import {
@@ -33,11 +32,8 @@ import {
   assertIsolatedWorkspaceMounts,
   processFileMountParents,
 } from "../mountUtils.js";
-import {
-  BoundedTail,
-  MAX_TAIL_CHARS,
-  OutputByteCounter,
-} from "../boundedTail.js";
+import { MAX_TAIL_CHARS } from "../boundedTail.js";
+import { collectProcessOutput } from "../processOutput.js";
 import { registerShutdown } from "../shutdownRegistry.js";
 import {
   REPOSITORY_RUNNER_OWNER_ENV,
@@ -298,66 +294,17 @@ export const docker = (options?: DockerOptions): IsolatedSandboxProvider => {
               reject(new Error(`docker exec failed: ${error.message}`));
             });
 
-            if (opts?.onLine || opts?.maxOutputBytes !== undefined) {
-              const onLine = opts?.onLine ?? (() => {});
-              const outputLimit =
-                opts?.maxOutputBytes === undefined
-                  ? undefined
-                  : new OutputByteCounter(opts.maxOutputBytes);
-              const tailChars = opts?.maxOutputBytes ?? maxOutputTailChars;
-              const stdoutTail = new BoundedTail(tailChars, "\n");
-              const stderrTail = new BoundedTail(tailChars, "");
-              let limitError: Error | undefined;
-              const checkOutputLimit = (chunk: Buffer): void => {
-                if (outputLimit === undefined || limitError !== undefined) {
-                  return;
-                }
-                outputLimit.add(chunk);
-                if (outputLimit.exceeded) {
-                  limitError = new Error(
-                    `Sandbox command output exceeded ${opts.maxOutputBytes} bytes`,
-                  );
-                  proc.kill("SIGKILL");
-                }
-              };
-              proc.stdout!.on("data", checkOutputLimit);
-              proc.stderr!.on("data", checkOutputLimit);
-              const rl = createInterface({ input: proc.stdout! });
-              rl.on("line", (line) => {
-                stdoutTail.push(line);
-                onLine(line);
-              });
-              proc.stderr!.on("data", (chunk: Buffer) => {
-                stderrTail.push(chunk.toString());
-              });
-              proc.on("close", (code) => {
-                if (limitError !== undefined) {
-                  reject(limitError);
-                  return;
-                }
-                resolve({
-                  stdout: stdoutTail.toString(),
-                  stderr: stderrTail.toString(),
-                  exitCode: code ?? 0,
-                });
-              });
-            } else {
-              const stdoutChunks: string[] = [];
-              const stderrChunks: string[] = [];
-              proc.stdout!.on("data", (chunk: Buffer) => {
-                stdoutChunks.push(chunk.toString());
-              });
-              proc.stderr!.on("data", (chunk: Buffer) => {
-                stderrChunks.push(chunk.toString());
-              });
-              proc.on("close", (code) => {
-                resolve({
-                  stdout: stdoutChunks.join(""),
-                  stderr: stderrChunks.join(""),
-                  exitCode: code ?? 0,
-                });
-              });
-            }
+            collectProcessOutput(
+              {
+                stdout: proc.stdout!,
+                stderr: proc.stderr!,
+                kill: () => proc.kill("SIGKILL"),
+                onClose: (listener) => proc.on("close", listener),
+              },
+              { ...opts, maxOutputTailChars },
+              resolve,
+              reject,
+            );
           });
         },
 

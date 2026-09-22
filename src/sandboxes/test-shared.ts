@@ -10,18 +10,13 @@ import { execFile, spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
 import {
   createBindMountSandboxProvider,
   type BindMountSandboxHandle,
   type BindMountSandboxProvider,
   type ExecResult,
 } from "../SandboxProvider.js";
-import {
-  BoundedTail,
-  MAX_TAIL_CHARS,
-  OutputByteCounter,
-} from "../boundedTail.js";
+import { collectProcessOutput } from "../processOutput.js";
 
 export interface TempSandbox {
   readonly worktreePath: string;
@@ -64,52 +59,20 @@ export const createTempSandbox = async (
           stdio: ["ignore", "pipe", "pipe"],
         });
 
-        const outputLimit =
-          options?.maxOutputBytes === undefined
-            ? undefined
-            : new OutputByteCounter(options.maxOutputBytes);
-        const tailChars = options?.maxOutputBytes ?? MAX_TAIL_CHARS;
-        const stdoutTail = new BoundedTail(tailChars, "\n");
-        const stderrTail = new BoundedTail(tailChars, "");
-        let limitError: Error | undefined;
-
-        const rl = createInterface({ input: proc.stdout! });
-        rl.on("line", (line) => {
-          stdoutTail.push(line);
-          onLine(line);
-        });
-
-        const checkOutputLimit = (chunk: Buffer): void => {
-          if (outputLimit === undefined || limitError !== undefined) return;
-          outputLimit.add(chunk);
-          if (outputLimit.exceeded) {
-            limitError = new Error(
-              `Sandbox command output exceeded ${options.maxOutputBytes} bytes`,
-            );
-            proc.kill("SIGKILL");
-          }
-        };
-        proc.stdout!.on("data", checkOutputLimit);
-        proc.stderr!.on("data", (chunk: Buffer) => {
-          checkOutputLimit(chunk);
-          stderrTail.push(chunk.toString());
-        });
-
         proc.on("error", (error) => {
           reject(new Error(`exec failed: ${error.message}`));
         });
-
-        proc.on("close", (code) => {
-          if (limitError !== undefined) {
-            reject(limitError);
-            return;
-          }
-          resolve({
-            stdout: stdoutTail.toString(),
-            stderr: stderrTail.toString(),
-            exitCode: code ?? 0,
-          });
-        });
+        collectProcessOutput(
+          {
+            stdout: proc.stdout!,
+            stderr: proc.stderr!,
+            kill: () => proc.kill("SIGKILL"),
+            onClose: (listener) => proc.on("close", listener),
+          },
+          { ...options, onLine },
+          resolve,
+          reject,
+        );
       });
     }
 
