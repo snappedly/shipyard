@@ -6,7 +6,8 @@
 //                      with their target branch names.
 //   Phase 2 (Execute): N routine Codex agents run in parallel via Promise.allSettled,
 //                      each working a single issue on its own branch.
-//   Phase 3 (Merge):   A strong Codex agent merges all branches that produced commits.
+//   Phase 3 (Merge):   A strong Codex agent merges all branches whose agents
+//                      completed, including branches with work from an earlier run.
 //
 // The outer loop repeats up to MAX_ITERATIONS times so that newly unblocked
 // issues are picked up after each round of merges.
@@ -141,8 +142,9 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
     }
   }
 
-  // Only pass branches that actually produced commits to the merge phase.
-  // An agent that ran successfully but made no commits has nothing to merge.
+  // A run's commits are limited to changes made during that run. A deterministic
+  // branch can already contain the implementation from an earlier run, so an
+  // explicit completion signal must also make the branch eligible for merge.
   const completedIssues = settled
     .map((outcome, i) => ({ outcome, issue: issues[i]! }))
     .filter(
@@ -155,23 +157,24 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
         issue: (typeof issues)[number];
       } =>
         entry.outcome.status === "fulfilled" &&
-        entry.outcome.value.commits.length > 0,
+        (entry.outcome.value.commits.length > 0 ||
+          entry.outcome.value.completionSignal !== undefined),
     )
     .map((entry) => entry.issue);
 
   const completedBranches = completedIssues.map((i) => i.branch);
 
   console.log(
-    `\nExecution complete. ${completedBranches.length} branch(es) with commits:`,
+    `\nExecution complete. ${completedBranches.length} completed branch(es):`,
   );
   for (const branch of completedBranches) {
     console.log(`  ${branch}`);
   }
 
   if (completedBranches.length === 0) {
-    // All agents ran but none made commits — nothing to merge this cycle.
-    console.log("No commits produced. Nothing to merge.");
-    continue;
+    // No agent completed and retrying the same plan would repeat unchanged work.
+    console.log("No implementations completed. Stopping.");
+    break;
   }
 
   // -------------------------------------------------------------------------
