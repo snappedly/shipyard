@@ -1,4 +1,4 @@
 {
   "name": "parallel-planner",
-  "description": "Plans parallelizable issues, executes on separate branches, merges"
+  "description": "Plans delivery groups, executes safe workers in parallel, and hands off"
 }

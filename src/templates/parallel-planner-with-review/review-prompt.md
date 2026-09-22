@@ -1,6 +1,9 @@
 # TASK
 
-Review the code changes on branch `{{BRANCH}}` and improve code clarity, consistency, and maintainability while preserving exact functionality.
+Review the immutable candidate for child `{{TASK_ID}}` in delivery group
+`{{DELIVERY_ID}}` at branch `{{BRANCH}}`. Return read-only findings and
+verification evidence to the coordinator. Do not edit, publish, merge, or
+close anything.
 
 # CONTEXT
 
@@ -44,11 +47,9 @@ Review the code changes on branch `{{BRANCH}}` and improve code clarity, consist
 
 # EXECUTION
 
-If you find improvements to make:
-
-1. Make the changes directly on this branch
-2. Run tests and type checking to ensure nothing is broken
-3. Commit describing the refinements
+If you find a problem, report one actionable finding with evidence, the
+requirement it violates, and a suggested verification. A separate bounded
+repair worker may update the coordinator-owned integration candidate.
 
 If the code is already clean and well-structured, do nothing.
 

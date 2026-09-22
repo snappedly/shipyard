@@ -1,18 +1,18 @@
-// Sequential Reviewer — implement-then-review loop
+// Sequential Reviewer — coordinator-owned implement-then-review worker
 //
 // This template drives a two-phase workflow per issue:
-//   Phase 1 (Implement): A Codex agent picks an open issue, works on it
-//                        on a dedicated branch, commits the changes, and signals
-//                        completion.
-//   Phase 2 (Review):    A second Codex agent reviews the branch diff and either
-//                        approves it or makes corrections directly on the branch.
+//   Phase 1 (Implement): A Codex worker implements one coordinator-selected issue
+//                        and returns a commit plus evidence.
+//   Phase 2 (Review):    A second Codex worker reviews the exact candidate
+//                        read-only and returns findings.
 //
-// Both phases share a single sandbox created via createSandbox(), so the
-// implementer and reviewer work on the same explicit branch.
+// The branch remains an implementation detail. The coordinator owns
+// runAuthorizedImplementation, GitHubPublication, repair, handoff, and source
+// issue effects; this template never merges or closes a source issue.
 //
 // The outer loop repeats up to MAX_ITERATIONS times, processing one issue per
-// iteration and stopping early once the backlog is exhausted (an implement
-// phase that produces no commits). This is a middle-complexity option between
+// iteration and stopping early once the backlog is exhausted. This is a
+// middle-complexity option between
 // the simple-loop (no review gate) and the parallel-planner (concurrent
 // execution with a planning phase).
 // Generated entrypoint: .shipyard/main.mts
@@ -51,8 +51,11 @@ const copyToWorktree = ["node_modules"];
 for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
   console.log(`\n=== Iteration ${iteration}/${MAX_ITERATIONS} ===\n`);
 
-  // Generate a unique branch name for this iteration.
-  const branch = `shipyard/sequential-reviewer/${Date.now()}`;
+  // Stable per-iteration branch names allow a retry to resume the same remote
+  // delivery. A caller may provide a repository-specific deterministic name.
+  const branch =
+    process.env.SHIPYARD_WORKER_BRANCH ??
+    `shipyard/sequential-reviewer/${iteration}`;
 
   // Create a single sandbox that both the implementer and reviewer share.
   // This gives both agents a real, named branch that persists across phases.
@@ -65,7 +68,9 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
 
   try {
     // -----------------------------------------------------------------------
-    // Phase 1: Implement
+    // Phase 1: Implement one selected issue. The worker is not allowed to
+    // publish, merge, or close anything; the host coordinator does that after
+    // candidate verification.
     //
     // A Codex agent picks the next open issue, writes the
     // implementation (using RGR: Red → Green → Repeat → Refactor), and
@@ -95,7 +100,8 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
     console.log(`Commits: ${implement.commits.length}`);
 
     // -----------------------------------------------------------------------
-    // Phase 2: Review
+    // Phase 2: Review. The prompt is deliberately read-only; any repair is a
+    // separate bounded coordinator action against the published candidate.
     //
     // A second Codex agent reviews the diff of the branch produced by
     // Phase 1. It uses the {{BRANCH}} prompt argument to inspect the right

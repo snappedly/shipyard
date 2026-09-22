@@ -1,4 +1,4 @@
 {
   "name": "sequential-reviewer",
-  "description": "Implements issues one by one, with a code review step after each"
+  "description": "Delivers issues one by one with read-only candidate review"
 }

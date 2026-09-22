@@ -1,7 +1,12 @@
 import { CODEX_MODELS, run, codex } from "@snappedly-tools/shipyard";
 import { docker } from "@snappedly-tools/shipyard/sandboxes/docker";
 
-// Simple loop: an agent that picks open issues one by one and closes them.
+// Simple loop: a worker that receives one coordinator-selected issue.
+//
+// The canonical standalone coordinator owns runAuthorizedImplementation,
+// GitHubPublication, independent review, handoff, and source-issue effects.
+// This low-level worker remains configurable for repositories that provide
+// their own coordinator adapter.
 // Generated entrypoint: .shipyard/main.mts
 // Run this with: npx shipyard run
 // Or add to package.json scripts: "shipyard": "shipyard run"
@@ -22,16 +27,17 @@ await run({
   // sandbox at the start of each iteration, so the agent always sees fresh data.
   promptFile: "./.shipyard/prompt.md",
 
-  // Maximum number of iterations (agent invocations) to run in a session.
-  // Each iteration works on a single issue. Increase this to process more issues
-  // per run, or set it to 1 for a single-shot mode.
-  maxIterations: 3,
+  // The coordinator assigns one issue per worker invocation. Replays use the
+  // same configured branch and remote delivery metadata rather than merging a
+  // local branch into the host checkout.
+  maxIterations: 1,
 
-  // Branch strategy — merge-to-head creates a temporary branch for the agent
-  // to work on, then merges the result back to HEAD when the run completes.
-  // This is required when using copyToWorktree, since head mode bind-mounts
-  // the host directory directly (no worktree to copy into).
-  branchStrategy: { type: "merge-to-head" },
+  // Worker-only branch strategy. Publication and integration belong to the
+  // coordinator-owned delivery adapter, never to the worker invocation.
+  branchStrategy: {
+    type: "branch",
+    branch: process.env.SHIPYARD_WORKER_BRANCH ?? "shipyard/standalone-worker",
+  },
 
   // Copy node_modules from the host into the worktree before the sandbox
   // starts. This avoids a full npm install from scratch on every iteration.

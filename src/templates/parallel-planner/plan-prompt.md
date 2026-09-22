@@ -1,6 +1,6 @@
 # ISSUES
 
-Here are the open issues in the repo:
+Here are the open issues in the repository:
 
 <issues-json>
 
@@ -8,30 +8,35 @@ Here are the open issues in the repo:
 
 </issues-json>
 
-The list above has already been filtered to issues ready for work.
+The list has already been filtered to issues ready for work. It is the sole
+source of eligible work. Do not query for additional issues or treat a local
+branch as evidence of an existing delivery.
 
 # TASK
 
-Analyze the open issues and build a dependency graph. For each issue, determine whether it **blocks** or **is blocked by** any other open issue.
+Build coordinator-owned delivery groups. Group an executable issue by its own
+identity when it has no planning-spec parent. Group every selected child of one
+planning spec under the parent identity. Prefer native parent/sub-issue and
+dependency relationships; use the repository's documented fallback only when
+native relationships are unavailable.
 
-An issue B is **blocked by** issue A if:
-
-- B requires code or infrastructure that A introduces
-- B and A modify overlapping files or modules, making concurrent work likely to produce merge conflicts
-- B's requirements depend on a decision or API shape that A will establish
-
-An issue is **unblocked** if it has zero blocking dependencies on other open issues.
-
-For each unblocked issue, assign a branch name using the exact format `shipyard/issue-{id}` (no slug or other suffix). This must be deterministic so that re-planning the same issue always produces the same branch name and accumulated progress is preserved.
+Different delivery groups may run concurrently. Children in one planning-spec
+group must include their dependency IDs so the host can execute dependency-safe
+waves and serialize integration into one deterministic integration branch. A
+planning spec itself is never an ordinary worker task. Do not assign a child an
+independent pull request, merge phase, or source-issue closure authority.
 
 # OUTPUT
 
-Output your plan as a JSON object wrapped in `<plan>` tags:
+Always emit one JSON object wrapped in `<plan>` tags. Use an empty array when
+there is no eligible work:
 
 <plan>
-{"issues": [{"id": "42", "title": "Fix auth bug", "branch": "shipyard/issue-42"}]}
+{"deliveryGroups":[{"id":"owner/repo#100","repository":"owner/repo","mode":"planning-spec","root":{"id":"100","title":"Spec"},"children":[{"id":"101","title":"Child","dependsOn":[]}],"integrationBranch":"shipyard/spec-100"}]}
 </plan>
 
-Include only unblocked issues. If every issue is blocked, include the single highest-priority candidate (the one with the fewest or weakest dependencies).
-
-Always emit the `<plan>` tags, even when there is nothing to do. If there are no issues to work on at all, output `<plan>{"issues": []}</plan>` so the run can exit cleanly.
+For a standalone issue, use `mode: "standalone"`, set `root` to that issue,
+include exactly one child with an empty `dependsOn`, and use
+`shipyard/issue-{id}` as `integrationBranch`. For a planning spec, use
+`shipyard/spec-{parent-id}`. IDs and branch names must be deterministic across
+replanning so replay resumes the same delivery.

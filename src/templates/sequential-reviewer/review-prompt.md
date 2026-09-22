@@ -1,6 +1,8 @@
 # TASK
 
-Review the code changes on branch `{{BRANCH}}` and improve code clarity, consistency, and maintainability while preserving exact functionality.
+Review the immutable candidate on branch `{{BRANCH}}` for the assigned
+standalone delivery. Return read-only findings and verification evidence to the
+coordinator. Do not edit, publish, merge, or close anything.
 
 # CONTEXT
 
@@ -44,11 +46,9 @@ Review the code changes on branch `{{BRANCH}}` and improve code clarity, consist
 
 # EXECUTION
 
-If you find improvements to make:
-
-1. Make the changes directly on this branch
-2. Run tests and type checking to ensure nothing is broken
-3. Commit describing the refinements
+If you find a problem, report one actionable finding with evidence, the
+requirement it violates, and a suggested verification. A separate bounded
+repair worker may update the coordinator-owned candidate.
 
 If the code is already clean and well-structured, do nothing.
 

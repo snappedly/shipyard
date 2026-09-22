@@ -1,12 +1,14 @@
 # TASK
 
-Fix issue {{TASK_ID}}: {{ISSUE_TITLE}}
+Implement the assigned child `{{TASK_ID}}` (`{{ISSUE_TITLE}}`) inside delivery
+group `{{DELIVERY_ID}}`.
 
 Pull in the issue using `{{VIEW_TASK_COMMAND}}`. If it has a parent PRD, pull that in too.
 
 Only work on the issue specified.
 
-Work on branch {{BRANCH}}. Make commits and run tests.
+Work on branch {{BRANCH}}. Make commits and run tests. The parent delivery
+coordinator owns integration into the `{{INTEGRATION_BRANCH}}` candidate.
 
 # CONTEXT
 
@@ -53,7 +55,9 @@ Keep it concise.
 
 If the task is not complete, leave a comment on the issue with what was done.
 
-Do not close the issue - this will be done later.
+Do not publish a branch or pull request, merge, close the issue, or start
+another delivery. Return only the child commit and verification evidence to
+the coordinator.
 
 Once complete, output <promise>COMPLETE</promise>.
 
