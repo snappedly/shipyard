@@ -71,6 +71,20 @@ if [[ "$current_draft" != false || "$current_state" != OPEN ]]; then
   echo "PR did not become ready for human review" >&2
   exit 1
 fi
+if ! gh label create shipyard:complete --repo "$repo" --color 0E8A16 --description 'Shipyard PR ready for human review' --force; then
+  echo "Could not create shipyard:complete; retry issue completion when GitHub is available" >&2
+  exit 75
+fi
+for ((i=1; i<${#scope_ids[@]}; i++)); do
+  if ! gh issue edit "${scope_ids[i]}" --repo "$repo" --add-label shipyard:complete; then
+    echo "Could not mark ticket #${scope_ids[i]} complete; retry issue completion when GitHub is available" >&2
+    exit 75
+  fi
+done
+if ! gh issue edit "$issue" --repo "$repo" --add-label shipyard:complete; then
+  echo "Could not mark issue #$issue complete; retry issue completion when GitHub is available" >&2
+  exit 75
+fi
 for scope_id in "${scope_ids[@]}"; do
   if ! labels=$(gh issue view "$scope_id" --repo "$repo" --json labels --jq '.labels[].name'); then
     echo "Warning: could not inspect activation on issue #$scope_id; the next invocation will retry cleanup" >&2

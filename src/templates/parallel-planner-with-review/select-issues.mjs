@@ -212,6 +212,37 @@ for (const candidate of activated) {
         "--add-label",
         "ready-for-human",
       );
+    gh(
+      "label",
+      "create",
+      "shipyard:complete",
+      "--repo",
+      repository,
+      "--color",
+      "0E8A16",
+      "--description",
+      "Shipyard PR ready for human review",
+      "--force",
+    );
+    for (const ticket of tickets)
+      gh(
+        "issue",
+        "edit",
+        ticket.id,
+        "--repo",
+        repository,
+        "--add-label",
+        "shipyard:complete",
+      );
+    gh(
+      "issue",
+      "edit",
+      rootId,
+      "--repo",
+      repository,
+      "--add-label",
+      "shipyard:complete",
+    );
     const activatedIds = [rootId, ...tickets.map((ticket) => ticket.id)].filter(
       (item) => activated.some((entry) => number(entry.number) === item),
     );

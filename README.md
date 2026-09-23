@@ -90,7 +90,9 @@ children to `/implement` workers, integrate dependency waves, resolve ticket
 merge conflicts on the spec branch, and review the complete spec. Each scope
 produces one non-draft PR labelled `ready-for-human` for human merge, linking
 its parent and children. Successful handoff removes `shipyard` from activated
-issues; issues remain open under the target repository's closure policy.
+issues and adds `shipyard:complete` to every scoped issue. For a spec, Shipyard
+marks its tickets complete before marking the parent, after the PR is ready for
+human review. The issues remain open under the target repository's closure policy.
 If an attempted issue cannot be completed, Shipyard comments with the reason,
 marks it `shipyard:blocked`, and removes `shipyard` from the scope. For a failed
 spec ticket it also marks the parent spec blocked. Resolve the problem, remove

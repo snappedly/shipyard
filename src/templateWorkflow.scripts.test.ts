@@ -76,6 +76,7 @@ else if (args[0] === "api" && path.includes("/sub_issues?")) console.log(JSON.st
 else if (args[0] === "api" && path.includes("/dependencies/blocked_by?")) console.log(JSON.stringify(path.includes("/4/") ? [{number:3,title:"Child",state:"OPEN"}] : []));
 else if (args[0] === "pr" && args[1] === "list") console.log(args.includes("shipyard/issue-6") || (process.env.READY_SPEC && args.includes("shipyard/spec-2")) ? JSON.stringify([{number:9,isDraft:false,labels:process.env.UNLABELED_PR ? [] : [{name:"ready-for-human"}],body:process.env.UNVERIFIED_PR ? "Incomplete manual PR" : "<!-- shipyard:verified-handoff -->"}]) : "[]");
 else if (args[0] === "pr" && args[1] === "edit") {}
+else if (args[0] === "label") {}
 else if (args[0] === "issue" && args[1] === "edit") {}
 else process.exit(2);
 `,
@@ -191,6 +192,19 @@ else process.exit(2);
     expect(unverified.status, unverified.stderr).toBe(0);
     expect(JSON.parse(unverified.stdout)).toHaveLength(1);
     const reconciled = await readFile(log, "utf8");
+    for (const id of [2, 3, 4])
+      expect(reconciled).toContain(
+        `issue edit ${id} --repo owner/repo --add-label shipyard:complete`,
+      );
+    expect(
+      reconciled.lastIndexOf(
+        "issue edit 2 --repo owner/repo --add-label shipyard:complete",
+      ),
+    ).toBeGreaterThan(
+      reconciled.lastIndexOf(
+        "issue edit 4 --repo owner/repo --add-label shipyard:complete",
+      ),
+    );
     expect(reconciled).toContain(
       "pr edit 9 --repo owner/repo --add-label ready-for-human",
     );
@@ -312,7 +326,7 @@ for (const name of ["implement","implement-spec","code-cleanup","code-review","t
     expect(result.stderr).toContain("Could not install Snappedly skills");
   });
 
-  it("publishes or updates one ready PR, then removes activation without closing the issue", async () => {
+  it("publishes one ready PR, marks scoped issues complete, and removes activation", async () => {
     const { dir, bin } = await fixture();
     const log = join(dir, "handoff.log");
     const state = join(dir, "pr.json");
@@ -341,7 +355,7 @@ else if (args[0] === "pr" && args[1] === "ready") { state.readyAttempted = true;
 else if (args[0] === "pr" && args[1] === "view") { if (process.env.FAIL_PR_STATUS && state.readyAttempted && args.includes("isDraft")) process.exit(1); console.log(args.includes("isDraft") ? String(state.isDraft) : args.includes("state") ? state.status || "OPEN" : "https://example.test/pr/7"); }
 else if (args[0] === "pr" && args[1] === "edit") {}
 else if (args[0] === "label") {}
-else if (args[0] === "issue" && args[1] === "edit") { if (process.env.FAIL_ACTIVATION) process.exit(1); }
+else if (args[0] === "issue" && args[1] === "edit") { if (process.env.FAIL_ACTIVATION && args.includes("--remove-label")) process.exit(1); if (process.env.FAIL_COMPLETE_TICKET && args[2] === process.env.FAIL_COMPLETE_TICKET && args.includes("--add-label")) process.exit(1); }
 else process.exit(2);
 `,
     );
@@ -405,6 +419,14 @@ else process.exit(2);
     expect(commands).toContain(
       "gh issue edit 1 --repo owner/repo --remove-label shipyard",
     );
+    expect(commands).toContain(
+      "gh issue edit 1 --repo owner/repo --add-label shipyard:complete",
+    );
+    expect(commands.indexOf("gh pr ready 7 --repo owner/repo")).toBeLessThan(
+      commands.indexOf(
+        "gh issue edit 1 --repo owner/repo --add-label shipyard:complete",
+      ),
+    );
     expect(commands).not.toContain("gh issue close");
     expect(commands).not.toContain("gh pr merge");
     expect(commands).toContain("<!-- shipyard:verified-handoff -->");
@@ -422,6 +444,7 @@ else process.exit(2);
     expect(result.stderr).toContain("next invocation will retry cleanup");
 
     await writeFile(state, JSON.stringify({ number: 7, isDraft: true }));
+    const beforeUnready = (await readFile(log, "utf8")).length;
     result = run(
       "bash",
       [script("handoff.sh"), "1", "shipyard/issue-1", "staging", "owner/repo"],
@@ -433,6 +456,9 @@ else process.exit(2);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("did not become ready");
     expect(await readFile(state, "utf8")).toContain('"isDraft":true');
+    expect((await readFile(log, "utf8")).slice(beforeUnready)).not.toContain(
+      "--add-label shipyard:complete",
+    );
     expect(await readFile(log, "utf8")).toContain(
       "gh pr edit 7 --repo owner/repo --remove-label ready-for-human",
     );
@@ -474,6 +500,32 @@ else process.exit(2);
     expect(result.stderr).toContain("did not become ready");
 
     await writeFile(state, JSON.stringify({ number: 0, isDraft: true }));
+    const beforeFailedTicket = (await readFile(log, "utf8")).length;
+    result = run(
+      "bash",
+      [
+        script("handoff.sh"),
+        "2",
+        "shipyard/spec-2",
+        "staging",
+        "owner/repo",
+        "2,3,4",
+      ],
+      dir,
+      bin,
+      { ...env, FAIL_COMPLETE_TICKET: "3" },
+      "Checks: pass; Review: approved",
+    );
+    expect(result.status).toBe(75);
+    const failedTicketCommands = (await readFile(log, "utf8")).slice(
+      beforeFailedTicket,
+    );
+    expect(failedTicketCommands).not.toContain(
+      "gh issue edit 2 --repo owner/repo --add-label shipyard:complete",
+    );
+    expect(failedTicketCommands).not.toContain("--remove-label shipyard");
+
+    await writeFile(state, JSON.stringify({ number: 0, isDraft: true }));
     result = run(
       "bash",
       [
@@ -496,6 +548,19 @@ else process.exit(2);
       expect(specCommands).toContain(
         `gh issue edit ${id} --repo owner/repo --remove-label shipyard`,
       );
+    for (const id of [2, 3, 4])
+      expect(specCommands).toContain(
+        `gh issue edit ${id} --repo owner/repo --add-label shipyard:complete`,
+      );
+    expect(
+      specCommands.lastIndexOf(
+        "gh issue edit 2 --repo owner/repo --add-label shipyard:complete",
+      ),
+    ).toBeGreaterThan(
+      specCommands.lastIndexOf(
+        "gh issue edit 4 --repo owner/repo --add-label shipyard:complete",
+      ),
+    );
     expect(specCommands).not.toContain("gh issue close");
     expect(specCommands).not.toContain("gh pr merge");
   }, 15_000);
