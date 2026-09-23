@@ -61,7 +61,7 @@ else if (args[0] === "issue" && args[1] === "list" && args.includes("open")) {
   console.log(JSON.stringify(pool.filter((item) => ids.includes(item.number))));
 }
 else if (args[0] === "issue" && args[1] === "list" && args.includes("all")) console.log(JSON.stringify([
-  {number:3,title:"Child",body:"**Work item type:** executable\\n\\n## Parent\\n#2",state:"OPEN"},
+  {number:3,title:"Child",body:"**Work item type:** executable\\n\\n## Parent\\n#2",state:process.env.CLOSED_CHILD ? "CLOSED" : "OPEN"},
   {number:4,title:"Sibling",body:"**Work item type:** executable",state:"OPEN"}
 ]));
 else if (args[0] === "issue" && args[1] === "view") console.log(JSON.stringify({number:2,title:"Spec",body:"**Work item type:** planning spec",state:"OPEN"}));
@@ -70,11 +70,11 @@ else if (args[0] === "api" && path.endsWith("/parent")) {
   else { console.error("gh: Not Found (HTTP 404)"); process.exit(1); }
 }
 else if (args[0] === "api" && path.includes("/sub_issues?")) console.log(JSON.stringify(process.env.TEXT_ONLY ? [] : path.includes("/2/") ? [
-  {number:3,title:"Child",body:"**Work item type:** executable\\n\\n## Parent\\n#2",state:"OPEN"},
+  {number:3,title:"Child",body:"**Work item type:** executable\\n\\n## Parent\\n#2",state:process.env.CLOSED_CHILD ? "CLOSED" : "OPEN"},
   {number:4,title:"Sibling",body:"**Work item type:** executable",state:"OPEN"}
 ] : []));
 else if (args[0] === "api" && path.includes("/dependencies/blocked_by?")) console.log(JSON.stringify(path.includes("/4/") ? [{number:3,title:"Child",state:"OPEN"}] : []));
-else if (args[0] === "pr" && args[1] === "list") console.log(args.includes("shipyard/issue-6") || (process.env.READY_SPEC && args.includes("shipyard/spec-2")) ? JSON.stringify([{number:9,isDraft:false,labels:process.env.UNLABELED_PR ? [] : [{name:"ready-for-human"}],body:process.env.UNVERIFIED_PR ? "Incomplete manual PR" : "<!-- shipyard:verified-handoff -->"}]) : "[]");
+else if (args[0] === "pr" && args[1] === "list") console.log(args.includes("shipyard/issue-6") || (process.env.READY_SPEC && args.includes("shipyard/spec-2")) ? JSON.stringify([{number:9,isDraft:false,labels:process.env.UNLABELED_PR ? [] : [{name:"ready-for-human"}],body:process.env.UNVERIFIED_PR ? "Incomplete manual PR" : args.includes("shipyard/spec-2") ? "Source issues: #2 #3" + (process.env.STALE_PR_SCOPE ? "" : " #4") + "\\n<!-- shipyard:verified-handoff -->" : "Source issues: #6\\n<!-- shipyard:verified-handoff -->"}]) : "[]");
 else if (args[0] === "pr" && args[1] === "edit") {}
 else if (args[0] === "label") {}
 else if (args[0] === "issue" && args[1] === "edit") {}
@@ -161,6 +161,28 @@ else process.exit(2);
     });
     expect(alreadyReady.status, alreadyReady.stderr).toBe(0);
     expect(JSON.parse(alreadyReady.stdout)).toEqual([]);
+    const closedAfterHandoff = run(
+      "node",
+      [script("select-issues.mjs")],
+      dir,
+      bin,
+      {
+        GH_LOG: log,
+        ACTIVATION: "siblings",
+        READY_SPEC: "1",
+        CLOSED_CHILD: "1",
+      },
+    );
+    expect(closedAfterHandoff.status, closedAfterHandoff.stderr).toBe(0);
+    expect(JSON.parse(closedAfterHandoff.stdout)).toEqual([]);
+    const changedScope = run("node", [script("select-issues.mjs")], dir, bin, {
+      GH_LOG: log,
+      ACTIVATION: "siblings",
+      READY_SPEC: "1",
+      STALE_PR_SCOPE: "1",
+    });
+    expect(changedScope.status).not.toBe(0);
+    expect(changedScope.stderr).toContain("issue scope differs");
     for (const template of [
       "simple-loop",
       "sequential-reviewer",

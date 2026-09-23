@@ -139,48 +139,19 @@ for (const candidate of activated) {
       }))
     : [];
   if (isSpec) {
-    if (root.state && String(root.state).toLowerCase() !== "open")
-      throw new Error(`Planning spec #${rootId} is closed`);
     if (parentId && !tickets.some((ticket) => ticket.id === id))
       throw new Error(
         `Activated child #${id} is absent from parent #${rootId}'s linked scope`,
       );
-    const ticketIds = new Set(tickets.map((ticket) => ticket.id));
     for (const ticket of tickets) {
       if (!/work item type:\*?\*?\s*executable/i.test(ticket.body))
         throw new Error(
           `Linked child #${ticket.id} is not an executable ticket`,
         );
-      if (String(ticket.state).toLowerCase() !== "open")
-        throw new Error(`Linked executable ticket #${ticket.id} is closed`);
       const native = parentLink(ticket.id);
       const textual = textParent(ticket.body);
       if ((native && native !== rootId) || (textual && textual !== rootId))
         throw new Error(`Conflicting parent links for #${ticket.id}`);
-      for (const blocker of ticket.blockedBy) {
-        if (
-          String(blocker.state).toLowerCase() !== "closed" &&
-          !ticketIds.has(blocker.id)
-        )
-          throw new Error(
-            `Ticket #${ticket.id} has unresolved external dependency #${blocker.id}`,
-          );
-      }
-    }
-    const waiting = new Set(ticketIds);
-    while (waiting.size) {
-      const ready = tickets.filter(
-        (ticket) =>
-          waiting.has(ticket.id) &&
-          ticket.blockedBy.every(
-            (blocker) =>
-              String(blocker.state).toLowerCase() === "closed" ||
-              !waiting.has(blocker.id),
-          ),
-      );
-      if (!ready.length)
-        throw new Error(`Spec #${rootId} has cyclic dependencies`);
-      for (const ticket of ready) waiting.delete(ticket.id);
     }
   }
   const existing = json(
@@ -202,6 +173,20 @@ for (const candidate of activated) {
         pr.body?.includes("<!-- shipyard:verified-handoff -->")),
   );
   if (ready) {
+    const recordedIds = ready.body
+      ?.match(/^Source issues:[ \t]*((?:#[0-9]+[ \t]*)+)$/m)?.[1]
+      ?.match(/#[0-9]+/g)
+      ?.map((issue) => issue.slice(1));
+    const scopeIds = [rootId, ...tickets.map((ticket) => ticket.id)];
+    if (
+      !recordedIds ||
+      recordedIds.length !== scopeIds.length ||
+      new Set(recordedIds).size !== scopeIds.length ||
+      scopeIds.some((issue) => !recordedIds.includes(issue))
+    )
+      throw new Error(
+        `PR #${ready.number} issue scope differs from current #${rootId} scope`,
+      );
     if (!ready.labels.some((label) => label.name === "ready-for-human"))
       gh(
         "pr",
@@ -257,6 +242,39 @@ for (const candidate of activated) {
         "shipyard",
       );
     continue;
+  }
+  if (isSpec) {
+    if (root.state && String(root.state).toLowerCase() !== "open")
+      throw new Error(`Planning spec #${rootId} is closed`);
+    const ticketIds = new Set(tickets.map((ticket) => ticket.id));
+    for (const ticket of tickets) {
+      if (String(ticket.state).toLowerCase() !== "open")
+        throw new Error(`Linked executable ticket #${ticket.id} is closed`);
+      for (const blocker of ticket.blockedBy) {
+        if (
+          String(blocker.state).toLowerCase() !== "closed" &&
+          !ticketIds.has(blocker.id)
+        )
+          throw new Error(
+            `Ticket #${ticket.id} has unresolved external dependency #${blocker.id}`,
+          );
+      }
+    }
+    const waiting = new Set(ticketIds);
+    while (waiting.size) {
+      const ready = tickets.filter(
+        (ticket) =>
+          waiting.has(ticket.id) &&
+          ticket.blockedBy.every(
+            (blocker) =>
+              String(blocker.state).toLowerCase() === "closed" ||
+              !waiting.has(blocker.id),
+          ),
+      );
+      if (!ready.length)
+        throw new Error(`Spec #${rootId} has cyclic dependencies`);
+      for (const ticket of ready) waiting.delete(ticket.id);
+    }
   }
   scopes.set(
     branch,
