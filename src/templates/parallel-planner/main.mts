@@ -362,11 +362,12 @@ for (let iteration = 0; iteration < 10; iteration++) {
             id,
             ...(scope.tickets ?? []).map((ticket) => ticket.id),
           ].join(",");
+          publicationUncertain = true;
           const handoff = await publication.exec(
             `bash .shipyard/handoff.sh ${id} ${scope.branch} ${targetBranch} ${repository} ${scopeIds}`,
             { stdin: handoffEvidence },
           );
-          if (handoff.exitCode === 75) publicationUncertain = true;
+          publicationUncertain = handoff.exitCode === 75;
           if (handoff.exitCode !== 0)
             throw new Error(
               `PR handoff for #${id} failed: ${handoff.stderr || handoff.stdout}`,

@@ -29,6 +29,7 @@ const calls = vi.hoisted(() => ({
   implementationComplete: true,
   handoffSucceeds: true,
   handoffUncertain: false,
+  handoffThrows: false,
   finalChanges: false,
   finalReviewApproved: true,
   reviewCount: 0,
@@ -222,6 +223,8 @@ vi.mock("@snappedly-tools/shipyard", () => {
           return { exitCode: 0, stdout: "integrated", stderr: "" };
         }
         calls.events.push("handoff");
+        if (calls.handoffThrows)
+          throw new Error("transport lost during PR handoff");
         return {
           exitCode: calls.handoffUncertain ? 75 : calls.handoffSucceeds ? 0 : 1,
           stdout: "https://example.test/pr/1",
@@ -300,6 +303,7 @@ beforeEach(() => {
   calls.implementationComplete = true;
   calls.handoffSucceeds = true;
   calls.handoffUncertain = false;
+  calls.handoffThrows = false;
   calls.finalChanges = false;
   calls.finalReviewApproved = true;
   calls.reviewCount = 0;
@@ -681,6 +685,14 @@ describe("generated issue workflows", () => {
     await expect(
       import("./templates/simple-loop/main.mts" as string),
     ).rejects.toThrow("Could not confirm PR readiness");
+    expect(calls.blocked).toEqual([]);
+  });
+
+  it("does not block an issue when publication transport fails", async () => {
+    calls.handoffThrows = true;
+    await expect(
+      import("./templates/simple-loop/main.mts" as string),
+    ).rejects.toThrow("transport lost during PR handoff");
     expect(calls.blocked).toEqual([]);
   });
 });

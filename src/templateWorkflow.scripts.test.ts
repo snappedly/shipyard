@@ -74,7 +74,8 @@ else if (args[0] === "api" && path.includes("/sub_issues?")) console.log(JSON.st
   {number:4,title:"Sibling",body:"**Work item type:** executable",state:"OPEN"}
 ] : []));
 else if (args[0] === "api" && path.includes("/dependencies/blocked_by?")) console.log(JSON.stringify(path.includes("/4/") ? [{number:3,title:"Child",state:"OPEN"}] : []));
-else if (args[0] === "pr" && args[1] === "list") console.log(args.includes("shipyard/issue-6") || (process.env.READY_SPEC && args.includes("shipyard/spec-2")) ? JSON.stringify([{number:9,isDraft:false,labels:[{name:"ready-for-human"}]}]) : "[]");
+else if (args[0] === "pr" && args[1] === "list") console.log(args.includes("shipyard/issue-6") || (process.env.READY_SPEC && args.includes("shipyard/spec-2")) ? JSON.stringify([{number:9,isDraft:false,labels:process.env.UNLABELED_PR ? [] : [{name:"ready-for-human"}]}]) : "[]");
+else if (args[0] === "pr" && args[1] === "edit") {}
 else if (args[0] === "issue" && args[1] === "edit") {}
 else process.exit(2);
 `,
@@ -159,7 +160,31 @@ else process.exit(2);
     });
     expect(alreadyReady.status, alreadyReady.stderr).toBe(0);
     expect(JSON.parse(alreadyReady.stdout)).toEqual([]);
+    for (const template of [
+      "simple-loop",
+      "sequential-reviewer",
+      "parallel-planner",
+      "parallel-planner-with-review",
+    ]) {
+      const unlabeledReady = run(
+        "node",
+        [join(templateDir, "templates", template, "select-issues.mjs")],
+        dir,
+        bin,
+        {
+          GH_LOG: log,
+          ACTIVATION: "siblings",
+          READY_SPEC: "1",
+          UNLABELED_PR: "1",
+        },
+      );
+      expect(unlabeledReady.status, unlabeledReady.stderr).toBe(0);
+      expect(JSON.parse(unlabeledReady.stdout)).toEqual([]);
+    }
     const reconciled = await readFile(log, "utf8");
+    expect(reconciled).toContain(
+      "pr edit 9 --repo owner/repo --add-label ready-for-human",
+    );
     for (const id of [3, 4])
       expect(reconciled).toContain(
         `issue edit ${id} --repo owner/repo --remove-label shipyard`,

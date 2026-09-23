@@ -121,11 +121,12 @@ for (let iteration = 0; iteration < 3; iteration++) {
       sandbox: docker(),
     });
     try {
+      publicationUncertain = true;
       const handoff = await publication.exec(
         `bash .shipyard/handoff.sh ${issue.id} ${issue.branch} ${targetBranch} ${repository} ${[issue.id, ...(issue.tickets ?? []).map((ticket) => ticket.id)].join(",")}`,
         { stdin: evidence },
       );
-      if (handoff.exitCode === 75) publicationUncertain = true;
+      publicationUncertain = handoff.exitCode === 75;
       if (handoff.exitCode !== 0)
         throw new Error(
           `PR handoff for #${issue.id} failed: ${handoff.stderr || handoff.stdout}`,

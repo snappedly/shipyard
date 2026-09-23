@@ -195,13 +195,18 @@ for (const candidate of activated) {
     "--json",
     "number,isDraft,labels",
   );
-  if (
-    existing.some(
-      (pr) =>
-        !pr.isDraft &&
-        pr.labels.some((label) => label.name === "ready-for-human"),
-    )
-  ) {
+  const ready = existing.find((pr) => !pr.isDraft);
+  if (ready) {
+    if (!ready.labels.some((label) => label.name === "ready-for-human"))
+      gh(
+        "pr",
+        "edit",
+        String(ready.number),
+        "--repo",
+        repository,
+        "--add-label",
+        "ready-for-human",
+      );
     const activatedIds = [rootId, ...tickets.map((ticket) => ticket.id)].filter(
       (item) => activated.some((entry) => number(entry.number) === item),
     );
