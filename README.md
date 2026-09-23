@@ -80,22 +80,26 @@ Shipyard controller ready for GitHub Issues. Label an issue `shipyard`; the
 controller wakes, drains a finite batch of eligible work, coalesces duplicate
 wake-ups, and stops when it makes no progress. Restarting it recovers work
 labelled while the host was offline.
+GitHub-backed `shipyard init` provisions `shipyard`, `shipyard:blocked`,
+`shipyard:complete`, and `shipyard:outstanding-tasks` in the repository.
 
 The bundled issue workflows install Snappedly skills and the candidate's
 dependencies in Docker. A standalone issue runs through `/implement`. Activating
-a planning spec or a linked executable child resolves the parent, all linked
-children, and dependencies into one `/implement-spec` scope. The sequential
-templates deliver that scope on one branch; the parallel templates assign ready
-children to `/implement` workers, integrate dependency waves, resolve ticket
-merge conflicts on the spec branch, and review the complete spec. Each scope
-produces one non-draft PR labelled `ready-for-human` for human merge, linking
-its parent and children. Successful handoff removes `shipyard` from activated
-issues and adds `shipyard:complete` to every scoped issue. For a spec, Shipyard
-marks its tickets complete before marking the parent, after the PR is ready for
-human review. The issues remain open under the target repository's closure policy.
+a planning spec or a linked executable child resolves the parent and only
+linked tickets labelled `shipyard` into one `/implement-spec` scope. The sequential
+templates deliver selected tickets on one branch; the parallel templates assign
+ready tickets to `/implement` workers, integrate dependency waves, resolve ticket
+merge conflicts on the spec branch, and review the integrated change. One
+non-draft PR per spec is labelled `ready-for-human` for human merge. Later
+selected tickets update that PR. Successful handoff removes `shipyard` from
+selected tickets and adds `shipyard:complete`. If every linked ticket is complete,
+the parent spec and PR receive `shipyard:complete`. If unlabeled tickets remain,
+the parent and PR receive `shipyard:outstanding-tasks` until a later run completes
+them. The issues remain open under the target repository's closure policy.
 If an attempted issue cannot be completed, Shipyard comments with the reason,
 marks it `shipyard:blocked`, and removes `shipyard` from the scope. For a failed
-spec ticket it also marks the parent spec blocked. Resolve the problem, remove
+spec ticket it also marks the parent spec blocked and labels an existing PR
+`shipyard:blocked`. It does not publish a new PR for failed work. Resolve the problem, remove
 `shipyard:blocked`, then add `shipyard` to retry. Missing or ambiguous
 relationships stop dispatch for inspection. If GitHub cannot confirm whether a
 PR became ready, Shipyard leaves the issue active for reconciliation. The GitHub token

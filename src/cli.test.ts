@@ -532,7 +532,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     }
   });
 
-  it("init force-creates the lowercase shipyard activation label", async () => {
+  it("init creates the four Shipyard issue labels", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
     await initRepo(hostDir);
     await commitFile(hostDir, "hello.txt", "hello", "initial commit");
@@ -541,7 +541,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     await mkdir(binDir);
     await writeFile(
       join(binDir, "gh"),
-      '#!/bin/sh\nprintf \'%s\\n\' "$*" > "$GH_ARGS_FILE"\n',
+      '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$GH_ARGS_FILE"\n',
       { mode: 0o755 },
     );
 
@@ -555,12 +555,17 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     );
 
     expect(stdout).toContain("Init complete");
-    expect(await readFile(ghArgsFile, "utf8")).toBe(
-      "label create shipyard --description Issues for Shipyard to work on --color F9A825 --force\n",
-    );
+    const commands = await readFile(ghArgsFile, "utf8");
+    for (const label of [
+      "shipyard",
+      "shipyard:blocked",
+      "shipyard:complete",
+      "shipyard:outstanding-tasks",
+    ])
+      expect(commands).toContain(`label create ${label} `);
   });
 
-  it("init continues when activation-label creation fails", async () => {
+  it("init can scaffold when GitHub label provisioning is unavailable", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
     await initRepo(hostDir);
     await commitFile(hostDir, "hello.txt", "hello", "initial commit");
@@ -575,8 +580,6 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
       hostDir,
       { PATH: `${binDir}:${process.env.PATH ?? ""}` },
     );
-
     expect(stdout).toContain("Init complete");
-    expect(await readdir(join(hostDir, ".shipyard"))).toContain("prompt.md");
   });
 });

@@ -51,6 +51,8 @@ type Scope = {
   kind: "standalone" | "spec";
   body?: string;
   tickets?: Ticket[];
+  completedTicketIds?: string[];
+  outstandingTicketIds?: string[];
 };
 const evidence = (stdout: string): string | undefined =>
   [...stdout.matchAll(/<handoff>([\s\S]*?)<\/handoff>/g)].at(-1)?.[1]?.trim();
@@ -82,6 +84,7 @@ const blockScope = (scope: Scope, failedId: string, reason: string) => {
       failedId,
       repository,
       [scope.id, ...(scope.tickets ?? []).map((ticket) => ticket.id)].join(","),
+      scope.branch,
     ],
     { input: reason, encoding: "utf8" },
   );
@@ -166,7 +169,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
           const remaining = new Map(
             tickets.map((ticket) => [ticket.id, ticket]),
           );
-          const completed = new Set<string>();
+          const completed = new Set<string>(scope.completedTicketIds ?? []);
           while (remaining.size) {
             const ready = [...remaining.values()].filter((ticket) =>
               ticket.blockedBy.every(
@@ -364,7 +367,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
           ].join(",");
           publicationUncertain = true;
           const handoff = await publication.exec(
-            `bash .shipyard/handoff.sh ${id} ${scope.branch} ${targetBranch} ${repository} ${scopeIds}`,
+            `bash .shipyard/handoff.sh ${id} ${scope.branch} ${targetBranch} ${repository} ${scopeIds} ${scope.outstandingTicketIds?.join(",") || "-"} ${scope.completedTicketIds?.join(",") || "-"}`,
             { stdin: handoffEvidence },
           );
           publicationUncertain = handoff.exitCode === 75;

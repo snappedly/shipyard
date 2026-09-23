@@ -57,12 +57,12 @@ else if (args[0] === "issue" && args[1] === "list" && args.includes("open")) {
     {number:4,title:"Sibling",body:""},
     {number:6,title:"Already ready",body:""}
   ];
-  const ids = process.env.ACTIVATION === "parent" ? [2] : process.env.ACTIVATION === "siblings" ? [3,4] : [1,2,3,6];
+  const ids = process.env.PARTIAL_PR || process.env.NO_LABELLED ? [2] : process.env.LATER_BATCH ? [4] : process.env.ACTIVATION === "parent" ? [2] : process.env.ACTIVATION === "siblings" ? [3,4] : process.env.UNLABELLED_SIBLING ? [1,2,3,6] : [1,2,3,4,6];
   console.log(JSON.stringify(pool.filter((item) => ids.includes(item.number))));
 }
 else if (args[0] === "issue" && args[1] === "list" && args.includes("all")) console.log(JSON.stringify([
-  {number:3,title:"Child",body:"**Work item type:** executable\\n\\n## Parent\\n#2",state:process.env.CLOSED_CHILD ? "CLOSED" : "OPEN"},
-  {number:4,title:"Sibling",body:"**Work item type:** executable",state:"OPEN"}
+  {number:3,title:"Child",body:"**Work item type:** executable\\n\\n## Parent\\n#2",state:process.env.CLOSED_CHILD ? "CLOSED" : "OPEN",labels:process.env.NO_LABELLED ? [] : process.env.PARTIAL_PR || process.env.LATER_BATCH ? [{name:"shipyard:complete"}] : [{name:"shipyard"}]},
+  {number:4,title:"Sibling",body:"**Work item type:** executable",state:"OPEN",labels:process.env.NO_LABELLED || process.env.UNLABELLED_SIBLING || process.env.PARTIAL_PR ? [] : [{name:"shipyard"}]}
 ]));
 else if (args[0] === "issue" && args[1] === "view") console.log(JSON.stringify({number:2,title:"Spec",body:"**Work item type:** planning spec",state:"OPEN"}));
 else if (args[0] === "api" && path.endsWith("/parent")) {
@@ -70,11 +70,11 @@ else if (args[0] === "api" && path.endsWith("/parent")) {
   else { console.error("gh: Not Found (HTTP 404)"); process.exit(1); }
 }
 else if (args[0] === "api" && path.includes("/sub_issues?")) console.log(JSON.stringify(process.env.TEXT_ONLY ? [] : path.includes("/2/") ? [
-  {number:3,title:"Child",body:"**Work item type:** executable\\n\\n## Parent\\n#2",state:process.env.CLOSED_CHILD ? "CLOSED" : "OPEN"},
-  {number:4,title:"Sibling",body:"**Work item type:** executable",state:"OPEN"}
+  {number:3,title:"Child",body:"**Work item type:** executable\\n\\n## Parent\\n#2",state:process.env.CLOSED_CHILD ? "CLOSED" : "OPEN",labels:process.env.NO_LABELLED ? [] : process.env.PARTIAL_PR || process.env.LATER_BATCH ? [{name:"shipyard:complete"}] : [{name:"shipyard"}]},
+  {number:4,title:"Sibling",body:"**Work item type:** executable",state:"OPEN",labels:process.env.NO_LABELLED || process.env.UNLABELLED_SIBLING || process.env.PARTIAL_PR ? [] : [{name:"shipyard"}]}
 ] : []));
 else if (args[0] === "api" && path.includes("/dependencies/blocked_by?")) console.log(JSON.stringify(path.includes("/4/") ? [{number:3,title:"Child",state:"OPEN"}] : []));
-else if (args[0] === "pr" && args[1] === "list") console.log(args.includes("shipyard/issue-6") || (process.env.READY_SPEC && args.includes("shipyard/spec-2")) ? JSON.stringify([{number:9,isDraft:false,labels:process.env.UNLABELED_PR ? [] : [{name:"ready-for-human"}],body:process.env.UNVERIFIED_PR ? "Incomplete manual PR" : args.includes("shipyard/spec-2") ? "Source issues: #2 #3" + (process.env.STALE_PR_SCOPE ? "" : " #4") + "\\n<!-- shipyard:verified-handoff -->" : "Source issues: #6\\n<!-- shipyard:verified-handoff -->"}]) : "[]");
+else if (args[0] === "pr" && args[1] === "list") console.log(args.includes("shipyard/issue-6") || ((process.env.READY_SPEC || process.env.PARTIAL_PR || process.env.LATER_BATCH) && args.includes("shipyard/spec-2")) ? JSON.stringify([{number:9,isDraft:false,labels:process.env.UNLABELED_PR ? [] : [{name:"ready-for-human"},...(process.env.BLOCKED_PR ? [{name:"shipyard:blocked"}] : [])],body:process.env.UNVERIFIED_PR ? "Incomplete manual PR" : args.includes("shipyard/spec-2") ? "Source issues: #2 #3" + (process.env.STALE_PR_SCOPE ? "" : " #4") + (process.env.PARTIAL_PR || process.env.LATER_BATCH ? "\\nImplemented tickets: #3" : "") + "\\n<!-- shipyard:verified-handoff -->" : "Source issues: #6\\n<!-- shipyard:verified-handoff -->"}]) : "[]");
 else if (args[0] === "pr" && args[1] === "edit") {}
 else if (args[0] === "label") {}
 else if (args[0] === "issue" && args[1] === "edit") {}
@@ -108,6 +108,8 @@ else process.exit(2);
           body: "**Work item type:** planning spec",
           branch: "shipyard/spec-2",
           kind: "spec",
+          completedTicketIds: [],
+          outstandingTicketIds: [],
           tickets: [
             {
               id: "3",
@@ -127,6 +129,52 @@ else process.exit(2);
         },
       ]);
     }
+    const partial = run("node", [script("select-issues.mjs")], dir, bin, {
+      GH_LOG: log,
+      UNLABELLED_SIBLING: "1",
+    });
+    expect(partial.status, partial.stderr).toBe(0);
+    const partialSpec = JSON.parse(partial.stdout).find(
+      (scope: { id: string }) => scope.id === "2",
+    );
+    expect(
+      partialSpec.tickets.map((ticket: { id: string }) => ticket.id),
+    ).toEqual(["3"]);
+    expect(partialSpec.outstandingTicketIds).toEqual(["4"]);
+    const noneSelected = run("node", [script("select-issues.mjs")], dir, bin, {
+      GH_LOG: log,
+      NO_LABELLED: "1",
+    });
+    expect(noneSelected.status, noneSelected.stderr).toBe(0);
+    expect(JSON.parse(noneSelected.stdout)).toEqual([]);
+    const partialReady = run("node", [script("select-issues.mjs")], dir, bin, {
+      GH_LOG: log,
+      PARTIAL_PR: "1",
+    });
+    expect(partialReady.status, partialReady.stderr).toBe(0);
+    expect(JSON.parse(partialReady.stdout)).toEqual([]);
+    const beforeBlocked = (await readFile(log, "utf8")).length;
+    const blockedReady = run("node", [script("select-issues.mjs")], dir, bin, {
+      GH_LOG: log,
+      PARTIAL_PR: "1",
+      BLOCKED_PR: "1",
+    });
+    expect(blockedReady.status, blockedReady.stderr).toBe(0);
+    expect(JSON.parse(blockedReady.stdout)).toEqual([]);
+    expect((await readFile(log, "utf8")).slice(beforeBlocked)).not.toContain(
+      "--add-label shipyard:outstanding-tasks",
+    );
+    const laterBatch = run("node", [script("select-issues.mjs")], dir, bin, {
+      GH_LOG: log,
+      LATER_BATCH: "1",
+    });
+    expect(laterBatch.status, laterBatch.stderr).toBe(0);
+    const laterScope = JSON.parse(laterBatch.stdout)[0];
+    expect(
+      laterScope.tickets.map((ticket: { id: string }) => ticket.id),
+    ).toEqual(["4"]);
+    expect(laterScope.completedTicketIds).toEqual(["3"]);
+    expect(laterScope.outstandingTicketIds).toEqual([]);
     expect(await readFile(log, "utf8")).toContain(
       "issue edit 6 --repo owner/repo --remove-label shipyard",
     );
@@ -181,8 +229,8 @@ else process.exit(2);
       READY_SPEC: "1",
       STALE_PR_SCOPE: "1",
     });
-    expect(changedScope.status).not.toBe(0);
-    expect(changedScope.stderr).toContain("issue scope differs");
+    expect(changedScope.status, changedScope.stderr).toBe(0);
+    expect(JSON.parse(changedScope.stdout)[0].tickets).toHaveLength(2);
     for (const template of [
       "simple-loop",
       "sequential-reviewer",
@@ -234,7 +282,7 @@ else process.exit(2);
       expect(reconciled).toContain(
         `issue edit ${id} --repo owner/repo --remove-label shipyard`,
       );
-  }, 20_000);
+  }, 45_000);
 
   it("rejects conflicting native and body parent links", async () => {
     const { dir, bin } = await fixture();
@@ -263,7 +311,7 @@ if (args[0] === "repo") console.log("owner/repo");
 else if (args[0] === "issue" && args[1] === "list" && args.includes("open")) console.log(JSON.stringify([{number:2,title:"Spec",body:"**Work item type:** planning spec"}]));
 else if (args[0] === "issue" && args[1] === "list" && args.includes("all")) console.log("[]");
 else if (args[0] === "api" && path.endsWith("/parent")) { console.error("Not Found (HTTP 404)"); process.exit(1); }
-else if (args[0] === "api" && path.includes("/sub_issues?")) console.log(JSON.stringify(process.env.CASE === "missing" ? [] : [{number:3,title:"Planning child",body:"**Work item type:** planning spec",state:"open"}]));
+else if (args[0] === "api" && path.includes("/sub_issues?")) console.log(JSON.stringify(process.env.CASE === "missing" ? [] : [{number:3,title:"Planning child",body:"**Work item type:** planning spec",state:"open",labels:[{name:"shipyard"}]}]));
 else if (args[0] === "api" && path.includes("/dependencies/blocked_by?")) console.log("[]");
 else process.exit(2);
 `,
@@ -375,7 +423,7 @@ else if (args[0] === "pr" && args[1] === "list") console.log(state.number || "")
 else if (args[0] === "pr" && args[1] === "create") { state.number = 7; fs.writeFileSync(process.env.PR_STATE, JSON.stringify(state)); fs.appendFileSync(process.env.HANDOFF_LOG, "BODY " + fs.readFileSync(args[args.indexOf("--body-file") + 1], "utf8") + "\\n"); }
 else if (args[0] === "pr" && args[1] === "ready") { state.readyAttempted = true; if (!process.env.FAIL_PR_READY) state.isDraft = false; if (process.env.CLOSE_PR_AFTER_READY) state.status = "CLOSED"; fs.writeFileSync(process.env.PR_STATE, JSON.stringify(state)); if (process.env.FAIL_PR_READY || process.env.FAIL_PR_READY_AFTER_UPDATE) process.exit(1); }
 else if (args[0] === "pr" && args[1] === "view") { if (process.env.FAIL_PR_STATUS && state.readyAttempted && args.includes("isDraft")) process.exit(1); console.log(args.includes("isDraft") ? String(state.isDraft) : args.includes("state") ? state.status || "OPEN" : "https://example.test/pr/7"); }
-else if (args[0] === "pr" && args[1] === "edit") {}
+else if (args[0] === "pr" && args[1] === "edit") { if (args.includes("--body-file")) fs.appendFileSync(process.env.HANDOFF_LOG, "BODY " + fs.readFileSync(args[args.indexOf("--body-file") + 1], "utf8") + "\\n"); }
 else if (args[0] === "label") {}
 else if (args[0] === "issue" && args[1] === "edit") { if (process.env.FAIL_ACTIVATION && args.includes("--remove-label")) process.exit(1); if (process.env.FAIL_COMPLETE_TICKET && args[2] === process.env.FAIL_COMPLETE_TICKET && args.includes("--add-label")) process.exit(1); }
 else process.exit(2);
@@ -437,7 +485,9 @@ else process.exit(2);
     expect(result.status, result.stderr).toBe(0);
     const commands = await readFile(log, "utf8");
     expect(commands.match(/gh pr create/g)).toHaveLength(1);
-    expect(commands.match(/gh pr edit 7/g)).toHaveLength(4);
+    expect(commands).toContain(
+      "gh pr edit 7 --repo owner/repo --add-label shipyard:complete",
+    );
     expect(commands).toContain(
       "gh issue edit 1 --repo owner/repo --remove-label shipyard",
     );
@@ -585,6 +635,67 @@ else process.exit(2);
     );
     expect(specCommands).not.toContain("gh issue close");
     expect(specCommands).not.toContain("gh pr merge");
+
+    await writeFile(state, JSON.stringify({ number: 0, isDraft: true }));
+    const beforePartial = (await readFile(log, "utf8")).length;
+    result = run(
+      "bash",
+      [
+        script("handoff.sh"),
+        "2",
+        "shipyard/spec-2",
+        "staging",
+        "owner/repo",
+        "2,3",
+        "4",
+      ],
+      dir,
+      bin,
+      env,
+      "Checks: pass; Review: approved",
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const partialCommands = (await readFile(log, "utf8")).slice(beforePartial);
+    expect(partialCommands).toContain("BODY Source issues: #2 #3 #4");
+    expect(partialCommands).toContain("Implemented tickets: #3");
+    expect(partialCommands).toContain(
+      "gh pr edit 7 --repo owner/repo --add-label shipyard:outstanding-tasks",
+    );
+    expect(partialCommands).toContain(
+      "gh issue edit 2 --repo owner/repo --add-label shipyard:outstanding-tasks",
+    );
+    expect(partialCommands).not.toContain(
+      "gh issue edit 4 --repo owner/repo --add-label shipyard:complete",
+    );
+
+    const beforeLater = (await readFile(log, "utf8")).length;
+    result = run(
+      "bash",
+      [
+        script("handoff.sh"),
+        "2",
+        "shipyard/spec-2",
+        "staging",
+        "owner/repo",
+        "2,4",
+        "-",
+        "3",
+      ],
+      dir,
+      bin,
+      env,
+      "Checks: pass; Review: approved",
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const laterCommands = (await readFile(log, "utf8")).slice(beforeLater);
+    expect(laterCommands).not.toContain("gh pr create");
+    expect(laterCommands).toContain("Implemented tickets: #4 #3");
+    expect(laterCommands).toContain(
+      "gh pr edit 7 --repo owner/repo --add-label shipyard:complete",
+    );
+    expect(laterCommands).toContain(
+      "gh issue edit 2 --repo owner/repo --remove-label shipyard:outstanding-tasks",
+    );
   }, 15_000);
 
   it("hands off a bundle clone whose target exists only as a remote ref", async () => {
@@ -607,6 +718,11 @@ else process.exit(2);
     await writeFile(join(source, "change.txt"), "change");
     git("-C", source, "add", ".");
     git("-C", source, "commit", "-m", "change");
+    git("-C", source, "checkout", "staging");
+    await writeFile(join(source, "later.txt"), "new target commit");
+    git("-C", source, "add", ".");
+    git("-C", source, "commit", "-m", "advance target");
+    git("-C", source, "checkout", "shipyard/issue-1");
     git("-C", source, "bundle", "create", bundle, "--all");
     git("clone", bundle, clone);
     git("-C", clone, "checkout", "shipyard/issue-1");
@@ -657,11 +773,19 @@ const fs = require("node:fs");
 const args = process.argv.slice(2);
 fs.appendFileSync(process.env.BLOCKED_LOG, args.join(" ") + "\\n");
 if (args[0] === "issue" && args[1] === "view") console.log("shipyard");
+else if (args[0] === "pr" && args[1] === "list" && process.env.EXISTING_PR) console.log("9");
 `,
     );
     const result = run(
       "bash",
-      [script("block-scope.sh"), "2", "3", "owner/repo", "2,3,4"],
+      [
+        script("block-scope.sh"),
+        "2",
+        "3",
+        "owner/repo",
+        "2,3,4",
+        "shipyard/spec-2",
+      ],
       dir,
       bin,
       { BLOCKED_LOG: log },
@@ -686,6 +810,28 @@ if (args[0] === "issue" && args[1] === "view") console.log("shipyard");
       "issue edit 2 --repo owner/repo --add-label shipyard:blocked",
     );
     expect(commands).not.toContain("issue close");
+    expect(commands).not.toContain("pr edit");
+
+    const existing = run(
+      "bash",
+      [
+        script("block-scope.sh"),
+        "2",
+        "3",
+        "owner/repo",
+        "2,3,4",
+        "shipyard/spec-2",
+      ],
+      dir,
+      bin,
+      { BLOCKED_LOG: log, EXISTING_PR: "1" },
+      "Tests failed",
+    );
+    expect(existing.status, existing.stderr).toBe(0);
+    const existingCommands = await readFile(log, "utf8");
+    expect(existingCommands).toContain(
+      "pr edit 9 --repo owner/repo --add-label shipyard:blocked",
+    );
 
     await writeFile(log, "");
     const standalone = run(

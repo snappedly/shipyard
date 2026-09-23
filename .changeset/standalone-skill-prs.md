@@ -2,4 +2,4 @@
 "@snappedly-tools/shipyard": minor
 ---
 
-Run bundled standalone and whole-spec issue workflows with Snappedly skills in Docker, resolving spec integration conflicts, marking failed issues blocked with comments, and marking scoped issues complete after one verified pull request is ready for human review.
+Run bundled standalone and spec issue workflows with Snappedly skills in Docker. Select only tickets labelled `shipyard`, integrate their work into one spec pull request, mark failed issues and an existing PR blocked, and distinguish completed specs from those with outstanding tickets after human-ready handoff.

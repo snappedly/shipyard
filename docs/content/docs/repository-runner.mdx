@@ -56,22 +56,25 @@ differently cased label, issue edit, or comment does not wake it.
 The bundled issue templates install Snappedly skills and repository
 dependencies inside their Docker sandbox. Standalone issues use `/implement`.
 An activated planning spec or linked executable child becomes one
-`/implement-spec` scope containing the parent, all linked children, and their
-dependencies. The selected template keeps its sequential or parallel planning,
+`/implement-spec` scope containing the parent, linked children labelled
+`shipyard`, and their dependencies. Unlabelled children remain outside the work
+scope. The selected template keeps its sequential or parallel planning,
 implementation, and review stages. Parallel templates run ready child tickets
 through scoped `/implement` workers, resolve cherry-pick conflicts during
 integration, and merge each dependency wave into one spec branch. The complete
-scope gets one open, non-draft PR with links to all
-issues. The workflow never merges into the target branch or closes issues.
+scope gets one open, non-draft PR per spec. Later selected tickets update the
+same PR. The workflow never merges into the target branch or closes issues.
 Successful handoff marks the PR `ready-for-human`, adds `shipyard:complete` to
-the scoped issues, then removes `shipyard` from activated issues so later
-wake-ups do not repeat work. For a spec, child tickets gain the completion label
-before the parent spec. This label means Shipyard's PR is ready for human review;
+selected tickets, then removes `shipyard` from activated issues so later
+wake-ups do not repeat work. When all linked tickets are complete, the parent
+spec and PR get `shipyard:complete`. If unlabelled tickets remain, the parent
+and PR get `shipyard:outstanding-tasks`. These labels mean Shipyard's PR is ready for human review;
 the issues remain open until the target repository's closure policy closes them. A
 failed attempted scope gets an issue comment describing the failure and a
 `shipyard:blocked` label; Shipyard removes `shipyard` from the scope so it does
 not retry automatically. If a child ticket fails, the ticket and parent spec
-are marked blocked. Resolve the problem, remove `shipyard:blocked`, and add
+are marked blocked. An existing spec PR also gets `shipyard:blocked`; failed
+work does not create a new PR. Resolve the problem, remove `shipyard:blocked`, and add
 `shipyard` to retry. Relationship resolution failures before a scope is selected
 remain in the runner logs and stop the invocation. If GitHub cannot confirm PR
 readiness, Shipyard leaves activation in place so the next invocation can

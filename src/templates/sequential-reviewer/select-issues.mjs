@@ -6,6 +6,13 @@ const gh = (...args) =>
     stdio: ["ignore", "pipe", "pipe"],
   }).trim();
 const json = (...args) => JSON.parse(gh(...args));
+const bestEffort = (...args) => {
+  try {
+    gh(...args);
+  } catch {
+    /* label already absent */
+  }
+};
 const repository =
   process.env.GH_REPO ||
   gh("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner");
@@ -65,7 +72,7 @@ const allIssues = () => {
       "--limit",
       "1000",
       "--json",
-      "number,title,body,state",
+      "number,title,body,state,labels",
     );
     if (!Array.isArray(issueCatalog) || issueCatalog.length === 1000)
       throw new Error("Could not resolve complete issue relationship catalog");
@@ -80,7 +87,7 @@ const fullIssue = (id) =>
     "--repo",
     repository,
     "--json",
-    "number,title,body,state",
+    "number,title,body,state,labels",
   );
 const activated = json(
   "issue",
@@ -92,11 +99,12 @@ const activated = json(
   "--limit",
   "100",
   "--json",
-  "number,title,body",
+  "number,title,body,labels",
 );
 if (activated.length === 100)
   throw new Error("Could not resolve complete activated issue set");
 const scopes = new Map();
+const activeIds = new Set(activated.map((item) => number(item.number)));
 for (const candidate of activated) {
   const id = number(candidate.number);
   const nativeParent = parentLink(id);
@@ -129,17 +137,39 @@ for (const candidate of activated) {
     );
   const branch = isSpec ? `shipyard/spec-${rootId}` : `shipyard/issue-${id}`;
   if (scopes.has(branch)) continue;
-  const tickets = isSpec
+  const linkedTickets = isSpec
     ? linked.map((child) => ({
         id: number(child.number),
         title: child.title,
         body: child.body ?? "",
         state: child.state,
-        blockedBy: dependencies(number(child.number)),
+        labels: child.labels ?? [],
       }))
     : [];
+  const tickets = linkedTickets
+    .filter(
+      (ticket) =>
+        ticket.labels.some((label) => label.name === "shipyard") &&
+        !ticket.labels.some((label) => label.name === "shipyard:complete"),
+    )
+    .map(({ labels: _labels, ...ticket }) => ({
+      ...ticket,
+      blockedBy: dependencies(ticket.id),
+    }));
+  const completedTicketIds = linkedTickets
+    .filter((ticket) =>
+      ticket.labels.some((label) => label.name === "shipyard:complete"),
+    )
+    .map((ticket) => ticket.id);
+  const selectedIds = new Set(tickets.map((ticket) => ticket.id));
+  const outstandingTicketIds = linkedTickets
+    .filter(
+      (ticket) =>
+        !selectedIds.has(ticket.id) && !completedTicketIds.includes(ticket.id),
+    )
+    .map((ticket) => ticket.id);
   if (isSpec) {
-    if (parentId && !tickets.some((ticket) => ticket.id === id))
+    if (parentId && !linkedTickets.some((ticket) => ticket.id === id))
       throw new Error(
         `Activated child #${id} is absent from parent #${rootId}'s linked scope`,
       );
@@ -177,17 +207,103 @@ for (const candidate of activated) {
       ?.match(/^Source issues:[ \t]*((?:#[0-9]+[ \t]*)+)$/m)?.[1]
       ?.match(/#[0-9]+/g)
       ?.map((issue) => issue.slice(1));
-    const scopeIds = [rootId, ...tickets.map((ticket) => ticket.id)];
+    const implementedIds =
+      ready.body
+        ?.match(/^Implemented tickets:[ \t]*((?:#[0-9]+[ \t]*)*)$/m)?.[1]
+        ?.match(/#[0-9]+/g)
+        ?.map((issue) => issue.slice(1)) ??
+      recordedIds?.slice(1) ??
+      [];
+    const recordedSet = new Set(recordedIds ?? []);
+    const implementedSet = new Set(implementedIds);
+    const knownIds = new Set([
+      rootId,
+      ...linkedTickets.map((ticket) => ticket.id),
+    ]);
     if (
       !recordedIds ||
-      recordedIds.length !== scopeIds.length ||
-      new Set(recordedIds).size !== scopeIds.length ||
-      scopeIds.some((issue) => !recordedIds.includes(issue))
+      !recordedSet.has(rootId) ||
+      recordedIds.length !== recordedSet.size ||
+      recordedIds.some((issue) => !knownIds.has(issue))
     )
       throw new Error(
         `PR #${ready.number} issue scope differs from current #${rootId} scope`,
       );
-    if (!ready.labels.some((label) => label.name === "ready-for-human"))
+    if (
+      tickets.length === 0 &&
+      ready.labels.some((label) => label.name === "shipyard:blocked")
+    ) {
+      for (const activeId of [rootId, ...completedTicketIds].filter((item) =>
+        activeIds.has(item),
+      ))
+        gh(
+          "issue",
+          "edit",
+          activeId,
+          "--repo",
+          repository,
+          "--remove-label",
+          "shipyard",
+        );
+      continue;
+    }
+    if (tickets.every((ticket) => implementedSet.has(ticket.id))) {
+      if (!ready.labels.some((label) => label.name === "ready-for-human"))
+        gh(
+          "pr",
+          "edit",
+          String(ready.number),
+          "--repo",
+          repository,
+          "--add-label",
+          "ready-for-human",
+        );
+      const parentStatus = outstandingTicketIds.length
+        ? "shipyard:outstanding-tasks"
+        : "shipyard:complete";
+      gh(
+        "label",
+        "create",
+        parentStatus,
+        "--repo",
+        repository,
+        "--color",
+        outstandingTicketIds.length ? "FBCA04" : "0E8A16",
+        "--description",
+        outstandingTicketIds.length
+          ? "Spec has uncompleted tickets"
+          : "Shipyard work ready for human review",
+        "--force",
+      );
+      for (const ticket of tickets) {
+        gh(
+          "issue",
+          "edit",
+          ticket.id,
+          "--repo",
+          repository,
+          "--add-label",
+          "shipyard:complete",
+        );
+        bestEffort(
+          "issue",
+          "edit",
+          ticket.id,
+          "--repo",
+          repository,
+          "--remove-label",
+          "shipyard:blocked",
+        );
+      }
+      gh(
+        "issue",
+        "edit",
+        rootId,
+        "--repo",
+        repository,
+        "--add-label",
+        parentStatus,
+      );
       gh(
         "pr",
         "edit",
@@ -195,65 +311,64 @@ for (const candidate of activated) {
         "--repo",
         repository,
         "--add-label",
-        "ready-for-human",
+        parentStatus,
       );
-    gh(
-      "label",
-      "create",
-      "shipyard:complete",
-      "--repo",
-      repository,
-      "--color",
-      "0E8A16",
-      "--description",
-      "Shipyard PR ready for human review",
-      "--force",
-    );
-    for (const ticket of tickets)
-      gh(
-        "issue",
-        "edit",
-        ticket.id,
-        "--repo",
-        repository,
-        "--add-label",
+      for (const label of [
         "shipyard:complete",
-      );
-    gh(
-      "issue",
-      "edit",
-      rootId,
-      "--repo",
-      repository,
-      "--add-label",
-      "shipyard:complete",
-    );
-    const activatedIds = [rootId, ...tickets.map((ticket) => ticket.id)].filter(
-      (item) => activated.some((entry) => number(entry.number) === item),
-    );
-    for (const activeId of activatedIds)
-      gh(
-        "issue",
-        "edit",
-        activeId,
-        "--repo",
-        repository,
-        "--remove-label",
-        "shipyard",
-      );
-    continue;
+        "shipyard:outstanding-tasks",
+        "shipyard:blocked",
+      ]) {
+        if (label === parentStatus) continue;
+        bestEffort(
+          "issue",
+          "edit",
+          rootId,
+          "--repo",
+          repository,
+          "--remove-label",
+          label,
+        );
+        if (ready.labels.some((item) => item.name === label))
+          gh(
+            "pr",
+            "edit",
+            String(ready.number),
+            "--repo",
+            repository,
+            "--remove-label",
+            label,
+          );
+      }
+      const activatedIds = [
+        rootId,
+        ...tickets.map((ticket) => ticket.id),
+      ].filter((item) => activeIds.has(item));
+      for (const activeId of activatedIds)
+        gh(
+          "issue",
+          "edit",
+          activeId,
+          "--repo",
+          repository,
+          "--remove-label",
+          "shipyard",
+        );
+      continue;
+    }
   }
   if (isSpec) {
     if (root.state && String(root.state).toLowerCase() !== "open")
       throw new Error(`Planning spec #${rootId} is closed`);
     const ticketIds = new Set(tickets.map((ticket) => ticket.id));
+    const completedIds = new Set(completedTicketIds);
     for (const ticket of tickets) {
       if (String(ticket.state).toLowerCase() !== "open")
         throw new Error(`Linked executable ticket #${ticket.id} is closed`);
       for (const blocker of ticket.blockedBy) {
         if (
           String(blocker.state).toLowerCase() !== "closed" &&
-          !ticketIds.has(blocker.id)
+          !ticketIds.has(blocker.id) &&
+          !completedIds.has(blocker.id)
         )
           throw new Error(
             `Ticket #${ticket.id} has unresolved external dependency #${blocker.id}`,
@@ -276,6 +391,21 @@ for (const candidate of activated) {
       for (const ticket of ready) waiting.delete(ticket.id);
     }
   }
+  if (isSpec && tickets.length === 0) {
+    for (const activeId of [rootId, ...completedTicketIds].filter((item) =>
+      activeIds.has(item),
+    ))
+      gh(
+        "issue",
+        "edit",
+        activeId,
+        "--repo",
+        repository,
+        "--remove-label",
+        "shipyard",
+      );
+    continue;
+  }
   scopes.set(
     branch,
     isSpec
@@ -286,6 +416,8 @@ for (const candidate of activated) {
           branch,
           kind: "spec",
           tickets,
+          completedTicketIds,
+          outstandingTicketIds,
         }
       : { id, title: candidate.title, branch, kind: "standalone" },
   );

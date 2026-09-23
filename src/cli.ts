@@ -658,18 +658,31 @@ const initCommand = Command.make(
         selectedTemplate = selected as string;
       }
 
-      // The GitHub Issues integration has one fixed activation-label contract.
-      // Label creation remains best-effort so init can still scaffold when gh
-      // is unavailable or the current identity cannot manage labels.
+      // These labels are part of the GitHub Issues workflow contract.
       if (selectedIssueTracker.name === "github-issues") {
-        yield* Effect.try({
-          try: () =>
-            execSync(
-              `gh label create "${ACTIVATION_LABEL}" --description "Issues for ${PRODUCT_NAME} to work on" --color "F9A825" --force 2>/dev/null`,
-              { cwd, stdio: "ignore" },
-            ),
-          catch: () => undefined,
-        }).pipe(Effect.ignore);
+        for (const [name, description, color] of [
+          [ACTIVATION_LABEL, `Issues for ${PRODUCT_NAME} to work on`, "F9A825"],
+          ["shipyard:blocked", "Shipyard work needs intervention", "B60205"],
+          [
+            "shipyard:complete",
+            "Shipyard work ready for human review",
+            "0E8A16",
+          ],
+          [
+            "shipyard:outstanding-tasks",
+            "Spec has uncompleted tickets",
+            "FBCA04",
+          ],
+        ]) {
+          yield* Effect.try({
+            try: () =>
+              execSync(
+                `gh label create "${name}" --description "${description}" --color "${color}" --force`,
+                { cwd, stdio: "ignore" },
+              ),
+            catch: () => undefined,
+          }).pipe(Effect.ignore);
+        }
       }
 
       const scaffoldResult = yield* d.spinner(

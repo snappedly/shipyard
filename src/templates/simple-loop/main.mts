@@ -40,7 +40,7 @@ const closeClean = async (sandbox: {
 const handoffEvidence = (stdout: string): string | undefined =>
   [...stdout.matchAll(/<handoff>([\s\S]*?)<\/handoff>/g)].at(-1)?.[1]?.trim();
 const blockScope = (
-  scope: { id: string; tickets?: Array<{ id: string }> },
+  scope: { id: string; branch: string; tickets?: Array<{ id: string }> },
   error: unknown,
 ) => {
   const reason = (error instanceof Error ? error.message : String(error)).slice(
@@ -55,6 +55,7 @@ const blockScope = (
       scope.id,
       repository,
       [scope.id, ...(scope.tickets ?? []).map((ticket) => ticket.id)].join(","),
+      scope.branch,
     ],
     { input: reason, encoding: "utf8" },
   );
@@ -77,6 +78,8 @@ for (let iteration = 0; iteration < 3; iteration++) {
       state: string;
       blockedBy: Array<{ id: string; title: string; state: string }>;
     }>;
+    completedTicketIds?: string[];
+    outstandingTicketIds?: string[];
   }>;
   const issue = issues[0];
   if (!issue) break;
@@ -123,7 +126,7 @@ for (let iteration = 0; iteration < 3; iteration++) {
     try {
       publicationUncertain = true;
       const handoff = await publication.exec(
-        `bash .shipyard/handoff.sh ${issue.id} ${issue.branch} ${targetBranch} ${repository} ${[issue.id, ...(issue.tickets ?? []).map((ticket) => ticket.id)].join(",")}`,
+        `bash .shipyard/handoff.sh ${issue.id} ${issue.branch} ${targetBranch} ${repository} ${[issue.id, ...(issue.tickets ?? []).map((ticket) => ticket.id)].join(",")} ${issue.outstandingTicketIds?.join(",") || "-"} ${issue.completedTicketIds?.join(",") || "-"}`,
         { stdin: evidence },
       );
       publicationUncertain = handoff.exitCode === 75;
