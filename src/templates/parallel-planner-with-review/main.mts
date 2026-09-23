@@ -29,6 +29,13 @@ const hooks = {
     ],
   },
 };
+const closeClean = async (sandbox: {
+  close: () => Promise<{ preservedWorktreePath?: string }>;
+}) => {
+  const { preservedWorktreePath } = await sandbox.close();
+  if (preservedWorktreePath)
+    throw new Error(`Sandbox has uncommitted work at ${preservedWorktreePath}`);
+};
 const planSchema = z.object({ issues: z.array(z.object({ id: z.string() })) });
 type Ticket = {
   id: string;
@@ -101,7 +108,7 @@ const runWorker = async (scope: Scope, ticket: Ticket) => {
     packet += `\n\n${approved(review, `Review of #${ticket.id}`)}`;
     return { branch, packet };
   } finally {
-    await sandbox.close();
+    await closeClean(sandbox);
   }
 };
 
@@ -144,7 +151,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
           sandbox: docker(),
           hooks,
         });
-        await seed.close();
+        await closeClean(seed);
         const tickets = scope.tickets ?? [];
         if (!tickets.length)
           throw new Error(`Spec #${id} has no executable tickets`);
@@ -216,7 +223,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
             });
             workerEvidence += `\n\n${complete(integrated, `Integration wave of #${id}`)}`;
           } finally {
-            await wave.close();
+            await closeClean(wave);
           }
           for (const ticket of ready) {
             completed.add(ticket.id);
@@ -290,7 +297,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
           handoffEvidence += `\n\n${approved(finalReview, `Final review of #${id}`)}`;
         }
       } finally {
-        await integration.close();
+        await closeClean(integration);
       }
       const publication = await shipyard.createSandbox({
         branch: scope.branch,

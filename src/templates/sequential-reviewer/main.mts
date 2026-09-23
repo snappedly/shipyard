@@ -30,6 +30,13 @@ const hooks = {
     ],
   },
 };
+const closeClean = async (sandbox: {
+  close: () => Promise<{ preservedWorktreePath?: string }>;
+}) => {
+  const { preservedWorktreePath } = await sandbox.close();
+  if (preservedWorktreePath)
+    throw new Error(`Sandbox has uncommitted work at ${preservedWorktreePath}`);
+};
 
 const handoffEvidence = (stdout: string): string | undefined =>
   [...stdout.matchAll(/<handoff>([\s\S]*?)<\/handoff>/g)].at(-1)?.[1]?.trim();
@@ -102,7 +109,7 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
     }
     evidence = `${implementationEvidence}\n\n${reviewEvidence}`;
   } finally {
-    await sandbox.close();
+    await closeClean(sandbox);
   }
 
   const publication = await shipyard.createSandbox({

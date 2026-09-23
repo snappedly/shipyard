@@ -29,6 +29,13 @@ const hooks = {
     ],
   },
 };
+const closeClean = async (sandbox: {
+  close: () => Promise<{ preservedWorktreePath?: string }>;
+}) => {
+  const { preservedWorktreePath } = await sandbox.close();
+  if (preservedWorktreePath)
+    throw new Error(`Sandbox has uncommitted work at ${preservedWorktreePath}`);
+};
 
 const handoffEvidence = (stdout: string): string | undefined =>
   [...stdout.matchAll(/<handoff>([\s\S]*?)<\/handoff>/g)].at(-1)?.[1]?.trim();
@@ -78,7 +85,7 @@ for (let iteration = 0; iteration < 3; iteration++) {
       throw new Error(`Issue #${issue.id} has no verified completion evidence`);
     evidence = packet;
   } finally {
-    await sandbox.close();
+    await closeClean(sandbox);
   }
 
   // Sync-out rewrites sandbox commits on the host. Publish from the synced

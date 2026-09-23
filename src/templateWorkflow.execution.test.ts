@@ -28,6 +28,7 @@ const calls = vi.hoisted(() => ({
   finalChanges: false,
   finalReviewApproved: true,
   reviewCount: 0,
+  dirtyBranch: "",
 }));
 
 vi.mock("node:child_process", () => ({
@@ -159,6 +160,10 @@ vi.mock("@snappedly-tools/shipyard", () => {
       },
       close: async () => {
         calls.events.push("close");
+        return {
+          preservedWorktreePath:
+            calls.dirtyBranch === branch ? `/tmp/${branch}` : undefined,
+        };
       },
     };
   };
@@ -216,6 +221,7 @@ beforeEach(() => {
   calls.finalChanges = false;
   calls.finalReviewApproved = true;
   calls.reviewCount = 0;
+  calls.dirtyBranch = "";
 });
 
 afterEach(() => {
@@ -322,6 +328,23 @@ describe("generated issue workflows", () => {
       "shipyard/issue-42",
       "shipyard/issue-42",
     ]);
+  });
+
+  it("blocks publication when implementation leaves uncommitted work", async () => {
+    calls.dirtyBranch = "shipyard/issue-42";
+    await expect(
+      import("./templates/simple-loop/main.mts" as string),
+    ).rejects.toThrow("uncommitted work");
+    expect(calls.events).not.toContain("handoff");
+  });
+
+  it("blocks spec integration when a child leaves uncommitted work", async () => {
+    calls.spec = true;
+    calls.dirtyBranch = "shipyard/spec-42-issue-43";
+    await expect(
+      import("./templates/parallel-planner/main.mts" as string),
+    ).rejects.toThrow("uncommitted work");
+    expect(calls.events).not.toContain("handoff");
   });
 
   it("review findings prevent sequential handoff", async () => {
