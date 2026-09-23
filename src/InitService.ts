@@ -48,6 +48,8 @@ export interface TemplateMetadata {
    * `npx tsx ${CONFIG_DIR}/main.ts` doesn't crash with ERR_MODULE_NOT_FOUND.
    */
   dependencies?: readonly string[];
+  /** Host-only environment settings required by the generated workflow. */
+  envExample?: string;
 }
 
 const TEMPLATES: TemplateMetadata[] = [
@@ -57,7 +59,14 @@ const TEMPLATES: TemplateMetadata[] = [
   },
   {
     name: "simple-loop",
-    description: "Selects a standalone issue and publishes a draft PR",
+    description: "Completes one standalone issue through reviewed PR handoff",
+    dependencies: ["zod"],
+    envExample: `# Host-only durable workflow coordinator
+SHIPYARD_DATABASE_URL=
+# Host-side candidate checks (JSON array of {name, command, required})
+SHIPYARD_CHECKS=[{"name":"tests","command":"npm test","required":true}]
+# Optional integration branch override; defaults to staging
+SHIPYARD_BASE_BRANCH=staging`,
   },
   {
     name: "sequential-reviewer",
@@ -213,6 +222,8 @@ export interface AgentEntry {
   readonly defaultModel: string;
   readonly factoryImport: string;
   readonly dockerfileTemplate: string;
+  /** Environment credentials from this provider that may enter an isolated worker. */
+  readonly workerEnvAllowlist: readonly string[];
   /** Lines to include in the generated `.env.example` for this agent's API key. */
   readonly envExample: string;
 }
@@ -292,6 +303,7 @@ const AGENT_REGISTRY: AgentEntry[] = [
     defaultModel: CODEX_MODELS.routine.model,
     factoryImport: "codex",
     dockerfileTemplate: CODEX_DOCKERFILE,
+    workerEnvAllowlist: ["OPENAI_API_KEY"],
     envExample: `# OpenAI API key
 OPENAI_API_KEY=`,
   },
@@ -301,6 +313,7 @@ OPENAI_API_KEY=`,
     defaultModel: "claude-opus-4-8",
     factoryImport: "claudeCode",
     dockerfileTemplate: CLAUDE_CODE_DOCKERFILE,
+    workerEnvAllowlist: ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"],
     envExample: `# Claude Code OAuth token — get one by running \`claude setup-token\` on your host.
 # Lets the agent use your Claude subscription instead of an API key.
 CLAUDE_CODE_OAUTH_TOKEN=
@@ -501,6 +514,14 @@ const rewriteMainTs = (
     let content = yield* fs
       .readFileString(mainTsPath)
       .pipe(Effect.mapError((e) => new Error(e.message)));
+
+    content = content.replace(
+      '["__WORKER_ENV_ALLOWLIST__"]',
+      JSON.stringify(agent.workerEnvAllowlist),
+    );
+    content = content
+      .replace('"__WORKER_PROVIDER__"', JSON.stringify(agent.name))
+      .replace('"__WORKER_MODEL__"', JSON.stringify(model));
 
     // Templates use main.mts as the canonical filename in comments.
     // When the target is main.ts, rewrite those references.
@@ -720,6 +741,10 @@ export const scaffold = (
     if (issueTracker.envExample) {
       envExampleParts.push(issueTracker.envExample);
     }
+    const templateEnvExample = TEMPLATES.find(
+      (template) => template.name === templateName,
+    )?.envExample;
+    if (templateEnvExample) envExampleParts.push(templateEnvExample);
     const envExampleContent = envExampleParts.join("\n") + "\n";
     const envExamplePath = join(configDir, ".env.example");
 

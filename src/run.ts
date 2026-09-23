@@ -416,6 +416,8 @@ export interface RunOptions<A extends AgentProvider = AgentProvider> {
   readonly copyToWorktree?: string[];
   /** Tools the provider must enforce for this controlled phase. */
   readonly toolAllowlist?: readonly string[];
+  /** Environment variables permitted inside this run's sandbox. */
+  readonly envAllowlist?: readonly string[];
   /** Branch strategy — controls how the agent's changes relate to branches.
    * Defaults to { type: "head" } for bind-mount providers and { type: "merge-to-head" } for isolated providers. */
   readonly branchStrategy?: BranchStrategy;
@@ -659,6 +661,7 @@ export async function run(
     resolvedEnv,
     agentProviderEnv: provider.env,
     sandboxProviderEnv: options.sandbox.env,
+    allowlist: options.envAllowlist,
   });
 
   // Always capture the host's current branch for the TARGET_BRANCH built-in

@@ -63,4 +63,22 @@ describe("mergeProviderEnv", () => {
     });
     expect(result).toEqual({ KEY: "agent" });
   });
+
+  it("filters every environment source through the worker allowlist", () => {
+    const result = mergeProviderEnv({
+      resolvedEnv: {
+        OPENAI_API_KEY: "model-key",
+        GH_TOKEN: "github-token",
+        SHIPYARD_DATABASE_URL: "postgres-url",
+      },
+      agentProviderEnv: { ANTHROPIC_API_KEY: "agent-key" },
+      sandboxProviderEnv: { DATABASE_URL: "sandbox-db" },
+      allowlist: ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"],
+    });
+
+    expect(result).toEqual({
+      OPENAI_API_KEY: "model-key",
+      ANTHROPIC_API_KEY: "agent-key",
+    });
+  });
 });

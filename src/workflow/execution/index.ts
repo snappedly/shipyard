@@ -306,6 +306,11 @@ const buildPrompt = (request: PhaseEngineRequest): string =>
     "<untrusted-repository-context>",
     ...request.untrusted.repositoryContent,
     "</untrusted-repository-context>",
+    ...(request.output === undefined
+      ? []
+      : [
+          `Return the phase report inside <${request.output.tag}>...</${request.output.tag}> as JSON matching the requested phase report schema.`,
+        ]),
   ].join("\n");
 
 const redact = (content: string, secrets: ReadonlySet<string>): string =>
@@ -671,12 +676,35 @@ export interface RunPhaseEngineAdapterOptions {
   ) => Promise<RunResult & { output?: unknown }>;
 }
 
+/**
+ * Run adapter for the bundled standalone template. It requires the isolated
+ * Docker provider and exposes only explicitly allowlisted model environment
+ * variables. Unlike the generic adapter, it does not claim that the provider
+ * enforces per-tool restrictions; GitHub and coordinator credentials remain
+ * host-only.
+ */
+export interface CredentialIsolatedRunPhaseEngineAdapterOptions extends Omit<
+  RunPhaseEngineAdapterOptions,
+  "sandbox"
+> {
+  readonly sandbox: SandboxProvider;
+  readonly workerEnvAllowlist: readonly string[];
+}
+
 const runResultToResponse = (
   result: RunResult & { output?: unknown },
   branch: string,
 ): PhaseEngineResponse => {
   const commits = result.commits.map((commit) => commit.sha);
   const headSha = commits.at(-1) ?? "";
+  const output =
+    typeof result.output === "object" && result.output !== null
+      ? (result.output as Record<string, unknown>)
+      : undefined;
+  const stringArray = (value: unknown): readonly string[] =>
+    Array.isArray(value) && value.every((item) => typeof item === "string")
+      ? value
+      : [];
   return {
     stdout: result.stdout,
     completionSignal: result.completionSignal,
@@ -684,14 +712,28 @@ const runResultToResponse = (
     commits,
     branch: result.branch || branch,
     headSha,
+    outcome: output?.outcome === "needs-info" ? "needs-info" : "completed",
     report: {
-      summary: "Phase completed by the Shipyard engine.",
-      evidence: ["The existing Shipyard run interface returned."],
-      checks: [],
+      summary:
+        typeof output?.summary === "string"
+          ? output.summary
+          : "Phase completed by the Shipyard engine.",
+      evidence:
+        output?.evidence === undefined
+          ? ["The existing Shipyard run interface returned."]
+          : stringArray(output.evidence),
+      checks: Array.isArray(output?.checks)
+        ? (output.checks as CheckEvidence[])
+        : [],
       commits,
       artifacts: [],
-      questions: [],
-      findings: [],
+      questions: stringArray(output?.questions),
+      findings: Array.isArray(output?.findings)
+        ? (output.findings as Finding[])
+        : [],
+      reviewAxes: Array.isArray(output?.reviewAxes)
+        ? (output.reviewAxes as ReviewAxis[])
+        : undefined,
     },
     preservedWorktreePath: result.preservedWorktreePath,
   };
@@ -724,6 +766,79 @@ export const createRunPhaseEngineAdapter = (
     return runResultToResponse(result, branch);
   },
 });
+
+const sensitiveWorkerCredentials = new Set([
+  "GH_TOKEN",
+  "GITHUB_TOKEN",
+  "GH_ENTERPRISE_TOKEN",
+  "GITHUB_ENTERPRISE_TOKEN",
+  "SHIPYARD_DATABASE_URL",
+  "DATABASE_URL",
+  "POSTGRES_URL",
+]);
+
+/**
+ * Execute a phase in an isolated Docker container with an explicit worker
+ * environment allowlist. This is the bundled template's credential boundary;
+ * general phase callers should use `createRunPhaseEngineAdapter`, which keeps
+ * its provider-enforced tool allowlist guard.
+ */
+export const createCredentialIsolatedRunPhaseEngineAdapter = (
+  options: CredentialIsolatedRunPhaseEngineAdapterOptions,
+): PhaseEngineAdapter => {
+  if (options.sandbox.tag !== "isolated" || options.sandbox.name !== "docker") {
+    throw new Error(
+      "Credential-isolated phases require the isolated Docker sandbox provider",
+    );
+  }
+  const forbidden = options.workerEnvAllowlist.filter((name) =>
+    sensitiveWorkerCredentials.has(name.toUpperCase()),
+  );
+  if (forbidden.length > 0) {
+    throw new Error(
+      `Credential-isolated phases cannot be exposed to the worker: ${forbidden.join(", ")}`,
+    );
+  }
+  const allowedWorkerEnv = new Set(options.workerEnvAllowlist);
+
+  return {
+    execute: async (request) => {
+      const branch = request.checkout.branch;
+      const baseBranch = request.checkout.immutable
+        ? (request.checkout.candidate?.sha ?? request.assignment.base.sha)
+        : request.assignment.base.sha;
+      const phaseCredentials = request.controls.credentialAllowlist.filter(
+        (name) => allowedWorkerEnv.has(name),
+      );
+      const prompt = buildPrompt(request)
+        .replace(
+          "Allowed tools:",
+          "Requested tools (not provider-enforced in this adapter):",
+        )
+        .replace(
+          "The provider must deny tools and credentials not present in their respective allowlists.",
+          "This isolated worker receives only the assigned issue and allowlisted model credentials. GitHub publication and coordinator credentials stay on the host.",
+        );
+      const result = await options.run({
+        agent: options.agent,
+        sandbox: options.sandbox,
+        cwd: options.cwd,
+        prompt,
+        maxIterations: request.controls.maxIterations,
+        idleTimeoutSeconds: request.controls.timeoutSeconds,
+        signal: request.signal,
+        output: request.output,
+        envAllowlist: phaseCredentials,
+        branchStrategy: {
+          type: "branch",
+          branch,
+          baseBranch,
+        },
+      });
+      return runResultToResponse(result, branch);
+    },
+  };
+};
 
 export interface CreateSandboxPhaseEngineAdapterOptions {
   readonly agent: AgentProvider;

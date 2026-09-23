@@ -298,31 +298,68 @@ describe("InitService scaffold", () => {
     expect(mainTs).toContain('"@snappedly-tools/shipyard"');
   });
 
-  it("simple-loop main.mts contains shipyard.run() with expected options", async () => {
+  it("simple-loop main.mts uses the canonical standalone lifecycle", async () => {
     const dir = await makeDir();
     await runScaffold(dir, { templateName: "simple-loop" });
 
     const mainTs = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
-    expect(mainTs).toContain("run(");
+    expect(mainTs).toContain("createCredentialIsolatedRunPhaseEngineAdapter(");
+    expect(mainTs).toContain("await shipyard.deliverStandalone({");
     expect(mainTs).toContain("maxIterations");
     expect(mainTs).toContain("1");
     expect(mainTs).not.toContain("merge-to-head");
-    expect(mainTs).toContain("await publishTemplateDelivery({");
+    expect(mainTs).not.toContain("publishTemplateDelivery");
+    expect(mainTs).toContain("openPostgresCoordinator({");
+    expect(mainTs).toContain("readActivatedDeliveryRoot(");
+    expect(mainTs).toContain("verifyChecks: runCandidateChecks");
+    expect(mainTs).toContain("prompt: options.prompt");
+    expect(mainTs).toContain("envAllowlist: []");
+    expect(mainTs).toContain("databaseUrl: hostEnv.SHIPYARD_DATABASE_URL");
+    expect(mainTs).not.toMatch(/workerEnvAllowlist:[\s\S]{0,200}GH_TOKEN/);
+    expect(mainTs).not.toMatch(
+      /workerEnvAllowlist:[\s\S]{0,200}SHIPYARD_DATABASE_URL/,
+    );
+    expect(mainTs).toContain(
+      'const modelEnvAllowlist = ["CLAUDE_CODE_OAUTH_TOKEN","ANTHROPIC_API_KEY"] as const;',
+    );
     // When scaffolded with default model, simple-loop uses claude-opus-4-8
     // (rewritten from template's claude-sonnet-4-6)
-    expect(mainTs).toContain("promptFile");
+    expect(mainTs).toContain("\.shipyard/prompt.md");
     expect(mainTs).toContain("npm install");
     expect(mainTs).toContain("onSandboxReady");
+    expect(mainTs).toContain('provider: "claude-code"');
+    expect(mainTs).toContain('model: "claude-opus-4-8"');
   });
 
-  it("simple-loop prompt.md contains shell expressions for issues and commit history", async () => {
+  it("simple-loop gives a Codex worker only the OpenAI API key", async () => {
+    const dir = await makeDir();
+    await runScaffold(dir, {
+      templateName: "simple-loop",
+      agent: codexAgent,
+      model: codexAgent.defaultModel,
+    });
+
+    const mainTs = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
+    expect(mainTs).toContain(
+      'const modelEnvAllowlist = ["OPENAI_API_KEY"] as const;',
+    );
+    expect(mainTs).not.toContain("ANTHROPIC_API_KEY");
+    expect(mainTs).not.toContain("CLAUDE_CODE_OAUTH_TOKEN");
+    expect(mainTs).toContain('provider: "codex"');
+    expect(mainTs).toContain(`model: "${CODEX_MODELS.routine.model}"`);
+  });
+
+  it("simple-loop prompt delegates issue selection and lifecycle authority to the host", async () => {
     const dir = await makeDir();
     await runScaffold(dir, { templateName: "simple-loop" });
 
     const prompt = await readFile(join(dir, ".shipyard", "prompt.md"), "utf-8");
-    expect(prompt).toContain("!`gh issue");
-    expect(prompt).toContain("!`git log");
+    expect(prompt).toContain("host coordinator");
+    expect(prompt).toContain("Do not query GitHub");
+    expect(prompt).toContain("{{TASK_ID}}");
     expect(prompt).toContain("<promise>COMPLETE</promise>");
+    expect(prompt).not.toContain("gh issue list");
+    expect(prompt).not.toContain("{{LIST_TASKS_COMMAND}}");
   });
 
   describe("sequential-reviewer template", () => {
@@ -617,7 +654,6 @@ describe("InitService scaffold", () => {
 
   it.each([
     { templateName: "blank", promptFilename: "prompt.md" },
-    { templateName: "simple-loop", promptFilename: "prompt.md" },
     {
       templateName: "sequential-reviewer",
       promptFilename: "implement-prompt.md",
@@ -653,7 +689,11 @@ describe("InitService scaffold", () => {
       const prompt = await readFile(join(dir, ".shipyard", file), "utf-8");
       expect(prompt, `${template}/${file}`).toContain("{{TASK_ID}}");
       const main = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
-      expect(main).toContain("TASK_ID: String(issue.number)");
+      expect(main).toContain(
+        template === "simple-loop"
+          ? '.replaceAll("{{TASK_ID}}", String(issue.number))'
+          : "TASK_ID: String(issue.number)",
+      );
     }
   });
 
@@ -1194,7 +1234,7 @@ describe("InitService scaffold", () => {
   });
 
   describe("Issue tracker scaffold", () => {
-    it("simple-loop with github-issues produces prompt with gh issue commands (richer version)", async () => {
+    it("simple-loop keeps GitHub issue commands on the host", async () => {
       const dir = await makeDir();
       await runScaffold(dir, {
         templateName: "simple-loop",
@@ -1205,9 +1245,10 @@ describe("InitService scaffold", () => {
         join(dir, ".shipyard", "prompt.md"),
         "utf-8",
       );
-      expect(prompt).toContain("gh issue list");
-      expect(prompt).toContain("labels");
-      expect(prompt).toContain("comments");
+      const main = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
+      expect(main).toMatch(/"issue",\s+"list"/);
+      expect(prompt).toContain("Do not query GitHub");
+      expect(prompt).not.toContain("gh issue list");
       expect(prompt).not.toContain("gh issue close");
       expect(prompt).not.toContain("{{LIST_TASKS_COMMAND}}");
       expect(prompt).not.toContain("{{CLOSE_TASK_COMMAND}}");
@@ -1221,8 +1262,9 @@ describe("InitService scaffold", () => {
         join(dir, ".shipyard", "prompt.md"),
         "utf-8",
       );
-      // Should default to github-issues and replace placeholders
-      expect(prompt).toContain("gh issue list");
+      // The host performs issue selection; the worker prompt has no live query.
+      expect(prompt).toContain("host coordinator");
+      expect(prompt).not.toContain("gh issue list");
       expect(prompt).not.toContain("{{LIST_TASKS_COMMAND}}");
     });
 
@@ -1245,11 +1287,8 @@ describe("InitService scaffold", () => {
         join(dir, ".shipyard", "prompt.md"),
         "utf-8",
       );
-      expect(prompt).toContain(
-        "already been filtered to issues ready for work",
-      );
-      expect(prompt).toContain("sole source of truth");
-      expect(prompt).toContain("Do not run your own unfiltered query");
+      expect(prompt).toContain("issue selected by the host coordinator");
+      expect(prompt).toContain("Do not query GitHub");
     });
 
     // --- sequential-reviewer ---

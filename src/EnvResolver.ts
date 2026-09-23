@@ -1,4 +1,5 @@
 import { FileSystem } from "@effect/platform";
+import { NodeContext } from "@effect/platform-node";
 import { Effect } from "effect";
 import { join } from "node:path";
 
@@ -98,3 +99,11 @@ export const resolveEnv = (
 
     return result;
   });
+
+/** Resolve `.shipyard/.env` for a host-side workflow entrypoint. */
+export const loadShipyardEnv = async (
+  repoDir = process.cwd(),
+): Promise<Record<string, string>> =>
+  Effect.runPromise(
+    resolveEnv(repoDir).pipe(Effect.provide(NodeContext.layer)),
+  );

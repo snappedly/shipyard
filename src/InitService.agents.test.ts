@@ -22,6 +22,10 @@ describe("Agent registry", () => {
     expect(agent!.defaultModel).toBe("claude-opus-4-8");
     expect(agent!.factoryImport).toBe("claudeCode");
     expect(agent!.dockerfileTemplate).toContain("FROM");
+    expect(agent!.workerEnvAllowlist).toEqual([
+      "CLAUDE_CODE_OAUTH_TOKEN",
+      "ANTHROPIC_API_KEY",
+    ]);
   });
 
   it("getAgent returns undefined for unknown agent", () => {
@@ -36,5 +40,6 @@ describe("Agent registry", () => {
     expect(agent!.factoryImport).toBe("codex");
     expect(agent!.dockerfileTemplate).toContain("FROM");
     expect(agent!.dockerfileTemplate).toContain("@openai/codex");
+    expect(agent!.workerEnvAllowlist).toEqual(["OPENAI_API_KEY"]);
   });
 });

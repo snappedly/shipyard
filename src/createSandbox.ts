@@ -88,6 +88,8 @@ export interface CreateSandboxOptions {
   readonly hooks?: SandboxHooks;
   /** Paths relative to the host repo root to copy into the worktree at creation time. */
   readonly copyToWorktree?: string[];
+  /** Environment variables permitted inside this sandbox. */
+  readonly envAllowlist?: readonly string[];
   /** Override default timeouts for built-in lifecycle steps. Unset keys keep their defaults. */
   readonly timeouts?: Timeouts;
   /** @internal Test-only overrides to bypass the sandbox provider. */
@@ -727,6 +729,8 @@ export interface CreateSandboxFromWorktreeOptions {
   readonly sandbox: SandboxProvider;
   readonly hooks?: SandboxHooks;
   readonly copyToWorktree?: string[];
+  /** Environment variables permitted inside this sandbox. */
+  readonly envAllowlist?: readonly string[];
   readonly timeouts?: Timeouts;
   /** Forwarded to the Sandbox handle. Set by `createWorktree` so the handle
    *  can route run()/interactive() correctly: for `merge-to-head`, each call
@@ -793,6 +797,7 @@ export const createSandboxFromWorktree = async (
       resolvedEnv,
       agentProviderEnv: {},
       sandboxProviderEnv: options.sandbox.env,
+      allowlist: options.envAllowlist,
     });
 
     const provider = options.sandbox;
@@ -976,6 +981,7 @@ export const createSandbox = async (
               resolvedEnv,
               agentProviderEnv: {},
               sandboxProviderEnv: options.sandbox.env,
+              allowlist: options.envAllowlist,
             });
 
             const provider = options.sandbox;

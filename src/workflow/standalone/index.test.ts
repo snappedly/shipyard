@@ -193,6 +193,7 @@ const harness = () => {
       head: { branch, sha: pr?.headSha ?? headSha },
       briefHash: brief.hash,
     }),
+    issueState: () => issue.state,
   };
 };
 
@@ -271,6 +272,26 @@ describe("canonical standalone delivery", () => {
       },
       review: { review },
       readCurrent: state.readCurrent,
+      verifyChecks: vi.fn(
+        async (candidate: {
+          base: { sha: string };
+          head: { sha: string };
+          briefHash: string;
+        }) => {
+          state.events.push("verify-checks");
+          return [
+            {
+              name: "typecheck",
+              command: "npm run typecheck",
+              status: "passed" as const,
+              summary: "Host check passed.",
+              baseSha: candidate.base.sha,
+              headSha: candidate.head.sha,
+              briefHash: candidate.briefHash,
+            },
+          ];
+        },
+      ),
       cleanup: async () => {
         state.events.push("cleanup");
         return true;
@@ -281,11 +302,118 @@ describe("canonical standalone delivery", () => {
 
     expect(result.outcome).toBe("ready-for-human");
     expect(replay.outcome).toBe("ready-for-human");
+    expect(result.issueClosed).toBe(true);
+    expect(replay.issueClosed).toBe(true);
+    expect(options.verifyChecks).toHaveBeenCalledTimes(2);
+    expect(state.events.indexOf("verify-checks")).toBeLessThan(
+      state.events.indexOf("handoff"),
+    );
     expect(state.events.indexOf("cleanup")).toBeLessThan(
       state.events.indexOf("handoff"),
     );
-    expect(state.events).not.toContain("close-issue");
+    expect(state.events.indexOf("handoff")).toBeLessThan(
+      state.events.indexOf("close-issue"),
+    );
+    expect(
+      state.events.filter((event) => event === "close-issue"),
+    ).toHaveLength(1);
+    expect(state.issueState()).toBe("closed");
     expect(state.events.filter((event) => event === "handoff")).toHaveLength(1);
     expect(review).toHaveBeenCalledOnce();
+  });
+
+  it("blocks before review and handoff when a current-head required check fails", async () => {
+    const state = harness();
+    const review = vi.fn(async () => ({
+      outcome: "passed" as const,
+      axes: ["standards", "spec"] as const,
+      findings: [],
+      evidence: ["Current candidate passes review."],
+      baseSha,
+      headSha,
+      briefHash: brief.hash,
+      commits: [],
+      changedFiles: [],
+    }));
+    const result = await deliverStandalone({
+      coordinator: state.coordinator,
+      publication: state.publication,
+      brief,
+      policy,
+      workerId: "worker-1",
+      issueNumber: 42,
+      branch,
+      execution: {
+        trusted: {
+          brief,
+          policy,
+          skill: {
+            revision: "skills-1",
+            content: "Implement only this issue.",
+          },
+        },
+        untrusted: {
+          sourceText: brief.source.originalBody,
+          repositoryContent: [],
+        },
+        controls: {
+          toolAllowlist: [],
+          credentialAllowlist: [],
+          timeoutSeconds: 60,
+          maxIterations: 1,
+        },
+        adapter: createFakePhaseEngineAdapter({
+          response: {
+            stdout: '<phase-result>{"outcome":"completed"}</phase-result>',
+            completionSignal: "COMPLETE",
+            commits: [headSha],
+            branch,
+            headSha,
+            report: {
+              summary: "Implemented the bounded change.",
+              evidence: ["The change is verified."],
+              checks: [
+                {
+                  name: "typecheck",
+                  command: "npm run typecheck",
+                  status: "passed",
+                  summary: "Worker reported pass.",
+                },
+              ],
+              commits: [headSha],
+              artifacts: [],
+              questions: [],
+              findings: [],
+            },
+          },
+        }),
+        artifactStore: createInMemoryArtifactStore(),
+        credentialResolver: { resolve: async () => undefined },
+        output: Output.object({
+          tag: "phase-result",
+          schema: z.object({ outcome: z.literal("completed") }),
+        }),
+      },
+      review: { review },
+      readCurrent: state.readCurrent,
+      verifyChecks: async (candidate) => [
+        {
+          name: "typecheck",
+          command: "npm run typecheck",
+          status: "failed",
+          summary: "Host check failed.",
+          baseSha: candidate.base.sha,
+          headSha: candidate.head.sha,
+          briefHash: candidate.briefHash,
+        },
+      ],
+      cleanup: async () => true,
+    });
+
+    expect(result.outcome).toBe("blocked");
+    expect(result.reason).toContain("typecheck");
+    expect(review).not.toHaveBeenCalled();
+    expect(state.events).not.toContain("handoff");
+    expect(state.events).not.toContain("close-issue");
   });
 });

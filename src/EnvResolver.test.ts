@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { resolveEnv } from "./EnvResolver.js";
+import { loadShipyardEnv, resolveEnv } from "./EnvResolver.js";
 
 const makeDir = () => mkdtemp(join(tmpdir(), "env-resolver-"));
 
@@ -12,6 +12,20 @@ const runResolveEnv = (dir: string) =>
   Effect.runPromise(resolveEnv(dir).pipe(Effect.provide(NodeContext.layer)));
 
 describe("resolveEnv", () => {
+  it("loads configured host environment for workflow entrypoints", async () => {
+    const dir = await makeDir();
+    await mkdir(join(dir, ".shipyard"));
+    await writeFile(
+      join(dir, ".shipyard", ".env"),
+      "SHIPYARD_DATABASE_URL=postgres://host-only\nGH_TOKEN=host-only-token\n",
+    );
+
+    await expect(loadShipyardEnv(dir)).resolves.toEqual({
+      SHIPYARD_DATABASE_URL: "postgres://host-only",
+      GH_TOKEN: "host-only-token",
+    });
+  });
+
   it("returns all key-value pairs from .shipyard/.env", async () => {
     const dir = await makeDir();
     await mkdir(join(dir, ".shipyard"));

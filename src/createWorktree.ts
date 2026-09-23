@@ -182,6 +182,8 @@ export interface WorktreeCreateSandboxOptions {
   readonly hooks?: SandboxHooks;
   /** Paths relative to the host repo root to copy into the worktree at creation time. */
   readonly copyToWorktree?: string[];
+  /** Environment variables permitted inside this sandbox. */
+  readonly envAllowlist?: readonly string[];
   /** Override default timeouts for built-in lifecycle steps. Unset keys keep their defaults. */
   readonly timeouts?: Timeouts;
   /** @internal Test-only overrides to bypass the sandbox provider. */
@@ -760,6 +762,7 @@ export const createWorktree = async (
       sandbox: opts.sandbox,
       hooks: opts.hooks,
       copyToWorktree: opts.copyToWorktree,
+      envAllowlist: opts.envAllowlist,
       timeouts: opts.timeouts,
       branchStrategy: options.branchStrategy,
       _test: opts._test,

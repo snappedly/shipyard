@@ -111,7 +111,10 @@ describe("getTemplateDependencies", () => {
   });
 
   it("reports no dependencies for templates that don't need a schema validator", () => {
-    expect(getTemplateDependencies("simple-loop")).not.toContain("zod");
     expect(getTemplateDependencies("blank")).not.toContain("zod");
+  });
+
+  it("reports zod for simple-loop's structured phase and review reports", () => {
+    expect(getTemplateDependencies("simple-loop")).toContain("zod");
   });
 });

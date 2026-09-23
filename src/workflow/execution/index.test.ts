@@ -10,9 +10,11 @@ import {
 } from "../contracts/index.js";
 import { Output } from "../../Output.js";
 import { createIsolatedSandboxProvider } from "../../SandboxProvider.js";
+import { noSandbox } from "../../sandboxes/no-sandbox.js";
 import type { AgentProvider } from "../../AgentProvider.js";
 import type { Sandbox } from "../../createSandbox.js";
 import {
+  createCredentialIsolatedRunPhaseEngineAdapter,
   createCreateSandboxPhaseEngineAdapter,
   createInMemoryArtifactStore,
   createFakePhaseEngineAdapter,
@@ -661,5 +663,94 @@ describe("workflow execution", () => {
     expect(createResult.status).toBe("completed");
     expect(createOptions?.branch).toBe("shipyard/issue-10");
     expect(closed).toBe(true);
+  });
+
+  it("uses an explicitly credential-isolated Docker adapter without weakening the generic guard", async () => {
+    const docker = createIsolatedSandboxProvider({
+      name: "docker",
+      create: async () => {
+        throw new Error("the run callback is the tested seam");
+      },
+    });
+    const agent = {
+      name: "codex",
+      env: {},
+      captureSessions: false,
+    } as AgentProvider;
+    let runOptions: Record<string, unknown> | undefined;
+    const adapter = createCredentialIsolatedRunPhaseEngineAdapter({
+      agent,
+      sandbox: docker,
+      workerEnvAllowlist: ["OPENAI_API_KEY"],
+      run: async (options) => {
+        runOptions = options as unknown as Record<string, unknown>;
+        return {
+          stdout: `<phase-result>${JSON.stringify(completedOutput)}</phase-result>`,
+          completionSignal: "COMPLETE",
+          output: completedOutput,
+          commits: [{ sha: "e".repeat(40) }],
+          branch: "shipyard/issue-10",
+          iterations: [],
+        };
+      },
+    });
+    const request = {
+      assignment,
+      trusted: {
+        brief,
+        policy,
+        skill: { revision: "skill-1", content: "Use the pinned skill." },
+      },
+      untrusted: {
+        sourceText: brief.source.originalBody,
+        repositoryContent: [],
+      },
+      controls: {
+        toolAllowlist: ["Read"],
+        credentialAllowlist: ["OPENAI_API_KEY", "GH_TOKEN"],
+        timeoutSeconds: 10,
+        maxIterations: 1,
+      },
+      credentials: { get: async () => "unused" },
+      signal: new AbortController().signal,
+      checkout: { branch: "shipyard/issue-10", immutable: false },
+      output,
+    } as const;
+
+    await adapter.execute(request as never);
+
+    expect(runOptions?.envAllowlist).toEqual(["OPENAI_API_KEY"]);
+    expect(runOptions?.prompt).toContain(brief.source.originalBody);
+    expect(runOptions).not.toHaveProperty("toolAllowlist");
+    const strictAdapter = createRunPhaseEngineAdapter({
+      agent,
+      sandbox: docker,
+      run: async () => {
+        throw new Error("unreachable");
+      },
+    });
+    await expect(strictAdapter.execute(request as never)).rejects.toThrow(
+      "does not enforce the phase tool allowlist",
+    );
+    expect(() =>
+      createCredentialIsolatedRunPhaseEngineAdapter({
+        agent,
+        sandbox: noSandbox(),
+        workerEnvAllowlist: ["OPENAI_API_KEY"],
+        run: async () => {
+          throw new Error("unreachable");
+        },
+      }),
+    ).toThrow(/isolated Docker/);
+    expect(() =>
+      createCredentialIsolatedRunPhaseEngineAdapter({
+        agent,
+        sandbox: docker,
+        workerEnvAllowlist: ["OPENAI_API_KEY", "SHIPYARD_DATABASE_URL"],
+        run: async () => {
+          throw new Error("unreachable");
+        },
+      }),
+    ).toThrow(/cannot be exposed/);
   });
 });

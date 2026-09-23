@@ -9,8 +9,11 @@ export const mergeProviderEnv = (options: {
   readonly resolvedEnv: Record<string, string>;
   readonly agentProviderEnv: Record<string, string>;
   readonly sandboxProviderEnv: Record<string, string>;
+  /** When set, expose only these variables to the sandbox process. */
+  readonly allowlist?: readonly string[];
 }): Record<string, string> => {
-  const { resolvedEnv, agentProviderEnv, sandboxProviderEnv } = options;
+  const { resolvedEnv, agentProviderEnv, sandboxProviderEnv, allowlist } =
+    options;
 
   // Check for overlapping keys between agent and sandbox provider env
   const agentKeys = Object.keys(agentProviderEnv);
@@ -23,9 +26,15 @@ export const mergeProviderEnv = (options: {
     );
   }
 
-  return {
+  const merged = {
     ...resolvedEnv,
     ...sandboxProviderEnv,
     ...agentProviderEnv,
   };
+  if (allowlist === undefined) return merged;
+
+  const allowedKeys = new Set(allowlist);
+  return Object.fromEntries(
+    Object.entries(merged).filter(([key]) => allowedKeys.has(key)),
+  );
 };

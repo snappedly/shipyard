@@ -5,6 +5,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { execSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
@@ -415,6 +416,69 @@ describe("branchStrategy on RunOptions", () => {
     ).rejects.toThrow(
       "head branch strategy is not supported with isolated providers",
     );
+  });
+});
+
+describe("run environment allowlist", () => {
+  it("omits GitHub and coordinator credentials at the sandbox boundary", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "shipyard-env-allowlist-"));
+    const configDir = join(cwd, ".shipyard");
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(
+      join(configDir, ".env"),
+      [
+        "OPENAI_API_KEY=file-model-key",
+        "GH_TOKEN=github-token",
+        "SHIPYARD_DATABASE_URL=postgres-secret",
+      ].join("\n"),
+    );
+    writeFileSync(join(cwd, "README.md"), "fixture\n");
+    execSync("git init -b main", { cwd, stdio: "ignore" });
+    execSync('git config user.email "test@example.com"', { cwd });
+    execSync('git config user.name "Shipyard test"', { cwd });
+    execSync("git add README.md && git commit -m initial", {
+      cwd,
+      stdio: "ignore",
+    });
+
+    let workerEnv: Record<string, string> | undefined;
+    const sandboxProvider = shipyard.createIsolatedSandboxProvider({
+      name: "docker",
+      env: { DATABASE_URL: "provider-db-secret" },
+      create: async ({ env }) => {
+        workerEnv = env;
+        throw new Error("stop after inspecting worker environment");
+      },
+    });
+    const agent: AgentProvider = {
+      name: "fixture-agent",
+      env: { OPENAI_API_KEY: "agent-model-key" },
+      captureSessions: false,
+      buildPrintCommand: () => ({ command: "true" }),
+      parseStreamLine: () => [],
+    };
+
+    try {
+      await expect(
+        run({
+          agent,
+          sandbox: sandboxProvider,
+          cwd,
+          prompt: "test",
+          branchStrategy: {
+            type: "branch",
+            branch: "shipyard/env-allowlist-test",
+          },
+          envAllowlist: ["OPENAI_API_KEY"],
+        }),
+      ).rejects.toThrow("stop after inspecting worker environment");
+      expect(workerEnv).toEqual({ OPENAI_API_KEY: "agent-model-key" });
+      expect(workerEnv).not.toHaveProperty("GH_TOKEN");
+      expect(workerEnv).not.toHaveProperty("SHIPYARD_DATABASE_URL");
+      expect(workerEnv).not.toHaveProperty("DATABASE_URL");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 });
 

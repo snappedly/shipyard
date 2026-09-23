@@ -1,4 +1,5 @@
 export { run } from "./run.js";
+export { loadShipyardEnv } from "./EnvResolver.js";
 export type {
   RunOptions,
   RunResult,
