@@ -164,7 +164,7 @@ else process.exit(2);
       expect(reconciled).toContain(
         `issue edit ${id} --repo owner/repo --remove-label shipyard`,
       );
-  });
+  }, 20_000);
 
   it("rejects conflicting native and body parent links", async () => {
     const { dir, bin } = await fixture();

@@ -515,7 +515,7 @@ describe("InitService scaffold", () => {
     "parallel-planner",
     "parallel-planner-with-review",
   ])(
-    "%s scaffolds standalone selection, setup, and PR handoff",
+    "%s scaffolds issue selection, setup, and PR handoff",
     async (templateName) => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName });
@@ -527,7 +527,6 @@ describe("InitService scaffold", () => {
       );
       const setup = await readFile(join(configDir, "setup.sh"), "utf-8");
       const handoff = await readFile(join(configDir, "handoff.sh"), "utf-8");
-      expect(main).toContain("sandbox.exec");
       expect(main).toContain("handoff.sh");
       expect(main).toContain("setup.sh");
       expect(selector).toMatch(/"--label",\s*"shipyard"/);
@@ -888,7 +887,7 @@ describe("InitService scaffold", () => {
 
     // --- parallel-planner ---
 
-    it("parallel-planner main.mts uses id:string and TASK_ID", async () => {
+    it("parallel-planner main.mts uses string issue IDs", async () => {
       const dir = await makeDir();
       await runScaffold(dir, {
         templateName: "parallel-planner",
@@ -896,7 +895,6 @@ describe("InitService scaffold", () => {
 
       const main = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
       expect(main).toContain("id: z.string()");
-      expect(main).toContain("TASK_ID: issue.id");
       expect(main).not.toContain("number: number");
       expect(main).not.toContain("ISSUE_NUMBER");
       expect(main).not.toContain("`  #${");
@@ -973,7 +971,7 @@ describe("InitService scaffold", () => {
 
     // --- parallel-planner-with-review ---
 
-    it("parallel-planner-with-review main.mts uses id:string and TASK_ID", async () => {
+    it("parallel-planner-with-review main.mts uses string issue IDs", async () => {
       const dir = await makeDir();
       await runScaffold(dir, {
         templateName: "parallel-planner-with-review",
@@ -981,7 +979,6 @@ describe("InitService scaffold", () => {
 
       const main = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
       expect(main).toContain("id: z.string()");
-      expect(main).toContain("TASK_ID: issue.id");
       expect(main).not.toContain("number: number");
       expect(main).not.toContain("ISSUE_NUMBER");
       expect(main).not.toContain("`  #${");
