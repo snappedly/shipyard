@@ -360,7 +360,7 @@ const ISSUE_TRACKER_REGISTRY: IssueTrackerEntry[] = [
     name: "github-issues",
     label: "GitHub Issues",
     templateArgs: {
-      LIST_TASKS_COMMAND: `gh issue list --state open --label ${ACTIVATION_LABEL} --limit 100 --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'`,
+      LIST_TASKS_COMMAND: `gh issue list --state open --label ${ACTIVATION_LABEL} --limit 100 --json number,title,body,parent,labels,comments --jq '[.[] | {number, title, body, parent: (if .parent == null then null else {number: .parent.number, title: .parent.title} end), labels: [.labels[].name], comments: [.comments[].body]}]'`,
       VIEW_TASK_COMMAND: "gh issue view <ID>",
       CLOSE_TASK_COMMAND: `gh issue close <ID> --comment "Completed by ${PRODUCT_NAME}"`,
       ISSUE_TRACKER_TOOLS: GITHUB_CLI_TOOLS,

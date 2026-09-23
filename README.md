@@ -89,6 +89,9 @@ an activated executable child of an open planning spec, it resolves the
 complete native or documented fallback graph and routes the parent through the
 same durable spec delivery. Sibling activations share the parent delivery
 identity and integration branch; the parent never runs as an executable issue.
+Parallel planner input includes native parent details and preserves the
+activated issue ID, so an activated spec child is promoted even when the plan
+omits its child list and lets the host load the full graph.
 Spec child issues close after their integration and verification, while the
 parent remains open until merge.
 The host `gh` login needs Contents, Pull requests, Checks, and Issues write
@@ -118,7 +121,9 @@ local-only orphan branch is ignored after interruption. If a delivery is
 blocked after bounded recovery, Shipyard removes the failed issue's lowercase
 `shipyard` label and adds `shipyard-blocked`; an existing pull request stays
 draft and receives the blocked label. For spec delivery, the parent stays open
-without a blocked label and links to the failed child. Re-add `shipyard` to the
+without a blocked label and links to the failed child. The child comment records
+the phase, retry count, sanitized error, last successful step, published branch
+and commit, pull request, and suggested recovery. Re-add `shipyard` to the
 blocked child (or standalone issue) to resume the existing delivery.
 
 On retry, the coordinator reconciles the existing pull request and remote head

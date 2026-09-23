@@ -998,6 +998,9 @@ const deliverSpecGroup = async ({
           ...(result.blockedChild === undefined
             ? {}
             : { blockedChild: result.blockedChild }),
+          ...(result.blockedEvidence === undefined
+            ? {}
+            : { failureEvidence: result.blockedEvidence }),
           ...(sameVersionNotDraft || result.candidate === undefined
             ? {}
             : { candidate: result.candidate }),

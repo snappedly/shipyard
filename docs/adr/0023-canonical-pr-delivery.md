@@ -30,10 +30,16 @@ completed child remains closed and a merged delivery is immutable. Infrastructur
 failures use finite automatic recovery; exhausted work is projected with the
 red `shipyard-blocked` label and sanitized evidence. For planning specs, the
 failed child loses its `shipyard` activation label, and the open parent receives
-a link comment without a blocked label. Existing pull requests remain draft and
-receive the blocked label. Re-adding `shipyard` to the blocked child explicitly
-resumes the existing delivery. Existing triage labels retain their meanings and
-are not renamed.
+a link comment without a blocked label. The child comment includes sanitized
+phase, retry, publication, and recovery evidence. Existing pull requests remain
+draft and receive the blocked label. Re-adding `shipyard` to the blocked child
+explicitly resumes the existing delivery. Existing triage labels retain their
+meanings and are not renamed.
+
+Parallel planner input identifies the activated issue and its native parent.
+An activated child routes through that child's current parent, then the host
+loads the authoritative complete graph; planner output does not need to list
+the spec's children to route correctly.
 
 Only a maintainer may merge a pull request. Shipyard observes the exact merged
 candidate and closes a planning-spec parent only after all scoped children and

@@ -1,5 +1,6 @@
 import type {
   DeliveryEffectExecution,
+  DeliveryFailureEvidence,
   DeliveryKey,
   DeliveryLease,
   WorkflowCoordinator,
@@ -24,6 +25,7 @@ import type {
   SpecRemoteDeliveryState,
 } from "../../workflow/spec/index.js";
 import {
+  formatBlockedDeliveryEvidence,
   parseGitHubPublicationMetadata,
   projectActiveLabels,
   projectBlockedLabels,
@@ -97,6 +99,7 @@ export interface PublishGitHubSpecBlockedInput {
   readonly delivery: ReconcileSpecDeliveryInput["delivery"];
   readonly lease: DeliveryLease;
   readonly reason: string;
+  readonly failureEvidence?: DeliveryFailureEvidence;
   readonly blockedChild?: WorkIdentity;
   readonly candidate?: SpecCandidate;
   readonly signal?: AbortSignal;
@@ -975,6 +978,31 @@ export const createGitHubSpecDeliveryHost = (
     },
     publishBlocked: async (input) => {
       const repository = input.delivery.key.repository;
+      const candidate = input.candidate;
+      const branch = input.failureEvidence?.branch ?? candidate?.head.branch;
+      const commit = input.failureEvidence?.commit ?? candidate?.head.sha;
+      const pullRequest =
+        input.failureEvidence?.pullRequest ??
+        (candidate === undefined
+          ? undefined
+          : `https://github.com/${repository}/pull/${candidate.pullRequest.id}`);
+      const sanitizedReason = sanitizeDiagnostic(input.reason);
+      const failureEvidence: DeliveryFailureEvidence = {
+        phase: input.failureEvidence?.phase ?? "implementation",
+        error: input.reason,
+        attempts: input.failureEvidence?.attempts ?? 1,
+        ...(input.failureEvidence?.lastSuccessfulStep === undefined
+          ? {}
+          : { lastSuccessfulStep: input.failureEvidence.lastSuccessfulStep }),
+        ...(branch === undefined ? {} : { branch }),
+        ...(commit === undefined ? {} : { commit }),
+        ...(pullRequest === undefined ? {} : { pullRequest }),
+        recovery:
+          input.failureEvidence?.recovery ??
+          "Resolve the reported blocker, then re-add the shipyard label to resume this delivery.",
+        occurredAt:
+          input.failureEvidence?.occurredAt ?? new Date().toISOString(),
+      };
       const number = issueNumber(input.delivery.root);
       const issue = await transport.fetchIssue({
         repository,
@@ -1066,7 +1094,7 @@ export const createGitHubSpecDeliveryHost = (
             });
           },
         });
-        const childCommentMarker = `${childMarker}:comment:${markerHash(input.reason)}`;
+        const childCommentMarker = `${childMarker}:comment:${markerHash(sanitizedReason)}`;
         await coordinator.publishDeliveryEffect({
           key: input.delivery.key,
           lease: input.lease,
@@ -1084,7 +1112,7 @@ export const createGitHubSpecDeliveryHost = (
             transport.createComment({
               repository,
               issueNumber: childNumber,
-              body: `${markerText(childCommentMarker)}\nShipyard blocked this child issue.\n\n${sanitizeDiagnostic(input.reason)}\n\nResolve the blocker, then re-add the shipyard label to resume the existing spec delivery.`,
+              body: `${markerText(childCommentMarker)}\nShipyard blocked this child issue.\n\n${formatBlockedDeliveryEvidence(failureEvidence)}\n\nResolve the blocker, then re-add the shipyard label to resume the existing spec delivery.`,
             }),
         });
       }
@@ -1141,7 +1169,7 @@ export const createGitHubSpecDeliveryHost = (
           },
         });
       }
-      const commentMarker = `spec-blocked-comment:${issueMarker}:${markerHash(input.reason)}`;
+      const commentMarker = `spec-blocked-comment:${issueMarker}:${markerHash(sanitizedReason)}`;
       const parentMessage =
         blockedChild === undefined
           ? "Shipyard paused this planning spec. No single child issue could be isolated as the blocker."
@@ -1163,7 +1191,7 @@ export const createGitHubSpecDeliveryHost = (
           transport.createComment({
             repository,
             issueNumber: number,
-            body: `${markerText(commentMarker)}\n${parentMessage}\n\n${sanitizeDiagnostic(input.reason)}\n\nResolve the child blocker and re-add the shipyard label to that child to resume the existing delivery.`,
+            body: `${markerText(commentMarker)}\n${parentMessage}\n\n${formatBlockedDeliveryEvidence(failureEvidence)}\n\nResolve the child blocker and re-add the shipyard label to that child to resume the existing delivery.`,
           }),
       });
       if (input.candidate !== undefined) {

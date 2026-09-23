@@ -45,9 +45,17 @@ export const formatBlockedDeliveryComment = (
   [
     "Shipyard blocked this delivery after automatic recovery was exhausted.",
     "",
+    formatBlockedDeliveryEvidence(evidence),
+  ].join("\n");
+
+export const formatBlockedDeliveryEvidence = (
+  evidence: DeliveryFailureEvidence,
+): string =>
+  [
     `- Failed phase: \`${sanitizeDiagnostic(evidence.phase, 80)}\``,
     `- Error: ${sanitizeDiagnostic(evidence.error)}`,
     `- Attempts: ${evidence.attempts}`,
+    `- Retry count: ${Math.max(0, evidence.attempts - 1)}`,
     `- Last successful step: ${sanitizeDiagnostic(evidence.lastSuccessfulStep ?? "not recorded", 160)}`,
     ...(evidence.branch
       ? [`- Branch: \`${sanitizeDiagnostic(evidence.branch, 160)}\``]
@@ -58,7 +66,7 @@ export const formatBlockedDeliveryComment = (
     ...(evidence.pullRequest
       ? [`- Pull request: ${sanitizeDiagnostic(evidence.pullRequest, 240)}`]
       : []),
-    `- Recovery: ${sanitizeDiagnostic(evidence.recovery, 300)}`,
+    `- Suggested recovery: ${sanitizeDiagnostic(evidence.recovery, 300)}`,
   ].join("\n");
 
 export const projectBlockedLabels = (

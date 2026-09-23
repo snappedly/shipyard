@@ -24,6 +24,8 @@ The `parallel-planner` template routes standalone groups through the standalone
 delivery lifecycle and planning specs through durable spec delivery. Unrelated
 groups can run together; dependency-ready spec workers may run concurrently,
 then their commits integrate serially on the shared branch.
+The plan preserves which listed issue carries activation and its native parent,
+so an activated child promotes to the complete parent spec graph.
 
 ## Quick start
 

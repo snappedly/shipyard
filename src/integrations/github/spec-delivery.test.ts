@@ -362,7 +362,43 @@ describe("GitHub spec delivery host", () => {
         itemId: "101",
         kind: "executable-issue",
       },
-      reason: "Worker failed: Authorization: Bearer bearer-secret",
+      reason:
+        "Worker failed: Authorization: Bearer bearer-secret token=Bearer token-secret OPENAI_API_KEY=openai-secret",
+      failureEvidence: {
+        phase: "implementation",
+        error: "worker failed",
+        attempts: 2,
+        lastSuccessfulStep: "Draft pull request #44 is available",
+        branch: head.branch,
+        commit: head.sha,
+        pullRequest: "https://github.com/snappedly/shipyard/pull/44",
+        recovery: "Fix child #101, then reactivate it.",
+        occurredAt: "2026-09-23T10:00:00.000Z",
+      },
+      candidate,
+    });
+
+    await host.publishBlocked({
+      delivery,
+      lease,
+      blockedChild: {
+        repository,
+        itemId: "101",
+        kind: "executable-issue",
+      },
+      reason:
+        "Worker failed: Authorization: Bearer another-secret token=Bearer another-token OPENAI_API_KEY=another-key",
+      failureEvidence: {
+        phase: "implementation",
+        error: "worker failed",
+        attempts: 2,
+        lastSuccessfulStep: "Draft pull request #44 is available",
+        branch: head.branch,
+        commit: head.sha,
+        pullRequest: "https://github.com/snappedly/shipyard/pull/44",
+        recovery: "Fix child #101, then reactivate it.",
+        occurredAt: "2026-09-23T10:00:00.000Z",
+      },
       candidate,
     });
 
@@ -375,6 +411,28 @@ describe("GitHub spec delivery host", () => {
     });
     expect(comments.get(101)?.[0]?.body).toContain("Authorization=[REDACTED]");
     expect(comments.get(101)?.[0]?.body).not.toContain("bearer-secret");
+    expect(comments.get(101)?.[0]?.body).not.toContain("token-secret");
+    expect(comments.get(101)?.[0]?.body).not.toContain("openai-secret");
+    expect(comments.get(101)?.[0]?.body).toContain(
+      "- Failed phase: `implementation`",
+    );
+    expect(comments.get(101)?.[0]?.body).toContain("- Attempts: 2");
+    expect(comments.get(101)?.[0]?.body).toContain("- Retry count: 1");
+    expect(comments.get(101)?.[0]?.body).toContain(
+      "- Last successful step: Draft pull request #44 is available",
+    );
+    expect(comments.get(101)?.[0]?.body).toContain(
+      `- Branch: \`${head.branch}\``,
+    );
+    expect(comments.get(101)?.[0]?.body).toContain(`- Commit: \`${head.sha}\``);
+    expect(comments.get(101)?.[0]?.body).toContain(
+      "- Pull request: https://github.com/snappedly/shipyard/pull/44",
+    );
+    expect(comments.get(101)?.[0]?.body).toContain(
+      "- Suggested recovery: Fix child #101, then reactivate it.",
+    );
+    expect(comments.get(101)).toHaveLength(1);
+    expect(comments.get(100)).toHaveLength(1);
     expect(comments.get(100)?.[0]?.body).toContain("#101");
 
     issues.set(101, {

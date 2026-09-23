@@ -623,6 +623,9 @@ try {
             ...(result.blockedChild === undefined
               ? {}
               : { blockedChild: result.blockedChild }),
+            ...(result.blockedEvidence === undefined
+              ? {}
+              : { failureEvidence: result.blockedEvidence }),
             ...(result.candidate === undefined
               ? {}
               : { candidate: result.candidate }),

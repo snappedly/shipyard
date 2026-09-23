@@ -12,10 +12,14 @@ Here are the open issues in the repository:
 
 </issues-json>
 
-The list contains activated root issues. A planning spec's children need not
-have the activation label. Select the spec root with `children: []`; the host
-loads every open native sub-issue or documented fallback child and its
-dependencies before execution. Do not select unrelated issues.
+The list contains open issues carrying the activation label, including native
+parent details when an activated child belongs to a planning spec. Group an
+activated child under its `parent` planning spec, or the parent declared by a
+`Shipyard-Parent: #...` fallback line. Set `activationIssueId` to
+the activated issue's number, even when `root` is the parent and `children` is
+empty. For an activated spec root or standalone issue, set it to the root's
+number. The host loads every open native sub-issue or documented fallback
+child and its dependencies before execution. Do not select unrelated issues.
 
 # TASK
 
@@ -35,7 +39,7 @@ Always emit one JSON object wrapped in `<plan>` tags. Use an empty array when
 there is no eligible work:
 
 <plan>
-{"deliveryGroups":[{"id":"owner/repo#100","repository":"owner/repo","mode":"planning-spec","root":{"id":"100","title":"Spec"},"children":[],"integrationBranch":"shipyard/spec-100"}]}
+{"deliveryGroups":[{"id":"owner/repo#100","repository":"owner/repo","mode":"planning-spec","root":{"id":"100","title":"Spec"},"children":[],"integrationBranch":"shipyard/spec-100","activationIssueId":"101"}]}
 </plan>
 
 For a standalone issue, use `mode: "standalone"`, set `root` to that issue,

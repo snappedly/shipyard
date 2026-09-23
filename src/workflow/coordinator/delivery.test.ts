@@ -157,6 +157,7 @@ describe("delivery groups", () => {
           {
             child: identity("101"),
             status: "closed",
+            attempts: 2,
             workerBase: { branch: "shipyard/spec-100", sha: "base-100" },
             sourceCommit: { branch: "shipyard/child-101", sha: "child-101" },
             candidate: {
@@ -192,6 +193,7 @@ describe("delivery groups", () => {
     expect(record.specCheckpoint?.children[0]).toMatchObject({
       child: identity("101"),
       status: "closed",
+      attempts: 2,
       verification: {
         cleanup: { status: "passed" },
         evidence: ["The published child candidate passed verification."],

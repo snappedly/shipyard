@@ -4,12 +4,9 @@ export const sanitizeDiagnostic = (value: string, limit = 600): string =>
     .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
     .replace(/(?:gh[pousr]|github_pat)_[A-Za-z0-9_]+/gi, "[REDACTED]")
     .replace(
-      /\b(authorization)\s*[:=]\s*(?:[A-Za-z][A-Za-z0-9_-]*\s+)?[^\s,;]+/gi,
-      "$1=[REDACTED]",
-    )
-    .replace(
-      /\b(access[-_]?token|api[-_]?key|token|password|secret|cookie)\s*[:=]\s*[^\s,;]+/gi,
-      "$1=[REDACTED]",
+      /(^|[^A-Za-z0-9])([A-Za-z0-9_.-]*(?:authorization|access[-_]?token|api[-_]?key|token|password|secret|cookie))\s*[:=]\s*(?:bearer|basic|token)\s+[^\s,;]+|(^|[^A-Za-z0-9])([A-Za-z0-9_.-]*(?:authorization|access[-_]?token|api[-_]?key|token|password|secret|cookie))\s*[:=]\s*[^\s,;]+/gi,
+      (_match, leading, key, fallbackLeading, fallbackKey) =>
+        `${leading ?? fallbackLeading}${key ?? fallbackKey}=[REDACTED]`,
     )
     .replace(/[\u0000-\u001f\u007f]+/g, " ")
     .replace(/\s+/g, " ")

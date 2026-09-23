@@ -16,4 +16,17 @@ describe("diagnostic sanitization", () => {
     expect(result).not.toContain("private");
     expect(result).not.toContain("$1");
   });
+
+  it("redacts bearer values and environment-style API key names", () => {
+    const result = sanitizeDiagnostic(
+      "token=Bearer token-secret OPENAI_API_KEY=openai-secret ANTHROPIC_API_KEY=anthropic-secret",
+    );
+
+    expect(result).toBe(
+      "token=[REDACTED] OPENAI_API_KEY=[REDACTED] ANTHROPIC_API_KEY=[REDACTED]",
+    );
+    expect(result).not.toContain("token-secret");
+    expect(result).not.toContain("openai-secret");
+    expect(result).not.toContain("anthropic-secret");
+  });
 });

@@ -43,9 +43,11 @@ export const findActivatedDeliveryRoute = async (
 ): Promise<ActivatedDeliveryRoute | undefined> => {
   const seen = new Set<number>();
   for (const id of [
+    planned.activationIssueId,
     planned.root.id,
     ...planned.children.map((child) => child.id),
   ]) {
+    if (id === undefined) continue;
     if (!/^[1-9]\d*$/.test(id)) continue;
     const issueNumber = Number(id);
     if (seen.has(issueNumber)) continue;

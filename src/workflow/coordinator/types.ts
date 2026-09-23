@@ -99,6 +99,8 @@ export interface SpecChildCheckpoint {
     | "verifying"
     | "closing"
     | "closed";
+  /** Count of child worker invocations across durable resumes. */
+  readonly attempts?: number;
   readonly workerBase?: RevisionReference;
   readonly sourceCommit?: RevisionReference;
   readonly candidate?: {

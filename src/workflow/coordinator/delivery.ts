@@ -401,6 +401,15 @@ export const parseDeliveryRecord = (value: unknown): DeliveryRecord => {
           throw new Error(`${path}.status is invalid`);
         }
         const status = childRecord.status as SpecChildCheckpoint["status"];
+        const attempts = childRecord.attempts;
+        if (
+          attempts !== undefined &&
+          (typeof attempts !== "number" ||
+            !Number.isInteger(attempts) ||
+            attempts < 1)
+        ) {
+          throw new Error(`${path}.attempts must be a positive integer`);
+        }
         const workerBase =
           childRecord.workerBase === undefined
             ? undefined
@@ -517,6 +526,7 @@ export const parseDeliveryRecord = (value: unknown): DeliveryRecord => {
         return {
           child,
           status,
+          ...(attempts === undefined ? {} : { attempts }),
           workerBase,
           sourceCommit,
           candidate,

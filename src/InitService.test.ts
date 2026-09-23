@@ -1064,11 +1064,9 @@ describe("InitService scaffold", () => {
           repository: "snappedly/shipyard",
           mode: "planning-spec",
           root: { id: "100", title: "Planning spec" },
-          children: [
-            { id: "101", title: "Child one", dependsOn: [] },
-            { id: "102", title: "Child two", dependsOn: ["101"] },
-          ],
+          children: [],
           integrationBranch: "shipyard/spec-100",
+          activationIssueId: "101",
         },
         async (issueNumber) => {
           checked.push(issueNumber);
@@ -1085,7 +1083,7 @@ describe("InitService scaffold", () => {
             : undefined;
         },
       );
-      expect(checked).toEqual([100, 101]);
+      expect(checked).toEqual([101]);
       expect(route?.activatedIssue.number).toBe(101);
       const group = canonicalize(
         {
@@ -1817,6 +1815,7 @@ describe("InitService scaffold", () => {
       );
       expect(manager!.templateArgs.LIST_TASKS_COMMAND).toContain("labels");
       expect(manager!.templateArgs.LIST_TASKS_COMMAND).toContain("comments");
+      expect(manager!.templateArgs.LIST_TASKS_COMMAND).toContain("parent");
       expect(manager!.templateArgs.LIST_TASKS_COMMAND).toContain("--limit 100");
       expect(manager!.templateArgs.VIEW_TASK_COMMAND).toContain(
         "gh issue view",
@@ -1957,6 +1956,9 @@ describe("InitService scaffold", () => {
       expect(planPrompt).toContain("gh issue list");
       expect(planPrompt).toContain("labels");
       expect(planPrompt).toContain("comments");
+      expect(planPrompt).toContain("activationIssueId");
+      expect(planPrompt).toContain("parent details");
+      expect(planPrompt).toContain("Shipyard-Parent: #...");
       expect(planPrompt).not.toContain("{{LIST_TASKS_COMMAND}}");
     });
 

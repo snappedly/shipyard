@@ -1039,10 +1039,68 @@ describe("spec delivery orchestration", () => {
     expect(result.outcome).toBe("blocked");
     expect(result.reason).toContain("stop after current PR metadata");
     expect(result.blockedChild?.itemId).toBe("102");
+    expect(result.blockedEvidence).toMatchObject({
+      phase: "implementation",
+      attempts: 1,
+      error: expect.stringContaining("stop after current PR metadata"),
+      lastSuccessfulStep: expect.stringContaining("pull request #pr-100"),
+    });
     expect(calls).toEqual({ ensure: 1, worker: 1, integrate: 0, publish: 0 });
     expect(
       (await owner.getDelivery(resolved.key))?.specCheckpoint?.pullRequest,
     ).toMatchObject({ id: "pr-100", draft: true });
+  });
+
+  it("keeps provider reconciliation failures at the parent delivery level", async () => {
+    const delivery = deliveryFor(["101"]);
+    const implement = vi.fn(async () => ({
+      commit: { branch: "shipyard/child-101", sha: "child-101" },
+    }));
+    const result = await deliverSpec({
+      coordinator: coordinator(),
+      delivery,
+      brief,
+      policy,
+      workerId: "coordinator-provider-error",
+      base,
+      integrationBranch: "shipyard/spec-100",
+      childWorker: { implement },
+      integration: {
+        reconcileDelivery: async () => ({}),
+        ensureDraftPullRequest: async (request) => ({
+          id: "pr-100",
+          baseBranch: base.branch,
+          headBranch: request.integrationBranch,
+          draft: true,
+        }),
+        integrateChild: async (request) => ({
+          branch: request.integrationBranch,
+          sha: "integrated-101",
+        }),
+        publishCandidate: async (request) => ({
+          pullRequestId: request.candidate.pullRequest.id,
+          head: request.candidate.head,
+        }),
+      },
+      verification: verification(),
+      childLifecycle: {
+        reconcileChild: async () => {
+          throw new Error("GitHub API unavailable");
+        },
+        closeChild: async () => undefined,
+      },
+      review: review(),
+      readCurrent: async () => currentFor(delivery.id, base),
+    });
+
+    expect(result.outcome).toBe("blocked");
+    expect(result.reason).toContain("GitHub API unavailable");
+    expect(result.blockedChild).toBeUndefined();
+    expect(result.blockedEvidence).toMatchObject({
+      phase: "checking",
+      attempts: 1,
+    });
+    expect(implement).not.toHaveBeenCalled();
   });
 
   it("recovers a child integration published remotely before its checkpoint", async () => {

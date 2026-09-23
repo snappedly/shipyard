@@ -2,6 +2,7 @@ import {
   LeaseBusyError,
   resolveDeliveryGroup,
   type DeliveryGroup,
+  type DeliveryFailureEvidence,
   type DeliveryLease,
   type DeliveryRecord,
   type SpecChildCheckpoint,
@@ -19,6 +20,7 @@ import {
   type RiskLevel,
   type WorkBrief,
   type WorkIdentity,
+  type WorkflowPhase,
 } from "../contracts/index.js";
 import {
   runIndependentReview,
@@ -500,6 +502,7 @@ export interface SpecDeliveryResult {
     readonly merged: false;
   };
   readonly blockedChild?: WorkIdentity;
+  readonly blockedEvidence?: DeliveryFailureEvidence;
   readonly reason?: string;
 }
 
@@ -507,6 +510,17 @@ const defaultMaxConcurrency = 2;
 
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
+
+class SpecChildDeliveryFailure extends Error {
+  constructor(
+    readonly child: WorkIdentity,
+    readonly phase: WorkflowPhase,
+    message: string,
+  ) {
+    super(message);
+    this.name = "SpecChildDeliveryFailure";
+  }
+}
 
 const freezeClone = <T>(value: T): T => deepFreeze(structuredClone(value));
 
@@ -670,6 +684,7 @@ const resultFor = (input: {
   readonly repairBatches: number;
   readonly followUps: number;
   readonly blockedChild?: WorkIdentity;
+  readonly blockedEvidence?: DeliveryFailureEvidence;
   readonly reason?: string;
 }): SpecDeliveryResult => ({
   ...input,
@@ -815,6 +830,11 @@ export const deliverSpec = async (
   let pullRequest: SpecPullRequest | undefined = checkpoint.pullRequest;
   let repairBatches = 0;
   let followUps = 0;
+  let currentPhase: WorkflowPhase = "triage";
+  let lastSuccessfulStep =
+    pullRequest === undefined
+      ? undefined
+      : `Recovered draft pull request #${pullRequest.id}`;
   const records = new Map<string, SpecChildRecord>();
   const reviews: SpecReviewRound[] = [];
   const states = new Map<string, "pending" | "running" | "closed">();
@@ -995,6 +1015,7 @@ export const deliverSpec = async (
       pullRequest,
       currentHead: checkpoint.currentHead ?? baseHead,
     });
+    lastSuccessfulStep = `Draft pull request #${created.id} is available`;
     return pullRequest;
   };
 
@@ -1034,6 +1055,7 @@ export const deliverSpec = async (
         currentHead: publishedHead,
       });
     }
+    lastSuccessfulStep = `Published candidate ${published.head.sha} to pull request #${pullRequest.id}`;
     return stableCandidate;
   };
 
@@ -1070,39 +1092,41 @@ export const deliverSpec = async (
       ) {
         continue;
       }
-      try {
-        await refreshLease();
-        const sourceState = await options.childLifecycle.reconcileChild({
-          delivery,
-          child: child.identity,
-          lease: currentLease,
-          signal: controller.signal,
-        });
-        assertOwned();
-        if (sourceState !== "open") {
-          throw new Error(
-            `Child ${child.identity.itemId} is closed without coordinator completion evidence`,
-          );
-        }
-        const workerBase = freezeClone(currentHead);
-        await saveChildProgress({
-          child: child.identity,
-          status: "working",
-          workerBase,
-        });
-        const request = Object.freeze({
-          delivery: freezeClone(delivery),
-          child: freezeClone(child.identity),
-          base: workerBase,
-          integrationBranch: options.integrationBranch,
-          lease: freezeClone(currentLease),
-          signal: controller.signal,
-        });
-        starts.push({ child, workerBase, request });
-      } catch (error) {
-        blockedChild = child.identity;
-        throw error;
+      await refreshLease();
+      const sourceState = await options.childLifecycle.reconcileChild({
+        delivery,
+        child: child.identity,
+        lease: currentLease,
+        signal: controller.signal,
+      });
+      assertOwned();
+      if (sourceState !== "open") {
+        throw new SpecChildDeliveryFailure(
+          child.identity,
+          "implementation",
+          `Child ${child.identity.itemId} is closed without coordinator completion evidence`,
+        );
       }
+      const workerBase = freezeClone(currentHead);
+      const attempts =
+        (checkpoint.children.find(
+          (entry) => entry.child.itemId === child.identity.itemId,
+        )?.attempts ?? 0) + 1;
+      await saveChildProgress({
+        child: child.identity,
+        status: "working",
+        workerBase,
+        attempts,
+      });
+      const request = Object.freeze({
+        delivery: freezeClone(delivery),
+        child: freezeClone(child.identity),
+        base: workerBase,
+        integrationBranch: options.integrationBranch,
+        lease: freezeClone(currentLease),
+        signal: controller.signal,
+      });
+      starts.push({ child, workerBase, request });
     }
     if (starts.length > 0) await refreshLease();
     for (const { child, workerBase, request } of starts) {
@@ -1156,6 +1180,7 @@ export const deliverSpec = async (
   };
 
   let blockedChild: WorkIdentity | undefined;
+  let blockedPhase: WorkflowPhase | undefined;
   let blockedReason: string | undefined;
   try {
     await refreshLease();
@@ -1333,49 +1358,51 @@ export const deliverSpec = async (
       await ensurePullRequest(currentHead, true);
     }
 
+    currentPhase = "checking";
     await refreshScope();
     for (const child of plan.children) {
-      try {
-        await refreshLease();
-        const progress = checkpoint.children.find(
-          (entry) => entry.child.itemId === child.identity.itemId,
-        );
-        const childState = await options.childLifecycle.reconcileChild({
-          delivery,
-          child: child.identity,
-          lease: currentLease,
-          signal: controller.signal,
-        });
-        assertOwned();
-        if (progress?.status === "closed") {
-          if (childState !== "closed") {
-            throw new Error(
-              `GitHub child #${child.identity.itemId} contradicts closed coordinator evidence`,
-            );
-          }
-          records.set(child.identity.itemId, recordFromCheckpoint(progress));
-          states.set(child.identity.itemId, "closed");
-        } else if (childState === "closed" && progress?.status !== "closing") {
-          throw new Error(
-            `Child ${child.identity.itemId} is closed without coordinator completion evidence`,
+      await refreshLease();
+      const progress = checkpoint.children.find(
+        (entry) => entry.child.itemId === child.identity.itemId,
+      );
+      const childState = await options.childLifecycle.reconcileChild({
+        delivery,
+        child: child.identity,
+        lease: currentLease,
+        signal: controller.signal,
+      });
+      assertOwned();
+      if (progress?.status === "closed") {
+        if (childState !== "closed") {
+          throw new SpecChildDeliveryFailure(
+            child.identity,
+            "checking",
+            `GitHub child #${child.identity.itemId} contradicts closed coordinator evidence`,
           );
         }
-        if (progress?.status === "closing" && childState === "closed") {
-          const closed = {
-            ...progress,
-            status: "closed" as const,
-            closedAt: new Date().toISOString(),
-          };
-          await saveChildProgress(closed);
-          records.set(child.identity.itemId, recordFromCheckpoint(closed));
-          states.set(child.identity.itemId, "closed");
-        }
-      } catch (error) {
-        blockedChild = child.identity;
-        throw error;
+        records.set(child.identity.itemId, recordFromCheckpoint(progress));
+        states.set(child.identity.itemId, "closed");
+      } else if (childState === "closed" && progress?.status !== "closing") {
+        throw new SpecChildDeliveryFailure(
+          child.identity,
+          "checking",
+          `Child ${child.identity.itemId} is closed without coordinator completion evidence`,
+        );
+      }
+      if (progress?.status === "closing" && childState === "closed") {
+        const closed = {
+          ...progress,
+          status: "closed" as const,
+          closedAt: new Date().toISOString(),
+        };
+        await saveChildProgress(closed);
+        lastSuccessfulStep = `Reconciled closure of child #${child.identity.itemId}`;
+        records.set(child.identity.itemId, recordFromCheckpoint(closed));
+        states.set(child.identity.itemId, "closed");
       }
     }
 
+    currentPhase = "implementation";
     while (true) {
       assertOwned();
       await refreshScope();
@@ -1395,11 +1422,14 @@ export const deliverSpec = async (
         }
         try {
           if (resumable.status === "integrating") {
+            currentPhase = "implementation";
             if (
               resumable.workerBase === undefined ||
               resumable.sourceCommit === undefined
             ) {
-              throw new Error(
+              throw new SpecChildDeliveryFailure(
+                child.identity,
+                "implementation",
                 `Child ${child.identity.itemId} integration checkpoint is incomplete`,
               );
             }
@@ -1419,7 +1449,9 @@ export const deliverSpec = async (
               integratedHead.branch !== options.integrationBranch ||
               integratedHead.sha === currentHead.sha
             ) {
-              throw new Error(
+              throw new SpecChildDeliveryFailure(
+                child.identity,
+                "implementation",
                 "Integration adapter returned an invalid shared head",
               );
             }
@@ -1447,8 +1479,11 @@ export const deliverSpec = async (
             continue;
           }
           if (resumable.status === "publishing") {
+            currentPhase = "checking";
             if (resumable.candidate === undefined) {
-              throw new Error(
+              throw new SpecChildDeliveryFailure(
+                child.identity,
+                "checking",
                 `Child ${child.identity.itemId} publication checkpoint is incomplete`,
               );
             }
@@ -1456,11 +1491,14 @@ export const deliverSpec = async (
             continue;
           }
           if (resumable.status === "verifying") {
+            currentPhase = "checking";
             if (
               resumable.candidate === undefined ||
               resumable.sourceCommit === undefined
             ) {
-              throw new Error(
+              throw new SpecChildDeliveryFailure(
+                child.identity,
+                "checking",
                 `Child ${child.identity.itemId} verification checkpoint is incomplete`,
               );
             }
@@ -1475,7 +1513,13 @@ export const deliverSpec = async (
             });
             assertOwned();
             const issue = verificationFailure(childVerification, policy);
-            if (issue !== undefined) throw new Error(issue);
+            if (issue !== undefined) {
+              throw new SpecChildDeliveryFailure(
+                child.identity,
+                "checking",
+                issue,
+              );
+            }
             await saveChildProgress({
               ...resumable,
               status: "closing",
@@ -1491,12 +1535,15 @@ export const deliverSpec = async (
             continue;
           }
           if (resumable.status === "closing") {
+            currentPhase = "handoff";
             if (
               resumable.candidate === undefined ||
               resumable.sourceCommit === undefined ||
               resumable.verification === undefined
             ) {
-              throw new Error(
+              throw new SpecChildDeliveryFailure(
+                child.identity,
+                "handoff",
                 `Child ${child.identity.itemId} closure checkpoint is incomplete`,
               );
             }
@@ -1520,6 +1567,7 @@ export const deliverSpec = async (
                 signal: controller.signal,
               });
               assertOwned();
+              lastSuccessfulStep = `Closed child #${child.identity.itemId} with verified commit ${resumable.sourceCommit.sha}`;
             }
             const closed: SpecChildCheckpoint = {
               ...resumable,
@@ -1532,7 +1580,10 @@ export const deliverSpec = async (
             continue;
           }
         } catch (error) {
-          blockedChild = child.identity;
+          if (error instanceof SpecChildDeliveryFailure) {
+            blockedChild = error.child;
+            blockedPhase = error.phase;
+          }
           throw error;
         }
       }
@@ -1553,14 +1604,16 @@ export const deliverSpec = async (
       const completion = await waitForWorker();
       active.delete(completion.child.identity.itemId);
       if (completion.error !== undefined) {
-        blockedChild = completion.child.identity;
-        throw new Error(
+        throw new SpecChildDeliveryFailure(
+          completion.child.identity,
+          "implementation",
           `Child ${completion.child.identity.itemId} failed: ${errorMessage(completion.error)}`,
         );
       }
       if (completion.result === undefined) {
-        blockedChild = completion.child.identity;
-        throw new Error(
+        throw new SpecChildDeliveryFailure(
+          completion.child.identity,
+          "implementation",
           `Child ${completion.child.identity.itemId} returned no result`,
         );
       }
@@ -1570,20 +1623,28 @@ export const deliverSpec = async (
         sourceCommit.branch === options.integrationBranch ||
         sourceCommit.sha === completion.workerBase.sha
       ) {
-        blockedChild = completion.child.identity;
-        throw new Error(
+        throw new SpecChildDeliveryFailure(
+          completion.child.identity,
+          "implementation",
           `Child ${completion.child.identity.itemId} returned an invalid or shared-branch commit`,
         );
       }
       assertOwned();
+      currentPhase = "implementation";
+      lastSuccessfulStep = `Received commit ${sourceCommit.sha} from child #${completion.child.identity.itemId}`;
       await saveChildProgress({
         child: completion.child.identity,
         status: "integrating",
         workerBase: completion.workerBase,
         sourceCommit: freezeClone(sourceCommit),
+        attempts:
+          checkpoint.children.find(
+            (entry) => entry.child.itemId === completion.child.identity.itemId,
+          )?.attempts ?? 0,
       });
     }
 
+    currentPhase = "checking";
     const candidateBeforeReview = currentCandidate();
     if (candidateBeforeReview === undefined) {
       throw new Error("Spec delivery did not publish an integration candidate");
@@ -1599,6 +1660,7 @@ export const deliverSpec = async (
     assertOwned();
     const integratedIssue = verificationFailure(integratedVerification, policy);
     if (integratedIssue !== undefined) throw new Error(integratedIssue);
+    lastSuccessfulStep = `Integrated checks passed for ${candidateBeforeReview.head.sha}`;
     await refreshScope();
     if (JSON.stringify(delivery.graph) !== reviewedGraph) {
       throw new Error(
@@ -1611,6 +1673,7 @@ export const deliverSpec = async (
       candidate: SpecCandidate,
       targetedFindings: readonly Finding[],
     ): Promise<SpecReviewRound> => {
+      currentPhase = "review";
       await refreshLease();
       const requiredAxes = reviewAxesForRisk(brief.risk);
       const additionalAxes = requiredAxes.filter(
@@ -1661,6 +1724,9 @@ export const deliverSpec = async (
       });
       assertOwned();
       reviews.push(round);
+      if (round.outcome === "passed") {
+        lastSuccessfulStep = `${mode === "full" ? "Full" : "Targeted"} review passed for ${candidate.head.sha}`;
+      }
       return round;
     };
 
@@ -1673,6 +1739,7 @@ export const deliverSpec = async (
         );
       }
       repairBatches = 1;
+      currentPhase = "repair";
       await refreshLease();
       try {
         await readCurrentCandidate(candidateBeforeReview, options.readCurrent);
@@ -1700,6 +1767,7 @@ export const deliverSpec = async (
       currentHead = freezeClone(fixed.head);
       await refreshLease();
       const fixedCandidate = await publish();
+      currentPhase = "checking";
       const fixedVerification = await options.verification.verifyIntegrated({
         delivery,
         candidate: fixedCandidate,
@@ -1729,6 +1797,7 @@ export const deliverSpec = async (
       );
     }
 
+    currentPhase = "handoff";
     await refreshScope();
     if (JSON.stringify(delivery.graph) !== reviewedGraph) {
       throw new Error(
@@ -1771,6 +1840,10 @@ export const deliverSpec = async (
       followUps,
     });
   } catch (error) {
+    if (error instanceof SpecChildDeliveryFailure) {
+      blockedChild = error.child;
+      blockedPhase = error.phase;
+    }
     blockedReason = errorMessage(error);
     if (!controller.signal.aborted) controller.abort(blockedReason);
     await settleActiveWorkers();
@@ -1779,6 +1852,37 @@ export const deliverSpec = async (
     await stopHeartbeats();
   }
 
+  const candidate = currentCandidate();
+  const blockedEvidence: DeliveryFailureEvidence | undefined =
+    blockedReason === undefined
+      ? undefined
+      : {
+          phase: blockedPhase ?? currentPhase,
+          error: blockedReason,
+          attempts:
+            blockedChild === undefined
+              ? 1
+              : (checkpoint.children.find(
+                  (entry) => entry.child.itemId === blockedChild.itemId,
+                )?.attempts ?? 0),
+          ...(lastSuccessfulStep === undefined ? {} : { lastSuccessfulStep }),
+          ...(candidate === undefined
+            ? {}
+            : {
+                branch: candidate.head.branch,
+                commit: candidate.head.sha,
+              }),
+          ...(pullRequest === undefined
+            ? {}
+            : {
+                pullRequest: `https://github.com/${delivery.key.repository}/pull/${pullRequest.id}`,
+              }),
+          recovery:
+            blockedChild === undefined
+              ? "Resolve the reported delivery blocker, then re-add the shipyard label to the planning spec to resume."
+              : `Resolve the blocker on child #${blockedChild.itemId}, then re-add the shipyard label to resume the existing delivery.`,
+          occurredAt: new Date().toISOString(),
+        };
   return resultFor({
     outcome: "blocked",
     delivery,
@@ -1786,12 +1890,13 @@ export const deliverSpec = async (
     lease: currentLease,
     integrationBranch: options.integrationBranch,
     pullRequest,
-    candidate: currentCandidate(),
+    candidate,
     children: childRecordsInPlanOrder(plan, records),
     reviews,
     repairBatches,
     followUps,
     blockedChild,
+    blockedEvidence,
     reason: blockedReason,
   });
 };
