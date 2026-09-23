@@ -17,6 +17,7 @@ const calls = vi.hoisted(() => ({
   specContent: [] as string[],
   cherryPickSucceeds: true,
   conflictResolved: true,
+  conflictIncludesTicket: true,
   resolverReportsComplete: true,
   emptyPlan: false,
   invocations: [] as Array<{
@@ -31,6 +32,7 @@ const calls = vi.hoisted(() => ({
   finalReviewApproved: true,
   reviewCount: 0,
   dirtyBranch: "",
+  dirtyAfterConflict: false,
   blocked: [] as Array<{
     root: string;
     failed: string;
@@ -185,6 +187,14 @@ vi.mock("@snappedly-tools/shipyard", () => {
           calls.events.push("rev-list");
           return { exitCode: 0, stdout: "a".repeat(40), stderr: "" };
         }
+        if (command.startsWith("git log --format=%B "))
+          return {
+            exitCode: 0,
+            stdout: calls.conflictIncludesTicket
+              ? `(cherry picked from commit ${"a".repeat(40)})`
+              : "unrelated commit",
+            stderr: "",
+          };
         if (command === "git ls-files -u")
           return {
             exitCode: 0,
@@ -221,7 +231,11 @@ vi.mock("@snappedly-tools/shipyard", () => {
         calls.events.push("close");
         return {
           preservedWorktreePath:
-            calls.dirtyBranch === branch ? `/tmp/${branch}` : undefined,
+            calls.dirtyBranch === branch &&
+            (!calls.dirtyAfterConflict ||
+              calls.events.includes("conflict-resolver"))
+              ? `/tmp/${branch}`
+              : undefined,
         };
       },
     };
@@ -273,6 +287,7 @@ beforeEach(() => {
   calls.specContent.length = 0;
   calls.cherryPickSucceeds = true;
   calls.conflictResolved = true;
+  calls.conflictIncludesTicket = true;
   calls.resolverReportsComplete = true;
   calls.emptyPlan = false;
   calls.invocations.length = 0;
@@ -283,6 +298,7 @@ beforeEach(() => {
   calls.finalReviewApproved = true;
   calls.reviewCount = 0;
   calls.dirtyBranch = "";
+  calls.dirtyAfterConflict = false;
   calls.blocked.length = 0;
 });
 
@@ -553,9 +569,21 @@ describe("generated issue workflows", () => {
     calls.spec = true;
     calls.cherryPickSucceeds = false;
     calls.conflictResolved = false;
+    calls.dirtyBranch = "shipyard/spec-42";
+    calls.dirtyAfterConflict = true;
     await import("./templates/parallel-planner/main.mts" as string);
     expect(calls.blocked[0]).toMatchObject({ root: "42", failed: "43" });
-    expect(calls.blocked[0]?.reason).toContain("unresolved or uncommitted");
+    expect(calls.blocked[0]?.reason).toContain("remains unresolved");
+    expect(calls.events).not.toContain("handoff");
+  });
+
+  it("rejects a clean conflict resolution that omitted the ticket", async () => {
+    calls.spec = true;
+    calls.cherryPickSucceeds = false;
+    calls.conflictIncludesTicket = false;
+    await import("./templates/parallel-planner/main.mts" as string);
+    expect(calls.blocked[0]).toMatchObject({ root: "42", failed: "43" });
+    expect(calls.blocked[0]?.reason).toContain("ticket commits are missing");
     expect(calls.events).not.toContain("handoff");
   });
 

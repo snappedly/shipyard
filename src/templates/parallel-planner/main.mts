@@ -222,7 +222,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
                     "Could not read spec branch commit before integration",
                   );
                 const picked = await wave.exec(
-                  `git -c user.name=Shipyard -c user.email=shipyard@users.noreply.github.com cherry-pick ${shas.join(" ")}`,
+                  `git -c user.name=Shipyard -c user.email=shipyard@users.noreply.github.com cherry-pick -x ${shas.join(" ")}`,
                 );
                 if (picked.exitCode !== 0) {
                   try {
@@ -248,15 +248,25 @@ for (let iteration = 0; iteration < 10; iteration++) {
                       "git rev-parse -q --verify CHERRY_PICK_HEAD",
                     );
                     const after = await wave.exec("git rev-parse HEAD");
+                    const integratedCommits = await wave.exec(
+                      `git log --format=%B ${before.stdout.trim()}..HEAD`,
+                    );
                     if (
                       status.exitCode !== 0 ||
                       status.stdout.trim() ||
                       pending.exitCode === 0 ||
                       after.exitCode !== 0 ||
-                      after.stdout.trim() === before.stdout.trim()
+                      after.stdout.trim() === before.stdout.trim() ||
+                      integratedCommits.exitCode !== 0 ||
+                      shas.some(
+                        (sha) =>
+                          !integratedCommits.stdout.includes(
+                            `(cherry picked from commit ${sha})`,
+                          ),
+                      )
                     )
                       throw new Error(
-                        "Cherry-pick remains unresolved or uncommitted on the spec branch",
+                        "Cherry-pick remains unresolved or ticket commits are missing from the spec branch",
                       );
                     workerEvidence += `\n\n#${ready[index]!.id} conflict: ${resolutionEvidence}`;
                   } catch (error) {
@@ -285,9 +295,17 @@ for (let iteration = 0; iteration < 10; iteration++) {
                 },
               });
               workerEvidence += `\n\n${complete(integrated, `Integration wave of #${id}`)}`;
-            } finally {
-              await closeClean(wave);
+            } catch (error) {
+              try {
+                await closeClean(wave);
+              } catch (closeError) {
+                console.error(
+                  `Failed wave cleanup after ${error}: ${closeError}`,
+                );
+              }
+              throw error;
             }
+            await closeClean(wave);
             for (const ticket of ready) {
               completed.add(ticket.id);
               remaining.delete(ticket.id);

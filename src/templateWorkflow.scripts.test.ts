@@ -307,7 +307,7 @@ else if (args[0] === "pr" && args[1] === "ready") { state.isDraft = false; fs.wr
 else if (args[0] === "pr" && args[1] === "view") console.log(args.includes("isDraft") ? String(state.isDraft) : "https://example.test/pr/7");
 else if (args[0] === "pr" && args[1] === "edit") {}
 else if (args[0] === "label") {}
-else if (args[0] === "issue" && args[1] === "edit") {}
+else if (args[0] === "issue" && args[1] === "edit") { if (process.env.FAIL_ACTIVATION) process.exit(1); }
 else process.exit(2);
 `,
     );
@@ -373,6 +373,18 @@ else process.exit(2);
     );
     expect(commands).not.toContain("gh issue close");
     expect(commands).not.toContain("gh pr merge");
+
+    result = run(
+      "bash",
+      [script("handoff.sh"), "1", "shipyard/issue-1", "staging", "owner/repo"],
+      dir,
+      bin,
+      { ...env, FAIL_ACTIVATION: "1" },
+      "Checks: npm test pass; Review: approved",
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("https://example.test/pr/7");
+    expect(result.stderr).toContain("next invocation will retry cleanup");
 
     await writeFile(state, JSON.stringify({ number: 0, isDraft: true }));
     result = run(
