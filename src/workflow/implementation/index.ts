@@ -373,6 +373,32 @@ export const runAuthorizedImplementation = async (
   let assignment = latestAssignmentFor(job, "implementation");
   let dispatch: DispatchResult | undefined;
   let phaseResult = phaseResultFor(job, "implementation");
+  if (phaseResult !== undefined) {
+    const completedRepair = [...job.phaseResults]
+      .reverse()
+      .find(
+        (result) =>
+          result.phase === "repair" &&
+          result.outcome === "completed" &&
+          result.head !== undefined &&
+          result.base !== undefined &&
+          result.briefHash === brief.hash &&
+          sameRevision(result.base, brief.base),
+      );
+    if (
+      completedRepair?.head !== undefined &&
+      phaseResult.head?.sha !== completedRepair.head.sha
+    ) {
+      phaseResult = {
+        ...phaseResult,
+        head: completedRepair.head,
+        checks: completedRepair.checks,
+        commits: [...phaseResult.commits, ...completedRepair.commits],
+        evidence: [...phaseResult.evidence, ...completedRepair.evidence],
+        summary: `${phaseResult.summary} A consolidated repair was applied.`,
+      };
+    }
+  }
   if (phaseResult === undefined) {
     dispatch = await options.coordinator.dispatchNext({
       repository: brief.identity.repository,

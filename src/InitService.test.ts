@@ -3,7 +3,7 @@ import { Effect } from "effect";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import ts from "typescript";
 import {
   scaffold,
@@ -824,7 +824,6 @@ describe("InitService scaffold", () => {
         "plan-prompt.md",
         "implement-prompt.md",
         "repair-prompt.md",
-        "integrated-cleanup-prompt.md",
         "review-prompt.md",
       ],
       skills: [
@@ -880,13 +879,14 @@ describe("InitService scaffold", () => {
     expect(main).toContain("readPlanningSpecGraph(");
     expect(main).toContain("readActivatedDeliveryRoot(");
     expect(main).toContain("current.mode !== group.mode");
-    expect(main).toContain("runIntegratedCleanup(group, currentHead)");
-    expect(main).toContain("`integrated planning spec #${group.root.id}`");
-    expect(main).toContain('Output.object({ tag: "review"');
-    expect(main).toContain("review.output.findings.length > 0");
-    expect(main).toContain("implementation.completionSignal");
-    expect(main).toContain("runRepair(");
-    expect(main).toContain("follow-up");
+    expect(main).toContain("verifyIntegrated: async");
+    expect(main).toContain(
+      "scope: `integrated planning spec #${issue.number}`",
+    );
+    expect(main).toContain('tag: "review-report"');
+    expect(main).toContain("runConsolidatedRepair");
+    expect(main).toContain("targetedFindings: request.targetedFindings");
+    expect(main).toContain("fixer: {");
   });
 
   it("unknown template name throws a clear error", async () => {
@@ -1199,6 +1199,35 @@ describe("InitService scaffold", () => {
   });
 
   describe("parallel-planner-with-review template", () => {
+    const generatedRouter = async () => {
+      const dir = await makeDir();
+      await runScaffold(dir, { templateName: "parallel-planner-with-review" });
+      const routerPath = join(dir, ".shipyard", "deliver-groups.ts");
+      const source = await readFile(routerPath, "utf-8");
+      const javascript = ts.transpileModule(source, {
+        compilerOptions: {
+          module: ts.ModuleKind.ESNext,
+          target: ts.ScriptTarget.ES2022,
+        },
+      }).outputText;
+      const imported = (await import(
+        /* @vite-ignore */
+        `data:text/javascript,${encodeURIComponent(javascript)}`
+      )) as {
+        deliverPlannedGroups: (input: {
+          groups: readonly unknown[];
+          hydrate: (group: never) => Promise<never>;
+          resolve: (group: never) => never;
+          deliverStandalone: (input: never) => Promise<unknown>;
+          deliverSpec: (input: never) => Promise<unknown>;
+        }) => Promise<{
+          outcome: string;
+          groups: readonly unknown[];
+        }>;
+      };
+      return { route: imported.deliverPlannedGroups, source };
+    };
+
     it("produces worker, planner, and review files without a direct merge prompt", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "parallel-planner-with-review" });
@@ -1219,6 +1248,12 @@ describe("InitService scaffold", () => {
         access(join(configDir, "review-prompt.md")),
       ).resolves.toBeUndefined();
       await expect(
+        access(join(configDir, "repair-prompt.md")),
+      ).resolves.toBeUndefined();
+      await expect(
+        access(join(configDir, "deliver-groups.ts")),
+      ).resolves.toBeUndefined();
+      await expect(
         access(join(configDir, "merge-prompt.md")),
       ).rejects.toThrow();
     });
@@ -1234,7 +1269,7 @@ describe("InitService scaffold", () => {
       expect(mainTs).toContain('"@snappedly-tools/shipyard"');
     });
 
-    it("main.mts reviews a fixed candidate on a separate branch", async () => {
+    it("main.mts reviews the exact candidate in an immutable worktree", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "parallel-planner-with-review" });
 
@@ -1243,11 +1278,19 @@ describe("InitService scaffold", () => {
         "utf-8",
       );
       expect(mainTs).toContain('name: "reviewer"');
-      expect(mainTs).toContain("baseBranch: headSha");
-      expect(mainTs).toContain('Output.object({ tag: "review"');
+      expect(mainTs).toContain("baseBranch: input.head.sha");
+      expect(mainTs).toContain("BASE_SHA: input.base.sha");
+      expect(mainTs).toContain("HEAD_SHA: input.head.sha");
+      expect(mainTs).toContain("REQUIRED_AXES:");
+      expect(mainTs).toContain('tag: "review-report"');
+      const reviewPrompt = await readFile(
+        join(dir, ".shipyard", "review-prompt.md"),
+        "utf-8",
+      );
+      expect(reviewPrompt).toContain("Include every required axis");
     });
 
-    it("main.mts runs implementer then read-only reviewer for each child", async () => {
+    it("main.mts sends standalone and spec work through canonical delivery", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "parallel-planner-with-review" });
 
@@ -1255,13 +1298,14 @@ describe("InitService scaffold", () => {
         join(dir, ".shipyard", "main.mts"),
         "utf-8",
       );
-      expect(mainTs).toContain("implement-prompt.md");
-      expect(mainTs).toContain("review-prompt.md");
-      expect(mainTs).toContain("implementation.commits.at(-1)");
-      expect(mainTs).toContain("publishTemplateDelivery");
+      expect(mainTs).toContain("await shipyard.deliverStandalone({");
+      expect(mainTs).toContain("await shipyard.deliverSpec({");
+      expect(mainTs).toContain("deliverPlannedGroups({");
+      expect(mainTs).not.toContain("publishTemplateDelivery");
+      expect(mainTs).not.toContain("Promise.allSettled(");
     });
 
-    it("main.mts captures reviewer results without merging reviewer commits", async () => {
+    it("generated deliveries re-read current revisions before review evidence is used", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "parallel-planner-with-review" });
 
@@ -1269,14 +1313,18 @@ describe("InitService scaffold", () => {
         join(dir, ".shipyard", "main.mts"),
         "utf-8",
       );
-      // Reviewer result must be captured, not discarded
-      expect(mainTs).toContain("let review = await runReview");
-      // Review commits are intentionally not adopted by the delivery.
-      expect(mainTs).toContain("implementation.commits");
-      expect(mainTs).toContain("if (review.commits.length > 0 ||");
+      expect(mainTs).toContain("BASE_SHA: input.base.sha");
+      expect(mainTs).toContain("HEAD_SHA: input.head.sha");
+      expect(mainTs).toContain(
+        "readCurrent: () => readStandaloneCurrent({ group, brief, branch })",
+      );
+      expect(mainTs).toContain(
+        "const current = await coordinator.getDelivery(delivery.key)",
+      );
+      expect(mainTs).toContain("return specCurrent({");
     });
 
-    it("main.mts resumes completed branches and stops on no progress", async () => {
+    it("main.mts configures one consolidated repair and targeted re-review", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "parallel-planner-with-review" });
 
@@ -1284,32 +1332,116 @@ describe("InitService scaffold", () => {
         join(dir, ".shipyard", "main.mts"),
         "utf-8",
       );
-      expect(mainTs).toContain("entry.value.published");
+      expect(mainTs).toContain(
+        "repairBudget: { maxBatches: 1, maxFollowUps: 1 }",
+      );
+      expect(mainTs).toContain("runConsolidatedRepair");
+      expect(mainTs).toContain("REVIEW_MODE: input.mode");
+      expect(mainTs).toContain("commits: [integrated.headSha]");
+      expect(mainTs).toContain("mode: request.mode");
+      expect(mainTs).toContain("targetedFindings: request.targetedFindings");
+      expect(mainTs.match(/fix: \(request\) =>/g)).toHaveLength(2);
+      expect(mainTs).toContain("workerId: workerIdFor(group)");
+    });
+
+    it("main.mts delegates parallel routing and scheduling to the generated router", async () => {
+      const dir = await makeDir();
+      await runScaffold(dir, { templateName: "parallel-planner-with-review" });
+
+      const mainTs = await readFile(
+        join(dir, ".shipyard", "main.mts"),
+        "utf-8",
+      );
+      expect(mainTs).toContain('from "./deliver-groups.js"');
       expect(mainTs).toContain("integrateTemplateDelivery");
       expect(mainTs).toContain("deliveryGroups");
-      expect(mainTs).toContain("No delivery group made progress");
-
-      const noProgressIndex = mainTs.indexOf("if (completed.length === 0)");
-      const noProgressSection = mainTs.slice(
-        noProgressIndex,
-        noProgressIndex + 350,
-      );
-      expect(noProgressSection).toContain("break");
-      expect(noProgressSection).not.toContain("continue");
+      expect(mainTs).toContain("deliverStandalone: deliverStandaloneGroup");
+      expect(mainTs).toContain("deliverSpec: deliverSpecGroup");
+      expect(mainTs).not.toContain("runChild(");
     });
 
-    it("main.mts uses Promise.allSettled for parallel execution", async () => {
+    it("generated router handles groups concurrently and contains no external effects", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "parallel-planner-with-review" });
 
-      const mainTs = await readFile(
-        join(dir, ".shipyard", "main.mts"),
+      const router = await readFile(
+        join(dir, ".shipyard", "deliver-groups.ts"),
         "utf-8",
       );
-      expect(mainTs).toContain("Promise.allSettled");
+      expect(router).toContain("Promise.allSettled");
+      expect(router).not.toContain("shipyard.run(");
+      expect(router).not.toContain("createGitHub");
+      expect(router).not.toContain("publish");
     });
 
-    it("main.mts has correct maxIterations: planner=1, implementer=100, reviewer=1", async () => {
+    it("generated router routes mixed standalone and spec groups concurrently", async () => {
+      const { route } = await generatedRouter();
+      const calls: string[] = [];
+      let finish!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const deliver =
+        (mode: string) =>
+        async ({ delivery }: { delivery: unknown }) => {
+          const id = (delivery as { id: string }).id;
+          calls.push(`${mode}:${id}`);
+          if (calls.length === 2) finish();
+          await gate;
+          return { outcome: "ready-for-human" };
+        };
+      const result = await route({
+        groups: [
+          { id: "issue-17", mode: "standalone" },
+          { id: "spec-18", mode: "planning-spec" },
+        ],
+        hydrate: async (group) => group as never,
+        resolve: (group) => group as never,
+        deliverStandalone: deliver("standalone"),
+        deliverSpec: deliver("spec"),
+      });
+
+      expect(result.outcome).toBe("delivered");
+      expect(calls).toEqual(["standalone:issue-17", "spec:spec-18"]);
+    });
+
+    it("generated router isolates an interrupted group and skips live work for no-work", async () => {
+      const { route, source } = await generatedRouter();
+      const deliverStandalone = vi.fn(async () => {
+        throw new Error("worker interrupted");
+      });
+      const deliverSpec = vi.fn(async () => ({ outcome: "ready-for-human" }));
+      const result = await route({
+        groups: [
+          { id: "issue-19", mode: "standalone" },
+          { id: "spec-20", mode: "planning-spec" },
+        ],
+        hydrate: async (group) => group as never,
+        resolve: (group) => group as never,
+        deliverStandalone,
+        deliverSpec,
+      });
+      const noWork = await route({
+        groups: [],
+        hydrate: async (group) => group as never,
+        resolve: (group) => group as never,
+        deliverStandalone,
+        deliverSpec,
+      });
+
+      expect(result.outcome).toBe("delivered");
+      expect(result.groups).toHaveLength(2);
+      expect(deliverStandalone).toHaveBeenCalledOnce();
+      expect(deliverSpec).toHaveBeenCalledOnce();
+      expect(noWork).toEqual({ outcome: "no-work", groups: [] });
+      expect(deliverStandalone).toHaveBeenCalledOnce();
+      expect(deliverSpec).toHaveBeenCalledOnce();
+      expect(source).not.toContain("@snappedly-tools/shipyard");
+      expect(source).not.toContain("shipyard.run");
+      expect(source).not.toContain("createGitHub");
+    });
+
+    it("main.mts keeps the planner, worker, and reviewer bounded", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "parallel-planner-with-review" });
 
@@ -1324,18 +1456,19 @@ describe("InitService scaffold", () => {
       );
       expect(plannerSection).toContain("maxIterations: 1");
 
-      // Check implementer maxIterations: 100
-      const implementerSection = mainTs.slice(
-        mainTs.indexOf('name: "implementer"') - 200,
-        mainTs.indexOf('name: "implementer"') + 200,
+      // Check child worker maxIterations: 100
+      const childSection = mainTs.slice(
+        mainTs.indexOf("const childWorker"),
+        mainTs.indexOf("const verification"),
       );
-      expect(implementerSection).toContain("maxIterations: 100");
+      expect(childSection).toContain("maxIterations: 100");
 
       // Check reviewer maxIterations: 1
       const reviewerSection = mainTs.slice(
-        mainTs.indexOf('name: "reviewer"') - 200,
-        mainTs.indexOf('name: "reviewer"') + 200,
+        mainTs.indexOf("const reviewCandidate"),
+        mainTs.indexOf("const runConsolidatedRepair"),
       );
+      expect(reviewerSection).toContain('name: "reviewer"');
       expect(reviewerSection).toContain("maxIterations: 1");
 
       expect(mainTs).not.toContain('name: "merger"');
@@ -1451,8 +1584,8 @@ describe("InitService scaffold", () => {
       expect(prompt).not.toContain("git diff main");
       expect(prompt).not.toContain("git log main");
       const main = await readFile(join(dir, ".shipyard", "main.mts"), "utf8");
-      expect(main).toContain("BASE_SHA: baseRef");
-      expect(main).toContain("HEAD_SHA: headSha");
+      expect(main).toContain("BASE_SHA: input.base.sha");
+      expect(main).toContain("HEAD_SHA: input.head.sha");
     });
   });
 
@@ -1747,8 +1880,7 @@ describe("InitService scaffold", () => {
 
       const main = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
       expect(main).toContain("deliveryGroups");
-      expect(main).toContain("TASK_ID: child.id");
-      expect(main).not.toContain("number: number");
+      expect(main).toContain("TASK_ID: request.child.itemId");
       expect(main).not.toContain("ISSUE_NUMBER");
       expect(main).not.toContain("`  #${");
     });

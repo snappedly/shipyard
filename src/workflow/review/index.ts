@@ -35,6 +35,8 @@ export interface ReviewCheckout {
 export interface ReviewRequest {
   readonly candidate: ReviewCandidate;
   readonly checkout: ReviewCheckout;
+  readonly mode: "full" | "targeted";
+  readonly targetedFindings?: readonly Finding[];
   readonly signal: AbortSignal;
 }
 
@@ -76,6 +78,8 @@ export interface IndependentReviewOptions {
   readonly candidate: ReviewCandidate;
   readonly provider: ReviewProvider;
   readonly readCurrent: () => Promise<CurrentCandidate>;
+  readonly mode?: "full" | "targeted";
+  readonly targetedFindings?: readonly Finding[];
   readonly signal?: AbortSignal;
 }
 
@@ -322,10 +326,16 @@ export const runIndependentReview = async (
       candidate: candidate.head,
       immutable: true as const,
     });
+    const targetedFindings =
+      options.mode === "targeted" && options.targetedFindings !== undefined
+        ? deepFreeze(structuredClone(options.targetedFindings))
+        : undefined;
     response = await options.provider.review(
       Object.freeze({
         candidate,
         checkout,
+        mode: options.mode ?? "full",
+        ...(targetedFindings === undefined ? {} : { targetedFindings }),
         signal: options.signal ?? new AbortController().signal,
       }),
     );

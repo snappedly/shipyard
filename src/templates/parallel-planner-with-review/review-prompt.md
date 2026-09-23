@@ -9,6 +9,11 @@ Review the immutable candidate for {{REVIEW_SCOPE}} in delivery group
 verification evidence to the coordinator. Do not edit, publish, merge, or
 close anything.
 
+Review mode: {{REVIEW_MODE}}.
+Review these required axes: {{REQUIRED_AXES}}. Include every required axis in
+the returned `axes` array.
+{{TARGETED_FINDINGS}}
+
 # CONTEXT
 
 ## Branch diff
@@ -57,7 +62,7 @@ coordinator-owned integration candidate. Return an empty array when no
 findings remain. Always emit this JSON before the completion signal:
 
 <review>
-{"findings":[]}
+{"axes":["standards","spec"],"findings":[],"evidence":[]}
 </review>
 
 Once complete, output <promise>COMPLETE</promise>.

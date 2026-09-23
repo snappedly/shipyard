@@ -1,4 +1,4 @@
 {
   "name": "parallel-planner-with-review",
-  "description": "Plans delivery groups, executes and reviews them in parallel, and hands off"
+  "description": "Plans delivery groups, uses canonical review and bounded repair, and hands off"
 }

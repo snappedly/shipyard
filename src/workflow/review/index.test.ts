@@ -163,6 +163,36 @@ describe("independent review", () => {
     expect(result.candidate.brief.hash).toBe(brief.hash);
   });
 
+  it("passes targeted findings and review mode to the read-only provider", async () => {
+    const targetedFinding = {
+      id: "targeted-1",
+      severity: "high" as const,
+      axis: "spec" as const,
+      disposition: "open" as const,
+      title: "The required behavior is missing",
+      evidence: "The candidate omits the required behavior.",
+    };
+    let observed: { mode?: string; targetedFindings?: readonly unknown[] } = {};
+    const result = await runIndependentReview({
+      candidate,
+      provider: {
+        review: async (request) => {
+          observed = request;
+          return passingResponse();
+        },
+      },
+      readCurrent,
+      mode: "targeted",
+      targetedFindings: [targetedFinding],
+    });
+
+    expect(result.outcome).toBe("passed");
+    expect(observed).toMatchObject({
+      mode: "targeted",
+      targetedFindings: [targetedFinding],
+    });
+  });
+
   it("passes explicit Standards and Spec axes without allowing reviewer changes", async () => {
     let seen: Parameters<ReviewProvider["review"]>[0] | undefined;
     const provider: ReviewProvider = {

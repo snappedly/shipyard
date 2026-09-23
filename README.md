@@ -62,13 +62,13 @@ the [agent guide](docs/content/docs/agents.mdx) for authentication details.
 
 ## Pick the workflow you need
 
-| Template                       | Best for              | Built-in flow                                             |
-| ------------------------------ | --------------------- | --------------------------------------------------------- |
-| `blank`                        | One custom task       | One agent run                                             |
-| `simple-loop`                  | A small issue backlog | Standalone or promoted spec delivery → reviewed handoff   |
-| `sequential-reviewer`          | Safer issue delivery  | Standalone or promoted spec delivery → reviewed handoff   |
-| `parallel-planner`             | Mixed issue backlogs  | Standalone and spec groups → canonical delivery → handoff |
-| `parallel-planner-with-review` | Maximum autonomy      | Group → review/repair → draft PR → human handoff          |
+| Template                       | Best for               | Built-in flow                                                 |
+| ------------------------------ | ---------------------- | ------------------------------------------------------------- |
+| `blank`                        | One custom task        | One agent run                                                 |
+| `simple-loop`                  | A small issue backlog  | Standalone or promoted spec delivery → reviewed handoff       |
+| `sequential-reviewer`          | Safer issue delivery   | Standalone or promoted spec delivery → reviewed handoff       |
+| `parallel-planner`             | Mixed issue backlogs   | Standalone and spec groups → canonical delivery → handoff     |
+| `parallel-planner-with-review` | Mixed backlog + repair | Canonical delivery → checks/review → bounded repair → handoff |
 
 All templates are generated TypeScript. Adjust prompts, models, iteration
 limits, branch strategy, hooks, and checks in `.shipyard/main.ts` or
@@ -78,15 +78,19 @@ The bundled GitHub workflows select or plan issues on the host and publish one
 draft PR per delivery. `parallel-planner` sends standalone groups through
 `deliverStandalone` and planning-spec groups through durable `deliverSpec`;
 unrelated groups run concurrently while the spec coordinator schedules
-dependency-safe workers and integrates their commits serially. The host owns
-GitHub effects, checks, closure, review, and handoff. `simple-loop` and
-`sequential-reviewer` deliver standalone issues through the canonical lifecycle.
-When either template sees an activated executable child of an open planning
-spec, it resolves the complete native or documented fallback graph and routes
-the parent through the same durable spec delivery. Sibling activations share the
-parent delivery identity and integration branch; the parent never runs as an
-executable issue. Spec child issues close after their integration and
-verification, while the parent remains open until merge.
+dependency-safe workers and integrates their commits serially.
+`parallel-planner-with-review` uses the same coordinator-owned paths. Reviewers
+inspect the exact candidate; one consolidated repair and one targeted re-review
+are allowed before human handoff. The host owns GitHub effects, checks, closure,
+review, and handoff. `simple-loop` and `sequential-reviewer` verify the published
+candidate, checks, review, and cleanup before marking the PR ready and closing a
+standalone source issue with commit and PR evidence. When either template sees
+an activated executable child of an open planning spec, it resolves the
+complete native or documented fallback graph and routes the parent through the
+same durable spec delivery. Sibling activations share the parent delivery
+identity and integration branch; the parent never runs as an executable issue.
+Spec child issues close after their integration and verification, while the
+parent remains open until merge.
 The host `gh` login needs Contents, Pull requests, Checks, and Issues write
 access. Set
 `SHIPYARD_BASE_BRANCH` if the integration branch is not `staging`. Required
