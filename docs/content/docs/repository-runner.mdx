@@ -59,12 +59,18 @@ An activated planning spec or linked executable child becomes one
 `/implement-spec` scope containing the parent, all linked children, and their
 dependencies. The selected template keeps its sequential or parallel planning,
 implementation, and review stages. Parallel templates run ready child tickets
-through scoped `/implement` workers and integrate each dependency wave into one
-spec branch. The complete scope gets one open, non-draft PR with links to all
+through scoped `/implement` workers, resolve cherry-pick conflicts during
+integration, and merge each dependency wave into one spec branch. The complete
+scope gets one open, non-draft PR with links to all
 issues. The workflow never merges into the target branch or closes issues.
 Successful handoff marks the PR `ready-for-human` and removes `shipyard` from
-activated parent and child issues, so later wake-ups do not repeat work. Failed
-setup, relationships, checks, or review retain activation and logs for diagnosis.
+activated parent and child issues, so later wake-ups do not repeat work. A
+failed attempted scope gets an issue comment describing the failure and a
+`shipyard:blocked` label; Shipyard removes `shipyard` from the scope so it does
+not retry automatically. If a child ticket fails, the ticket and parent spec
+are marked blocked. Resolve the problem, remove `shipyard:blocked`, and add
+`shipyard` to retry. Relationship resolution failures before a scope is selected
+remain in the runner logs and stop the invocation.
 
 Start always preflights the current backlog, recovering labels added while the
 Mac was off. If work exists, it invokes exactly `npx shipyard run`. After a

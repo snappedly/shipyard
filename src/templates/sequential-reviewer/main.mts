@@ -40,6 +40,27 @@ const closeClean = async (sandbox: {
 
 const handoffEvidence = (stdout: string): string | undefined =>
   [...stdout.matchAll(/<handoff>([\s\S]*?)<\/handoff>/g)].at(-1)?.[1]?.trim();
+const blockScope = (
+  scope: { id: string; tickets?: Array<{ id: string }> },
+  error: unknown,
+) => {
+  const reason = (error instanceof Error ? error.message : String(error)).slice(
+    0,
+    3000,
+  );
+  execFileSync(
+    "bash",
+    [
+      ".shipyard/block-scope.sh",
+      scope.id,
+      scope.id,
+      repository,
+      [scope.id, ...(scope.tickets ?? []).map((ticket) => ticket.id)].join(","),
+    ],
+    { input: reason, encoding: "utf8" },
+  );
+  console.error(`Shipyard blocked issue #${scope.id}: ${reason}`);
+};
 
 for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
   const issues = JSON.parse(
@@ -61,72 +82,81 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
   const issue = issues[0];
   if (!issue) break;
 
-  const sandbox = await shipyard.createSandbox({
-    branch: issue.branch,
-    sandbox: docker(),
-    hooks,
-  });
-  let evidence: string;
+  let handedOff = false;
   try {
-    const implement = await sandbox.run({
-      name: "implementer",
-      maxIterations: 1,
-      agent: shipyard.codex(shipyard.CODEX_MODELS.routine),
-      promptFile: "./.shipyard/implement-prompt.md",
-      promptArgs: {
-        TASK_ID: issue.id,
-        ISSUE_TITLE: issue.title,
-        BRANCH: issue.branch,
-        SCOPE: JSON.stringify(issue),
-        SKILL: issue.kind === "spec" ? "/implement-spec" : "/implement",
-      },
+    const sandbox = await shipyard.createSandbox({
+      branch: issue.branch,
+      sandbox: docker(),
+      hooks,
     });
-    const implementationEvidence = handoffEvidence(implement.stdout);
-    if (!implement.completionSignal || !implementationEvidence)
-      throw new Error(
-        `Issue #${issue.id} has no verified implementation evidence`,
-      );
+    let evidence: string;
+    try {
+      const implement = await sandbox.run({
+        name: "implementer",
+        maxIterations: 1,
+        agent: shipyard.codex(shipyard.CODEX_MODELS.routine),
+        promptFile: "./.shipyard/implement-prompt.md",
+        promptArgs: {
+          TASK_ID: issue.id,
+          ISSUE_TITLE: issue.title,
+          BRANCH: issue.branch,
+          SCOPE: JSON.stringify(issue),
+          SKILL: issue.kind === "spec" ? "/implement-spec" : "/implement",
+        },
+      });
+      const implementationEvidence = handoffEvidence(implement.stdout);
+      if (!implement.completionSignal || !implementationEvidence)
+        throw new Error(
+          `Issue #${issue.id} has no verified implementation evidence: ${implement.stdout.trim().slice(-1200)}`,
+        );
 
-    const review = await sandbox.run({
-      name: "reviewer",
-      maxIterations: 1,
-      agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
-      promptFile: "./.shipyard/review-prompt.md",
-      promptArgs: {
-        BRANCH: issue.branch,
-        SCOPE: JSON.stringify(issue),
-        SKILL: issue.kind === "spec" ? "/implement-spec" : "/implement",
-        TASK_ID: issue.id,
-      },
-    });
-    const reviewEvidence = handoffEvidence(review.stdout);
-    if (
-      !review.completionSignal ||
-      !review.stdout.includes("<review>APPROVED</review>") ||
-      !reviewEvidence
-    ) {
-      throw new Error(`Issue #${issue.id} has unresolved review findings`);
+      const review = await sandbox.run({
+        name: "reviewer",
+        maxIterations: 1,
+        agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
+        promptFile: "./.shipyard/review-prompt.md",
+        promptArgs: {
+          BRANCH: issue.branch,
+          SCOPE: JSON.stringify(issue),
+          SKILL: issue.kind === "spec" ? "/implement-spec" : "/implement",
+          TASK_ID: issue.id,
+        },
+      });
+      const reviewEvidence = handoffEvidence(review.stdout);
+      if (
+        !review.completionSignal ||
+        !review.stdout.includes("<review>APPROVED</review>") ||
+        !reviewEvidence
+      ) {
+        throw new Error(
+          `Issue #${issue.id} has unresolved review findings: ${review.stdout.trim().slice(-1200)}`,
+        );
+      }
+      evidence = `${implementationEvidence}\n\n${reviewEvidence}`;
+    } finally {
+      await closeClean(sandbox);
     }
-    evidence = `${implementationEvidence}\n\n${reviewEvidence}`;
-  } finally {
-    await closeClean(sandbox);
-  }
 
-  const publication = await shipyard.createSandbox({
-    branch: issue.branch,
-    sandbox: docker(),
-  });
-  try {
-    const handoff = await publication.exec(
-      `bash .shipyard/handoff.sh ${issue.id} ${issue.branch} ${targetBranch} ${repository} ${[issue.id, ...(issue.tickets ?? []).map((ticket) => ticket.id)].join(",")}`,
-      { stdin: evidence },
-    );
-    if (handoff.exitCode !== 0)
-      throw new Error(
-        `PR handoff for #${issue.id} failed: ${handoff.stderr || handoff.stdout}`,
+    const publication = await shipyard.createSandbox({
+      branch: issue.branch,
+      sandbox: docker(),
+    });
+    try {
+      const handoff = await publication.exec(
+        `bash .shipyard/handoff.sh ${issue.id} ${issue.branch} ${targetBranch} ${repository} ${[issue.id, ...(issue.tickets ?? []).map((ticket) => ticket.id)].join(",")}`,
+        { stdin: evidence },
       );
-    console.log(handoff.stdout.trim());
-  } finally {
-    await publication.close();
+      if (handoff.exitCode !== 0)
+        throw new Error(
+          `PR handoff for #${issue.id} failed: ${handoff.stderr || handoff.stdout}`,
+        );
+      console.log(handoff.stdout.trim());
+      handedOff = true;
+    } finally {
+      await publication.close();
+    }
+  } catch (error) {
+    if (handedOff) throw error;
+    blockScope(issue, error);
   }
 }

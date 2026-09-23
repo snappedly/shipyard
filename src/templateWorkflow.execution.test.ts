@@ -16,6 +16,8 @@ const calls = vi.hoisted(() => ({
   }>,
   specContent: [] as string[],
   cherryPickSucceeds: true,
+  conflictResolved: true,
+  resolverReportsComplete: true,
   emptyPlan: false,
   invocations: [] as Array<{
     name: string;
@@ -29,12 +31,32 @@ const calls = vi.hoisted(() => ({
   finalReviewApproved: true,
   reviewCount: 0,
   dirtyBranch: "",
+  blocked: [] as Array<{
+    root: string;
+    failed: string;
+    scope: string;
+    reason: string;
+  }>,
 }));
 
 vi.mock("node:child_process", () => ({
-  execFileSync: (command: string, args: string[]) => {
+  execFileSync: (
+    command: string,
+    args: string[],
+    options?: { input?: string },
+  ) => {
     if (command === "git") return "staging\n";
     if (command === "gh" && args[0] === "repo") return "owner/repo\n";
+    if (command === "bash" && args[0] === ".shipyard/block-scope.sh") {
+      calls.events.push("blocked");
+      calls.blocked.push({
+        root: args[1]!,
+        failed: args[2]!,
+        scope: args[4]!,
+        reason: options?.input ?? "",
+      });
+      return "";
+    }
     if (command === "node" && args[0] === ".shipyard/select-issues.mjs") {
       calls.events.push("select");
       return JSON.stringify(
@@ -101,6 +123,7 @@ vi.mock("@snappedly-tools/shipyard", () => {
   });
   const sandbox = (branch: string) => {
     const pendingContent: string[] = [];
+    let headReads = 0;
     return {
       run: async ({
         name,
@@ -113,6 +136,13 @@ vi.mock("@snappedly-tools/shipyard", () => {
         calls.invocations.push({ name, branch, args: promptArgs ?? {} });
         if (name === "spec-integrator")
           calls.specContent.push(...pendingContent);
+        if (name === "conflict-resolver") {
+          if (calls.conflictResolved)
+            pendingContent.push(calls.specContent.includes("43") ? "44" : "43");
+          return calls.resolverReportsComplete
+            ? packet("conflict resolved and checks passed")
+            : { stdout: "conflict remains", commits: [] };
+        }
         if (name === "implementer")
           return calls.implementationComplete
             ? packet("tests passed")
@@ -140,10 +170,39 @@ vi.mock("@snappedly-tools/shipyard", () => {
       },
       exec: async (command: string) => {
         calls.commands.push(command);
+        if (command === "git rev-parse HEAD") {
+          headReads++;
+          return {
+            exitCode: 0,
+            stdout: (headReads > 1 && calls.conflictResolved
+              ? "b"
+              : "a"
+            ).repeat(40),
+            stderr: "",
+          };
+        }
         if (command.startsWith("git rev-list")) {
           calls.events.push("rev-list");
           return { exitCode: 0, stdout: "a".repeat(40), stderr: "" };
         }
+        if (command === "git ls-files -u")
+          return {
+            exitCode: 0,
+            stdout: calls.conflictResolved ? "" : "unmerged",
+            stderr: "",
+          };
+        if (command === "git status --porcelain")
+          return {
+            exitCode: 0,
+            stdout: calls.conflictResolved ? "" : "UU file",
+            stderr: "",
+          };
+        if (command === "git rev-parse -q --verify CHERRY_PICK_HEAD")
+          return {
+            exitCode: calls.conflictResolved ? 1 : 0,
+            stdout: "",
+            stderr: "",
+          };
         if (command.includes("cherry-pick")) {
           calls.events.push("cherry-pick");
           if (!calls.cherryPickSucceeds)
@@ -213,6 +272,8 @@ beforeEach(() => {
   calls.creates.length = 0;
   calls.specContent.length = 0;
   calls.cherryPickSucceeds = true;
+  calls.conflictResolved = true;
+  calls.resolverReportsComplete = true;
   calls.emptyPlan = false;
   calls.invocations.length = 0;
   calls.reviewApproved = true;
@@ -222,6 +283,7 @@ beforeEach(() => {
   calls.finalReviewApproved = true;
   calls.reviewCount = 0;
   calls.dirtyBranch = "";
+  calls.blocked.length = 0;
 });
 
 afterEach(() => {
@@ -240,6 +302,21 @@ describe("generated issue workflows", () => {
       "close",
       "select",
     ]);
+  });
+
+  it("marks a failed standalone issue blocked and continues without handoff", async () => {
+    calls.implementationComplete = false;
+    await import("./templates/simple-loop/main.mts" as string);
+    expect(calls.blocked).toEqual([
+      {
+        root: "42",
+        failed: "42",
+        scope: "42",
+        reason: expect.stringContaining("verified completion evidence"),
+      },
+    ]);
+    expect(calls.blocked[0]?.reason).toContain("blocked");
+    expect(calls.events).not.toContain("handoff");
   });
 
   it("sequential-reviewer reviews before publication", async () => {
@@ -298,10 +375,9 @@ describe("generated issue workflows", () => {
   it("blocks handoff when review of final corrections has findings", async () => {
     calls.finalChanges = true;
     calls.finalReviewApproved = false;
-    await expect(
-      import("./templates/parallel-planner-with-review/main.mts" as string),
-    ).rejects.toThrow("unresolved review findings");
+    await import("./templates/parallel-planner-with-review/main.mts" as string);
     expect(calls.events).not.toContain("handoff");
+    expect(calls.blocked[0]).toMatchObject({ root: "42", failed: "42" });
   });
 
   it("uses non-reserved prompt arguments for target branches", async () => {
@@ -332,40 +408,47 @@ describe("generated issue workflows", () => {
 
   it("blocks publication when implementation leaves uncommitted work", async () => {
     calls.dirtyBranch = "shipyard/issue-42";
-    await expect(
-      import("./templates/simple-loop/main.mts" as string),
-    ).rejects.toThrow("uncommitted work");
+    await import("./templates/simple-loop/main.mts" as string);
     expect(calls.events).not.toContain("handoff");
+    expect(calls.blocked[0]?.reason).toContain("uncommitted work");
   });
 
   it("blocks spec integration when a child leaves uncommitted work", async () => {
     calls.spec = true;
     calls.dirtyBranch = "shipyard/spec-42-issue-43";
-    await expect(
-      import("./templates/parallel-planner/main.mts" as string),
-    ).rejects.toThrow("uncommitted work");
+    await import("./templates/parallel-planner/main.mts" as string);
     expect(calls.events).not.toContain("handoff");
+    expect(calls.blocked[0]).toMatchObject({ root: "42", failed: "43" });
   });
 
   it("review findings prevent sequential handoff", async () => {
     calls.reviewApproved = false;
-    await expect(
-      import("./templates/sequential-reviewer/main.mts" as string),
-    ).rejects.toThrow("unresolved review findings");
+    await import("./templates/sequential-reviewer/main.mts" as string);
     expect(calls.events).toEqual([
       "select",
       "implementer",
       "reviewer",
       "close",
+      "blocked",
+      "select",
     ]);
+    expect(calls.blocked[0]?.reason).toContain("unresolved review findings");
   });
 
   it("missing implementation evidence prevents parallel handoff", async () => {
     calls.implementationComplete = false;
-    await expect(
-      import("./templates/parallel-planner/main.mts" as string),
-    ).rejects.toThrow("lacks verified completion evidence");
-    expect(calls.events).toEqual(["select", "planner", "implementer", "close"]);
+    await import("./templates/parallel-planner/main.mts" as string);
+    expect(calls.events).toEqual([
+      "select",
+      "planner",
+      "implementer",
+      "close",
+      "blocked",
+      "select",
+    ]);
+    expect(calls.blocked[0]?.reason).toContain(
+      "lacks verified completion evidence",
+    );
   });
 
   it("simple-loop passes the complete spec scope to /implement-spec and hands off once", async () => {
@@ -454,14 +537,37 @@ describe("generated issue workflows", () => {
     expect(calls.events).toEqual(["select", "planner"]);
   });
 
-  it("cherry-pick failure prevents the spec PR handoff", async () => {
+  it("resolves a child cherry-pick conflict on the spec branch before handoff", async () => {
     calls.spec = true;
     calls.cherryPickSucceeds = false;
-    await expect(
-      import("./templates/parallel-planner/main.mts" as string),
-    ).rejects.toThrow("Cherry-pick of #43 failed: conflict");
+    await import("./templates/parallel-planner/main.mts" as string);
+    expect(calls.events).toContain("conflict-resolver");
+    expect(calls.events.indexOf("conflict-resolver")).toBeLessThan(
+      calls.events.indexOf("spec-integrator"),
+    );
+    expect(calls.events).toContain("handoff");
+    expect(calls.specContent).toEqual(["43", "44"]);
+  });
+
+  it("blocks the failed ticket and spec when a conflict cannot be resolved", async () => {
+    calls.spec = true;
+    calls.cherryPickSucceeds = false;
+    calls.conflictResolved = false;
+    await import("./templates/parallel-planner/main.mts" as string);
+    expect(calls.blocked[0]).toMatchObject({ root: "42", failed: "43" });
+    expect(calls.blocked[0]?.reason).toContain("unresolved or uncommitted");
     expect(calls.events).not.toContain("handoff");
-    expect(calls.specContent).toEqual([]);
+  });
+
+  it("review template resolves a conflict and reviews the integrated spec", async () => {
+    calls.spec = true;
+    calls.cherryPickSucceeds = false;
+    await import("./templates/parallel-planner-with-review/main.mts" as string);
+    expect(calls.events).toContain("conflict-resolver");
+    expect(calls.events.lastIndexOf("reviewer")).toBeGreaterThan(
+      calls.events.lastIndexOf("spec-integrator"),
+    );
+    expect(calls.events).toContain("handoff");
   });
 
   it("parallel templates retain concurrent independent standalone scopes", async () => {
@@ -516,23 +622,23 @@ describe("generated issue workflows", () => {
   it("parallel spec review follows all child integrations and gates handoff", async () => {
     calls.spec = true;
     calls.reviewApproved = false;
-    await expect(
-      import("./templates/parallel-planner-with-review/main.mts" as string),
-    ).rejects.toThrow("unresolved review findings");
+    await import("./templates/parallel-planner-with-review/main.mts" as string);
     expect(calls.events).not.toContain("handoff");
+    expect(calls.blocked[0]).toMatchObject({ root: "42", failed: "43" });
   });
 
   it("failed PR publication leaves the standalone run failed", async () => {
     calls.handoffSucceeds = false;
-    await expect(
-      import("./templates/simple-loop/main.mts" as string),
-    ).rejects.toThrow("push failed");
+    await import("./templates/simple-loop/main.mts" as string);
     expect(calls.events).toEqual([
       "select",
       "implementer",
       "close",
       "handoff",
       "close",
+      "blocked",
+      "select",
     ]);
+    expect(calls.blocked[0]?.reason).toContain("push failed");
   });
 });

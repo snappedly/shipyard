@@ -60,8 +60,32 @@ const complete = (
 ) => {
   const packet = evidence(result.stdout);
   if (!result.completionSignal || !packet)
-    throw new Error(`${stage} lacks verified completion evidence`);
+    throw new Error(
+      `${stage} lacks verified completion evidence: ${result.stdout.trim().slice(-1200)}`,
+    );
   return packet;
+};
+class TicketFailures extends Error {
+  constructor(readonly failures: Array<{ id: string; reason: string }>) {
+    super(
+      failures.map((failure) => `#${failure.id}: ${failure.reason}`).join("; "),
+    );
+  }
+}
+const blockScope = (scope: Scope, failedId: string, reason: string) => {
+  reason = reason.slice(0, 3000);
+  execFileSync(
+    "bash",
+    [
+      ".shipyard/block-scope.sh",
+      scope.id,
+      failedId,
+      repository,
+      [scope.id, ...(scope.tickets ?? []).map((ticket) => ticket.id)].join(","),
+    ],
+    { input: reason, encoding: "utf8" },
+  );
+  console.error(`Shipyard blocked issue #${failedId}: ${reason}`);
 };
 const runWorker = async (scope: Scope, ticket: Ticket) => {
   const branch = `shipyard/spec-${scope.id}-issue-${ticket.id}`;
@@ -118,158 +142,232 @@ for (let iteration = 0; iteration < 10; iteration++) {
   const outcomes = await Promise.allSettled(
     ids.map(async (id) => {
       const scope = scopes.find((item) => item.id === id)!;
-      if (
-        scope.branch !==
-        (scope.kind === "spec" ? `shipyard/spec-${id}` : `shipyard/issue-${id}`)
-      )
-        throw new Error(`Invalid branch for #${id}`);
-      let workerEvidence = "";
-      if (scope.kind === "spec") {
-        const seed = await shipyard.createSandbox({
-          branch: scope.branch,
-          sandbox: docker(),
-          hooks,
-        });
-        await closeClean(seed);
-        const tickets = scope.tickets ?? [];
-        if (!tickets.length)
-          throw new Error(`Spec #${id} has no executable tickets`);
-        const remaining = new Map(tickets.map((ticket) => [ticket.id, ticket]));
-        const completed = new Set<string>();
-        while (remaining.size) {
-          const ready = [...remaining.values()].filter((ticket) =>
-            ticket.blockedBy.every(
-              (blocker) =>
-                String(blocker.state).toLowerCase() === "closed" ||
-                completed.has(blocker.id),
-            ),
-          );
-          if (!ready.length)
-            throw new Error(
-              `Spec #${id} has unresolved or cyclic ticket dependencies`,
-            );
-          const settled = await Promise.allSettled(
-            ready.map((ticket) => runWorker(scope, ticket)),
-          );
-          for (const [index, outcome] of settled.entries()) {
-            if (outcome.status === "rejected")
-              throw new Error(
-                `Ticket #${ready[index]!.id} failed: ${outcome.reason}`,
-              );
-          }
-          const wave = await shipyard.createSandbox({
+      let handedOff = false;
+      try {
+        if (
+          scope.branch !==
+          (scope.kind === "spec"
+            ? `shipyard/spec-${id}`
+            : `shipyard/issue-${id}`)
+        )
+          throw new Error(`Invalid branch for #${id}`);
+        let workerEvidence = "";
+        if (scope.kind === "spec") {
+          const seed = await shipyard.createSandbox({
             branch: scope.branch,
             sandbox: docker(),
             hooks,
           });
-          try {
-            for (const [index, outcome] of settled.entries()) {
-              if (outcome.status !== "fulfilled") continue;
-              const commits = await wave.exec(
-                `git rev-list --reverse HEAD..origin/${outcome.value.branch}`,
+          await closeClean(seed);
+          const tickets = scope.tickets ?? [];
+          if (!tickets.length)
+            throw new Error(`Spec #${id} has no executable tickets`);
+          const remaining = new Map(
+            tickets.map((ticket) => [ticket.id, ticket]),
+          );
+          const completed = new Set<string>();
+          while (remaining.size) {
+            const ready = [...remaining.values()].filter((ticket) =>
+              ticket.blockedBy.every(
+                (blocker) =>
+                  String(blocker.state).toLowerCase() === "closed" ||
+                  completed.has(blocker.id),
+              ),
+            );
+            if (!ready.length)
+              throw new Error(
+                `Spec #${id} has unresolved or cyclic ticket dependencies`,
               );
-              if (commits.exitCode !== 0 || !commits.stdout.trim())
-                throw new Error(
-                  `Ticket #${ready[index]!.id} has no committed changes to integrate`,
-                );
-              const shas = commits.stdout.trim().split(/\s+/);
-              if (!shas.every((sha) => /^[a-f0-9]{40}$/.test(sha)))
-                throw new Error(
-                  `Invalid commit in ticket #${ready[index]!.id}`,
-                );
-              const picked = await wave.exec(
-                `git -c user.name=Shipyard -c user.email=shipyard@users.noreply.github.com cherry-pick ${shas.join(" ")}`,
-              );
-              if (picked.exitCode !== 0)
-                throw new Error(
-                  `Cherry-pick of #${ready[index]!.id} failed: ${picked.stderr || picked.stdout}`,
-                );
-              workerEvidence += `\n\n#${ready[index]!.id}: ${outcome.value.packet}`;
-            }
-            const integrated = await wave.run({
-              name: "spec-integrator",
-              maxIterations: 10,
-              agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
-              promptFile: "./.shipyard/spec-wave-prompt.md",
-              promptArgs: {
-                TASK_ID: id,
-                BRANCH: scope.branch,
-                SCOPE: JSON.stringify(scope),
-                WAVE_BRANCHES: ready
-                  .map((ticket) => `shipyard/spec-${id}-issue-${ticket.id}`)
-                  .join(","),
-              },
+            const settled = await Promise.allSettled(
+              ready.map((ticket) => runWorker(scope, ticket)),
+            );
+            const failures = settled.flatMap((outcome, index) =>
+              outcome.status === "rejected"
+                ? [{ id: ready[index]!.id, reason: String(outcome.reason) }]
+                : [],
+            );
+            if (failures.length) throw new TicketFailures(failures);
+            const wave = await shipyard.createSandbox({
+              branch: scope.branch,
+              sandbox: docker(),
+              hooks,
             });
-            workerEvidence += `\n\n${complete(integrated, `Integration wave of #${id}`)}`;
-          } finally {
-            await closeClean(wave);
-          }
-          for (const ticket of ready) {
-            completed.add(ticket.id);
-            remaining.delete(ticket.id);
+            try {
+              for (const [index, outcome] of settled.entries()) {
+                if (outcome.status !== "fulfilled") continue;
+                const commits = await wave.exec(
+                  `git rev-list --reverse HEAD..origin/${outcome.value.branch}`,
+                );
+                if (commits.exitCode !== 0 || !commits.stdout.trim())
+                  throw new TicketFailures([
+                    {
+                      id: ready[index]!.id,
+                      reason: "No committed changes to integrate",
+                    },
+                  ]);
+                const shas = commits.stdout.trim().split(/\s+/);
+                if (!shas.every((sha) => /^[a-f0-9]{40}$/.test(sha)))
+                  throw new TicketFailures([
+                    {
+                      id: ready[index]!.id,
+                      reason: "Invalid commit on ticket branch",
+                    },
+                  ]);
+                const before = await wave.exec("git rev-parse HEAD");
+                if (
+                  before.exitCode !== 0 ||
+                  !/^[a-f0-9]{40}\s*$/.test(before.stdout)
+                )
+                  throw new Error(
+                    "Could not read spec branch commit before integration",
+                  );
+                const picked = await wave.exec(
+                  `git -c user.name=Shipyard -c user.email=shipyard@users.noreply.github.com cherry-pick ${shas.join(" ")}`,
+                );
+                if (picked.exitCode !== 0) {
+                  try {
+                    const resolution = await wave.run({
+                      name: "conflict-resolver",
+                      maxIterations: 10,
+                      agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
+                      promptFile: "./.shipyard/conflict-prompt.md",
+                      promptArgs: {
+                        TASK_ID: ready[index]!.id,
+                        BRANCH: scope.branch,
+                        SCOPE: JSON.stringify(scope),
+                        COMMITS: shas.join(","),
+                        CONFLICT: picked.stderr || picked.stdout,
+                      },
+                    });
+                    const resolutionEvidence = complete(
+                      resolution,
+                      `Conflict resolution of #${ready[index]!.id}`,
+                    );
+                    const status = await wave.exec("git status --porcelain");
+                    const pending = await wave.exec(
+                      "git rev-parse -q --verify CHERRY_PICK_HEAD",
+                    );
+                    const after = await wave.exec("git rev-parse HEAD");
+                    if (
+                      status.exitCode !== 0 ||
+                      status.stdout.trim() ||
+                      pending.exitCode === 0 ||
+                      after.exitCode !== 0 ||
+                      after.stdout.trim() === before.stdout.trim()
+                    )
+                      throw new Error(
+                        "Cherry-pick remains unresolved or uncommitted on the spec branch",
+                      );
+                    workerEvidence += `\n\n#${ready[index]!.id} conflict: ${resolutionEvidence}`;
+                  } catch (error) {
+                    throw new TicketFailures([
+                      {
+                        id: ready[index]!.id,
+                        reason: `Cherry-pick conflict: ${error instanceof Error ? error.message : String(error)}`,
+                      },
+                    ]);
+                  }
+                }
+                workerEvidence += `\n\n#${ready[index]!.id}: ${outcome.value.packet}`;
+              }
+              const integrated = await wave.run({
+                name: "spec-integrator",
+                maxIterations: 10,
+                agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
+                promptFile: "./.shipyard/spec-wave-prompt.md",
+                promptArgs: {
+                  TASK_ID: id,
+                  BRANCH: scope.branch,
+                  SCOPE: JSON.stringify(scope),
+                  WAVE_BRANCHES: ready
+                    .map((ticket) => `shipyard/spec-${id}-issue-${ticket.id}`)
+                    .join(","),
+                },
+              });
+              workerEvidence += `\n\n${complete(integrated, `Integration wave of #${id}`)}`;
+            } finally {
+              await closeClean(wave);
+            }
+            for (const ticket of ready) {
+              completed.add(ticket.id);
+              remaining.delete(ticket.id);
+            }
           }
         }
-      }
-      const integration = await shipyard.createSandbox({
-        branch: scope.branch,
-        sandbox: docker(),
-        hooks,
-      });
-      let handoffEvidence: string;
-      try {
-        if (scope.kind === "standalone") {
-          const standalone = await integration.run({
-            name: "implementer",
-            maxIterations: 100,
-            agent: shipyard.codex(shipyard.CODEX_MODELS.routine),
-            promptFile: "./.shipyard/implement-prompt.md",
+        const integration = await shipyard.createSandbox({
+          branch: scope.branch,
+          sandbox: docker(),
+          hooks,
+        });
+        let handoffEvidence: string;
+        try {
+          if (scope.kind === "standalone") {
+            const standalone = await integration.run({
+              name: "implementer",
+              maxIterations: 100,
+              agent: shipyard.codex(shipyard.CODEX_MODELS.routine),
+              promptFile: "./.shipyard/implement-prompt.md",
+              promptArgs: {
+                TASK_ID: id,
+                ISSUE_TITLE: scope.title,
+                BRANCH: scope.branch,
+                SCOPE: JSON.stringify(scope),
+              },
+            });
+            workerEvidence = complete(standalone, `Implementation of #${id}`);
+          }
+          const final = await integration.run({
+            name: "merger",
+            maxIterations: 1,
+            agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
+            promptFile: "./.shipyard/merge-prompt.md",
             promptArgs: {
               TASK_ID: id,
               ISSUE_TITLE: scope.title,
               BRANCH: scope.branch,
+              BASE_BRANCH: targetBranch,
               SCOPE: JSON.stringify(scope),
             },
           });
-          workerEvidence = complete(standalone, `Implementation of #${id}`);
+          const finalEvidence = complete(final, `Final integration of #${id}`);
+          handoffEvidence = `${workerEvidence}\n\n${finalEvidence}`;
+        } finally {
+          await closeClean(integration);
         }
-        const final = await integration.run({
-          name: "merger",
-          maxIterations: 1,
-          agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
-          promptFile: "./.shipyard/merge-prompt.md",
-          promptArgs: {
-            TASK_ID: id,
-            ISSUE_TITLE: scope.title,
-            BRANCH: scope.branch,
-            BASE_BRANCH: targetBranch,
-            SCOPE: JSON.stringify(scope),
-          },
+        const publication = await shipyard.createSandbox({
+          branch: scope.branch,
+          sandbox: docker(),
         });
-        const finalEvidence = complete(final, `Final integration of #${id}`);
-        handoffEvidence = `${workerEvidence}\n\n${finalEvidence}`;
-      } finally {
-        await closeClean(integration);
-      }
-      const publication = await shipyard.createSandbox({
-        branch: scope.branch,
-        sandbox: docker(),
-      });
-      try {
-        const scopeIds = [
-          id,
-          ...(scope.tickets ?? []).map((ticket) => ticket.id),
-        ].join(",");
-        const handoff = await publication.exec(
-          `bash .shipyard/handoff.sh ${id} ${scope.branch} ${targetBranch} ${repository} ${scopeIds}`,
-          { stdin: handoffEvidence },
-        );
-        if (handoff.exitCode !== 0)
-          throw new Error(
-            `PR handoff for #${id} failed: ${handoff.stderr || handoff.stdout}`,
+        try {
+          const scopeIds = [
+            id,
+            ...(scope.tickets ?? []).map((ticket) => ticket.id),
+          ].join(",");
+          const handoff = await publication.exec(
+            `bash .shipyard/handoff.sh ${id} ${scope.branch} ${targetBranch} ${repository} ${scopeIds}`,
+            { stdin: handoffEvidence },
           );
-        console.log(handoff.stdout.trim());
-      } finally {
-        await publication.close();
+          if (handoff.exitCode !== 0)
+            throw new Error(
+              `PR handoff for #${id} failed: ${handoff.stderr || handoff.stdout}`,
+            );
+          console.log(handoff.stdout.trim());
+          handedOff = true;
+        } finally {
+          await publication.close();
+        }
+      } catch (error) {
+        if (handedOff) throw error;
+        if (error instanceof TicketFailures) {
+          for (const failure of error.failures)
+            blockScope(scope, failure.id, failure.reason);
+        } else {
+          blockScope(
+            scope,
+            scope.id,
+            error instanceof Error ? error.message : String(error),
+          );
+        }
       }
     }),
   );

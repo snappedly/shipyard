@@ -527,12 +527,21 @@ describe("InitService scaffold", () => {
       );
       const setup = await readFile(join(configDir, "setup.sh"), "utf-8");
       const handoff = await readFile(join(configDir, "handoff.sh"), "utf-8");
+      const blocked = await readFile(
+        join(configDir, "block-scope.sh"),
+        "utf-8",
+      );
       expect(main).toContain("handoff.sh");
       expect(main).toContain("setup.sh");
       expect(selector).toMatch(/"--label",\s*"shipyard"/);
       expect(setup).toContain("snappedly/skills.git");
       expect(handoff).toContain("gh pr create");
       expect(handoff).not.toContain("gh pr merge");
+      expect(blocked).toContain("shipyard:blocked");
+      if (templateName.startsWith("parallel-"))
+        expect(
+          await readFile(join(configDir, "conflict-prompt.md"), "utf-8"),
+        ).toContain("cherry-pick conflict");
     },
   );
 

@@ -86,11 +86,16 @@ dependencies in Docker. A standalone issue runs through `/implement`. Activating
 a planning spec or a linked executable child resolves the parent, all linked
 children, and dependencies into one `/implement-spec` scope. The sequential
 templates deliver that scope on one branch; the parallel templates assign ready
-children to `/implement` workers, integrate dependency waves, and review the
-complete spec. Each scope produces one non-draft PR for human merge, linking
+children to `/implement` workers, integrate dependency waves, resolve ticket
+merge conflicts on the spec branch, and review the complete spec. Each scope
+produces one non-draft PR labelled `ready-for-human` for human merge, linking
 its parent and children. Successful handoff removes `shipyard` from activated
 issues; issues remain open under the target repository's closure policy.
-Missing or ambiguous relationships stop dispatch for inspection. The GitHub token
+If an attempted issue cannot be completed, Shipyard comments with the reason,
+marks it `shipyard:blocked`, and removes `shipyard` from the scope. For a failed
+spec ticket it also marks the parent spec blocked. Resolve the problem, remove
+`shipyard:blocked`, then add `shipyard` to retry. Missing or ambiguous
+relationships stop dispatch for inspection. The GitHub token
 needs Contents, Issues, and Pull requests read/write permission plus Metadata
 read permission. Keep the Mac and foreground controller running for wake-ups.
 

@@ -39,6 +39,27 @@ const closeClean = async (sandbox: {
 
 const handoffEvidence = (stdout: string): string | undefined =>
   [...stdout.matchAll(/<handoff>([\s\S]*?)<\/handoff>/g)].at(-1)?.[1]?.trim();
+const blockScope = (
+  scope: { id: string; tickets?: Array<{ id: string }> },
+  error: unknown,
+) => {
+  const reason = (error instanceof Error ? error.message : String(error)).slice(
+    0,
+    3000,
+  );
+  execFileSync(
+    "bash",
+    [
+      ".shipyard/block-scope.sh",
+      scope.id,
+      scope.id,
+      repository,
+      [scope.id, ...(scope.tickets ?? []).map((ticket) => ticket.id)].join(","),
+    ],
+    { input: reason, encoding: "utf8" },
+  );
+  console.error(`Shipyard blocked issue #${scope.id}: ${reason}`);
+};
 
 for (let iteration = 0; iteration < 3; iteration++) {
   const issues = JSON.parse(
@@ -60,51 +81,60 @@ for (let iteration = 0; iteration < 3; iteration++) {
   const issue = issues[0];
   if (!issue) break;
 
-  const sandbox = await shipyard.createSandbox({
-    branch: issue.branch,
-    sandbox: docker(),
-    hooks,
-  });
-  let evidence: string;
+  let handedOff = false;
   try {
-    const result = await sandbox.run({
-      name: "implementer",
-      agent: shipyard.codex(shipyard.CODEX_MODELS.routine),
-      maxIterations: 1,
-      promptFile: "./.shipyard/prompt.md",
-      promptArgs: {
-        TASK_ID: issue.id,
-        ISSUE_TITLE: issue.title,
-        BRANCH: issue.branch,
-        SCOPE: JSON.stringify(issue),
-        SKILL: issue.kind === "spec" ? "/implement-spec" : "/implement",
-      },
+    const sandbox = await shipyard.createSandbox({
+      branch: issue.branch,
+      sandbox: docker(),
+      hooks,
     });
-    const packet = handoffEvidence(result.stdout);
-    if (!result.completionSignal || !packet)
-      throw new Error(`Issue #${issue.id} has no verified completion evidence`);
-    evidence = packet;
-  } finally {
-    await closeClean(sandbox);
-  }
+    let evidence: string;
+    try {
+      const result = await sandbox.run({
+        name: "implementer",
+        agent: shipyard.codex(shipyard.CODEX_MODELS.routine),
+        maxIterations: 1,
+        promptFile: "./.shipyard/prompt.md",
+        promptArgs: {
+          TASK_ID: issue.id,
+          ISSUE_TITLE: issue.title,
+          BRANCH: issue.branch,
+          SCOPE: JSON.stringify(issue),
+          SKILL: issue.kind === "spec" ? "/implement-spec" : "/implement",
+        },
+      });
+      const packet = handoffEvidence(result.stdout);
+      if (!result.completionSignal || !packet)
+        throw new Error(
+          `Issue #${issue.id} has no verified completion evidence: ${result.stdout.trim().slice(-1200)}`,
+        );
+      evidence = packet;
+    } finally {
+      await closeClean(sandbox);
+    }
 
-  // Sync-out rewrites sandbox commits on the host. Publish from the synced
-  // branch so a later invocation can fast-forward the same PR.
-  const publication = await shipyard.createSandbox({
-    branch: issue.branch,
-    sandbox: docker(),
-  });
-  try {
-    const handoff = await publication.exec(
-      `bash .shipyard/handoff.sh ${issue.id} ${issue.branch} ${targetBranch} ${repository} ${[issue.id, ...(issue.tickets ?? []).map((ticket) => ticket.id)].join(",")}`,
-      { stdin: evidence },
-    );
-    if (handoff.exitCode !== 0)
-      throw new Error(
-        `PR handoff for #${issue.id} failed: ${handoff.stderr || handoff.stdout}`,
+    // Sync-out rewrites sandbox commits on the host. Publish from the synced
+    // branch so a later invocation can fast-forward the same PR.
+    const publication = await shipyard.createSandbox({
+      branch: issue.branch,
+      sandbox: docker(),
+    });
+    try {
+      const handoff = await publication.exec(
+        `bash .shipyard/handoff.sh ${issue.id} ${issue.branch} ${targetBranch} ${repository} ${[issue.id, ...(issue.tickets ?? []).map((ticket) => ticket.id)].join(",")}`,
+        { stdin: evidence },
       );
-    console.log(handoff.stdout.trim());
-  } finally {
-    await publication.close();
+      if (handoff.exitCode !== 0)
+        throw new Error(
+          `PR handoff for #${issue.id} failed: ${handoff.stderr || handoff.stdout}`,
+        );
+      console.log(handoff.stdout.trim());
+      handedOff = true;
+    } finally {
+      await publication.close();
+    }
+  } catch (error) {
+    if (handedOff) throw error;
+    blockScope(issue, error);
   }
 }

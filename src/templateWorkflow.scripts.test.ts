@@ -460,4 +460,59 @@ else process.exit(2);
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("https://example.test/pr/7");
   });
+
+  it("marks a failed child and its spec blocked, comments, and removes scope activation", async () => {
+    const { dir, bin } = await fixture();
+    const log = join(dir, "blocked.log");
+    await executable(
+      join(bin, "gh"),
+      `
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(process.env.BLOCKED_LOG, args.join(" ") + "\\n");
+if (args[0] === "issue" && args[1] === "view") console.log("shipyard");
+`,
+    );
+    const result = run(
+      "bash",
+      [script("block-scope.sh"), "2", "3", "owner/repo", "2,3,4"],
+      dir,
+      bin,
+      { BLOCKED_LOG: log },
+      "Cherry-pick of #3 conflicted and could not be resolved",
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const commands = await readFile(log, "utf8");
+    expect(commands).toContain("label create shipyard:blocked");
+    expect(commands).toContain("issue comment 3 --repo owner/repo --body");
+    expect(commands).toContain("issue comment 2 --repo owner/repo --body");
+    expect(commands).toContain(
+      "Cherry-pick of #3 conflicted and could not be resolved",
+    );
+    for (const id of [2, 3, 4])
+      expect(commands).toContain(
+        `issue edit ${id} --repo owner/repo --remove-label shipyard`,
+      );
+    expect(commands).toContain(
+      "issue edit 3 --repo owner/repo --add-label shipyard:blocked",
+    );
+    expect(commands).toContain(
+      "issue edit 2 --repo owner/repo --add-label shipyard:blocked",
+    );
+    expect(commands).not.toContain("issue close");
+
+    await writeFile(log, "");
+    const standalone = run(
+      "bash",
+      [script("block-scope.sh"), "1", "1", "owner/repo", "1"],
+      dir,
+      bin,
+      { BLOCKED_LOG: log },
+      "Tests failed",
+    );
+    expect(standalone.status, standalone.stderr).toBe(0);
+    const standaloneCommands = await readFile(log, "utf8");
+    expect(standaloneCommands.match(/issue comment 1 /g)).toHaveLength(1);
+    expect(standaloneCommands).toContain("Tests failed");
+  });
 });
