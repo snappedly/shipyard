@@ -65,6 +65,7 @@ export type {
 
 export * from "./workflow/contracts/index.js";
 export * from "./workflow/coordinator/index.js";
+export * from "./workflow/coordinator/postgres-runtime.js";
 export * from "./workflow/execution/index.js";
 export * from "./workflow/handoff/index.js";
 export * from "./workflow/implementation/index.js";
@@ -73,6 +74,7 @@ export * from "./workflow/repair/index.js";
 export * from "./workflow/review/index.js";
 export * from "./workflow/triage/index.js";
 export * from "./workflow/spec/index.js";
+export * from "./workflow/standalone/index.js";
 export * from "./integrations/github/index.js";
 export * from "./integrations/releases/index.js";
 export {

@@ -21,7 +21,7 @@ const issuePath = (repository: string, issueNumber: number): string => {
   return `repos/${repository}/issues/${issueNumber}`;
 };
 
-const parseIssue = (value: unknown): GitHubIssueSnapshot => {
+export const parseCliIssue = (value: unknown): GitHubIssueSnapshot => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("GitHub returned an invalid issue");
   }
@@ -90,20 +90,20 @@ export const createGitHubCliRelationshipReader = (
       if (!Array.isArray(response)) {
         throw new Error("GitHub returned an invalid relationship list");
       }
-      issues.push(...response.map(parseIssue));
+      issues.push(...response.map(parseCliIssue));
       if (response.length < 100) return issues;
     }
   };
   return {
     fetchIssue: async ({ repository, issueNumber }) => {
       const response = await get(issuePath(repository, issueNumber));
-      return response === undefined ? undefined : parseIssue(response);
+      return response === undefined ? undefined : parseCliIssue(response);
     },
     fetchParentIssue: async ({ repository, issueNumber }) => {
       const response = await get(
         `${issuePath(repository, issueNumber)}/parent`,
       );
-      return response === undefined ? undefined : parseIssue(response);
+      return response === undefined ? undefined : parseCliIssue(response);
     },
     fetchSubIssues: ({ repository, issueNumber }) =>
       list(`${issuePath(repository, issueNumber)}/sub_issues`),
