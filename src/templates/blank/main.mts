@@ -9,5 +9,16 @@ import { docker } from "@snappedly-tools/shipyard/sandboxes/docker";
 await run({
   agent: codex(CODEX_MODELS.routine),
   sandbox: docker(),
+  hooks: {
+    sandbox: {
+      onSandboxReady: [
+        {
+          command:
+            "npx --yes skills add snappedly/skills --skill '*' -a codex -a claude-code -g -y",
+          timeoutMs: 300_000,
+        },
+      ],
+    },
+  },
   promptFile: "./.shipyard/prompt.md",
 });

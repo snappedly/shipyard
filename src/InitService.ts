@@ -508,12 +508,20 @@ const rewriteMainTs = (
       content = content.replace(/main\.mts/g, "main.ts");
     }
 
-    // Replace the default factory function name in imports.
-    // and all factory calls with the correct model.
+    // Replace the default factory in imports and calls, leaving other uses of
+    // its name (including shell commands in hooks) untouched.
     // Templates always use Codex as the placeholder factory.
     content = content.replace(
-      new RegExp(`\\b${TEMPLATE_AGENT_FACTORY}\\b`, "g"),
-      agent.factoryImport,
+      /import\s*\{[^}]*\}\s*from\s*["']@snappedly-tools\/shipyard["'];?/g,
+      (statement) =>
+        statement.replace(
+          new RegExp(`\\b${TEMPLATE_AGENT_FACTORY}\\b`, "g"),
+          agent.factoryImport,
+        ),
+    );
+    content = content.replace(
+      new RegExp(`\\b${TEMPLATE_AGENT_FACTORY}\\s*\\(`, "g"),
+      `${agent.factoryImport}(`,
     );
     // Replace model arguments in factory calls. The built-in Codex templates
     // use CODEX_MODELS references so the central model configuration remains

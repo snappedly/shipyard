@@ -1,5 +1,9 @@
 # Context
 
+## Skills
+
+Inspect the installed catalog at `~/.agents/skills` (shared by Codex and Claude Code). Read `/implement` from `implement/SKILL.md` before working on this issue. Read `/tdd` for changed behavior and `/code-cleanup` before committing. Read linked guidance and use other installed skills when relevant. The coordinator runs an independent `/code-review`.
+
 Work only on issue #{{TASK_ID}} ({{ISSUE_TITLE}}). The host selected it for this delivery.
 
 ## Open issues
@@ -34,7 +38,7 @@ Do not select another issue from the open-issues list.
 
 1. **Explore** — read only the selected issue carefully. Pull in the parent PRD if referenced. Read the relevant source files and tests before writing any code.
 2. **Plan** — decide what to change and why. Keep the change as small as possible.
-3. **Execute** — use RGR (Red → Green → Repeat → Refactor): write a failing test first, then write the implementation to pass it.
+3. **Execute** — for changed logic, follow `/tdd` and use RGR (Red → Green → Repeat → Refactor). For documentation, copy, or visual changes, use direct inspection and relevant visual checks.
 4. **Verify** — read the repository's configured feedback-loop contract and run every applicable check for this change. Use the configured static check and focused behavior tests when they exist; include formatting, build, or broader checks when the contract or change requires them. Fix failures before proceeding.
 5. **Commit** — make a single git commit. The message MUST:
    - Start with `RALPH:` prefix

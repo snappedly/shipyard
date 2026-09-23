@@ -39,7 +39,15 @@ const MAX_ITERATIONS = 10;
 // Hooks run inside the sandbox before the agent starts each iteration.
 // npm install ensures the sandbox always has fresh dependencies.
 const hooks = {
-  sandbox: { onSandboxReady: [{ command: "npm install" }] },
+  sandbox: {
+    onSandboxReady: [
+      {
+        command:
+          "npm install && npx --yes skills add snappedly/skills --skill '*' -a codex -a claude-code -g -y",
+        timeoutMs: 300_000,
+      },
+    ],
+  },
 };
 
 // Copy node_modules from the host into the worktree before each sandbox
@@ -150,7 +158,10 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
       maxIterations: 1,
       agent: shipyard.codex(shipyard.CODEX_MODELS.routine),
       promptFile: "./.shipyard/implement-prompt.md",
-      promptArgs: { TASK_ID: String(issue.number), ISSUE_TITLE: issue.title },
+      promptArgs: {
+        TASK_ID: String(issue.number),
+        ISSUE_TITLE: issue.title,
+      },
     });
 
     if (!implement.commits.length) {
@@ -178,7 +189,8 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
       promptFile: "./.shipyard/review-prompt.md",
       promptArgs: {
         BRANCH: branch,
-        TARGET_BRANCH: baseBranch,
+        BASE_SHA: baseSha,
+        HEAD_SHA: implement.commits.at(-1)!.sha,
       },
     });
 

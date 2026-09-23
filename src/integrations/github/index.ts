@@ -25,7 +25,11 @@ export {
   SHIPYARD_LABEL,
 } from "./types.js";
 export { InMemoryGitHubStore } from "./store.js";
-export { createGitHubCliRelationshipReader } from "./cli-relationships.js";
+export {
+  createGitHubCliRelationshipReader,
+  readActivatedDeliveryRoot,
+  readPlanningSpecGraph,
+} from "./cli-relationships.js";
 export { createGitHubCliTransport } from "./cli-transport.js";
 export {
   integrateTemplateDelivery,

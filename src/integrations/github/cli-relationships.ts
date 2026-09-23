@@ -5,6 +5,8 @@ import type {
   GitHubIssueSnapshot,
 } from "./types.js";
 import type { TemplateCommand } from "./template-delivery.js";
+import { issueReferences } from "./issue-references.js";
+import { githubIssueKind } from "./issue-kind.js";
 
 const exec = promisify(execFile);
 const defaultCommand: TemplateCommand = async (file, args) =>
@@ -109,5 +111,133 @@ export const createGitHubCliRelationshipReader = (
       list(`${issuePath(repository, issueNumber)}/sub_issues`),
     fetchBlockedBy: ({ repository, issueNumber }) =>
       list(`${issuePath(repository, issueNumber)}/dependencies/blocked_by`),
+  };
+};
+
+/** Validate an activated root against provider state before worker dispatch. */
+export const readActivatedDeliveryRoot = async (
+  repository: string,
+  issueNumber: number,
+  reader: GitHubIssueRelationshipReader = createGitHubCliRelationshipReader(),
+): Promise<{ title: string; mode: "standalone" | "planning-spec" }> => {
+  issuePath(repository, issueNumber);
+  const issue = await reader.fetchIssue({ repository, issueNumber });
+  if (
+    issue?.state !== "open" ||
+    !issue.labels.some((label) => label.toLowerCase() === "shipyard")
+  ) {
+    throw new Error(`Delivery #${issueNumber} is no longer activated`);
+  }
+  const parent = await reader.fetchParentIssue?.({ repository, issueNumber });
+  if (
+    parent !== undefined ||
+    issueReferences(issue.body, "Parent").length > 0
+  ) {
+    throw new Error(`Delivery #${issueNumber} has a parent issue`);
+  }
+  const kind = githubIssueKind(issue);
+  if (kind === "pr-repair") {
+    throw new Error(`Delivery #${issueNumber} is a repair issue`);
+  }
+  const nativeChildren =
+    (await reader.fetchSubIssues?.({ repository, issueNumber })) ?? [];
+  const mode =
+    kind === "planning-spec" ||
+    nativeChildren.length > 0 ||
+    issueReferences(issue.body, "Children").length > 0
+      ? "planning-spec"
+      : "standalone";
+  return { title: issue.title, mode };
+};
+
+/** Hydrate an activated planning spec from GitHub before any child is dispatched. */
+export const readPlanningSpecGraph = async (
+  repository: string,
+  parentNumber: number,
+  reader: GitHubIssueRelationshipReader = createGitHubCliRelationshipReader(),
+): Promise<{
+  root: { id: string; title: string };
+  children: { id: string; title: string; dependsOn: string[] }[];
+}> => {
+  issuePath(repository, parentNumber);
+  const parent = await reader.fetchIssue({
+    repository,
+    issueNumber: parentNumber,
+  });
+  if (parent?.state !== "open") {
+    throw new Error(`Planning spec #${parentNumber} is missing or closed`);
+  }
+  const nativeChildren =
+    (await reader.fetchSubIssues?.({
+      repository,
+      issueNumber: parentNumber,
+    })) ?? [];
+  const fallbackIds =
+    nativeChildren.length > 0 ? [] : issueReferences(parent.body, "Children");
+  const fallbackChildren = await Promise.all(
+    fallbackIds.map((issueNumber) =>
+      reader.fetchIssue({ repository, issueNumber }),
+    ),
+  );
+  if (fallbackChildren.some((child) => child === undefined)) {
+    throw new Error(`Planning spec #${parentNumber} has a missing child issue`);
+  }
+  const children = [
+    ...new Map(
+      [...nativeChildren, ...fallbackChildren]
+        .filter(
+          (child): child is GitHubIssueSnapshot =>
+            child !== undefined && child.state === "open",
+        )
+        .map((child) => [child.number, child] as const),
+    ).values(),
+  ];
+  const childNumbers = new Set(children.map((child) => child.number));
+  if (childNumbers.size === 0) {
+    throw new Error(`Planning spec #${parentNumber} has no open child issues`);
+  }
+  const graph = await Promise.all(
+    children.map(async (child) => {
+      const nativeBlockers =
+        (await reader.fetchBlockedBy?.({
+          repository,
+          issueNumber: child.number,
+        })) ?? [];
+      const fallbackBlockers =
+        nativeBlockers.length > 0
+          ? []
+          : await Promise.all(
+              issueReferences(child.body, "Depends-On").map((issueNumber) =>
+                reader.fetchIssue({ repository, issueNumber }),
+              ),
+            );
+      if (fallbackBlockers.some((blocker) => blocker === undefined)) {
+        throw new Error(`Child #${child.number} has a missing dependency`);
+      }
+      const dependsOn = [...nativeBlockers, ...fallbackBlockers]
+        .filter(
+          (blocker): blocker is GitHubIssueSnapshot =>
+            blocker !== undefined && blocker.state === "open",
+        )
+        .map((blocker) => blocker.number);
+      for (const blocker of dependsOn) {
+        if (!childNumbers.has(blocker)) {
+          throw new Error(
+            `Child #${child.number} is blocked by issue #${blocker} outside this planning spec`,
+          );
+        }
+      }
+      return {
+        id: String(child.number),
+        title: child.title,
+        dependsOn: [...new Set(dependsOn.map(String))].sort(
+          (left, right) => Number(left) - Number(right),
+        ),
+      };
+    }),
+  );
+  return {
+    root: { id: String(parent.number), title: parent.title },
+    children: graph.sort((left, right) => Number(left.id) - Number(right.id)),
   };
 };

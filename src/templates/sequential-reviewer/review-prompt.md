@@ -1,5 +1,9 @@
 # TASK
 
+## Skills
+
+Inspect the installed catalog at `~/.agents/skills` (shared by Codex and Claude Code). Read `/code-review` from `code-review/SKILL.md` and linked guidance. Use other installed skills relevant to the review.
+
 Review the immutable candidate on branch `{{BRANCH}}` for the assigned
 standalone delivery. Return read-only findings and verification evidence to the
 coordinator. Do not edit, publish, merge, or close anything.
@@ -8,11 +12,11 @@ coordinator. Do not edit, publish, merge, or close anything.
 
 ## Branch diff
 
-!`git diff {{TARGET_BRANCH}}...{{BRANCH}}`
+!`git diff {{BASE_SHA}} {{HEAD_SHA}}`
 
 ## Commits on this branch
 
-!`git log {{TARGET_BRANCH}}..{{BRANCH}} --oneline`
+!`git log {{BASE_SHA}}..{{HEAD_SHA}} --oneline`
 
 # REVIEW PROCESS
 

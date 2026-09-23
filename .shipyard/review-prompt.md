@@ -1,34 +1,27 @@
 # TASK
 
-Review the code changes on branch {{BRANCH}} for issue #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}}
+## Skills
 
-You are an expert code reviewer focused on enhancing code clarity, consistency, and maintainability while preserving exact functionality.
+Inspect the installed catalog at `~/.agents/skills` (shared by Codex and Claude Code). Read `/code-review` from `code-review/SKILL.md` and linked guidance. Use other installed skills relevant to the review.
+
+Review the immutable candidate for {{REVIEW_SCOPE}} in delivery group
+`{{DELIVERY_ID}}` at branch `{{BRANCH}}`. Return read-only findings and
+verification evidence to the coordinator. Do not edit, publish, merge, or
+close anything.
 
 # CONTEXT
 
-Here are the last 10 commits:
+## Branch diff
 
-<recent-commits>
+!`git diff {{BASE_SHA}} {{HEAD_SHA}}`
 
-!`git log -n 10 --format="%H%n%ad%n%B---" --date=short`
+## Commits on this branch
 
-</recent-commits>
-
-<issue>
-
-!`gh issue view {{ISSUE_NUMBER}}`
-
-</issue>
-
-<diff-to-staging>
-
-!`git diff staging..HEAD`
-
-</diff-to-staging>
+!`git log {{BASE_SHA}}..{{HEAD_SHA}} --oneline`
 
 # REVIEW PROCESS
 
-1. **Understand the change**:
+1. **Understand the change**: Read the diff and commits above to understand the intent.
 
 2. **Analyze for improvements**: Look for opportunities to:
    - Reduce unnecessary complexity and nesting
@@ -39,25 +32,32 @@ Here are the last 10 commits:
    - Avoid nested ternary operators - prefer switch statements or if/else chains
    - Choose clarity over brevity - explicit code is often better than overly compact code
 
-3. **Maintain balance**: Avoid over-simplification that could:
+3. **Check correctness**:
+   - Does the implementation match the intent? Are edge cases handled?
+   - Are new/changed behaviours covered by tests?
+   - Are there unsafe casts, `any` types, or unchecked assumptions?
+   - Does the change introduce injection vulnerabilities, credential leaks, or other security issues?
+
+4. **Maintain balance**: Avoid over-simplification that could:
    - Reduce code clarity or maintainability
    - Create overly clever solutions that are hard to understand
    - Combine too many concerns into single functions or components
    - Remove helpful abstractions that improve code organization
    - Make the code harder to debug or extend
 
-4. **Apply project standards**: Follow the established coding standards in the project at @.shipyard/CODING_STANDARDS.md.
+5. **Apply project standards**: Follow the coding standards defined in @.shipyard/CODING_STANDARDS.md
 
-5. **Preserve functionality**: Never change what the code does - only how it does it. All original features, outputs, and behaviors must remain intact.
+6. **Preserve functionality**: Never change what the code does - only how it does it. All original features, outputs, and behaviors must remain intact.
 
 # EXECUTION
 
-If you find improvements to make:
+Return every actionable finding with evidence, the requirement it violates,
+and a suggested verification. A separate bounded repair worker may update the
+coordinator-owned integration candidate. Return an empty array when no
+findings remain. Always emit this JSON before the completion signal:
 
-1. Make the changes directly on this branch
-2. Read the repository's configured feedback-loop contract and run every applicable check for the change. Fix failures before proceeding.
-3. Commit with a message starting with `RALPH: Review -` describing the refinements
-
-If the code is already clean and well-structured, do nothing.
+<review>
+{"findings":[]}
+</review>
 
 Once complete, output <promise>COMPLETE</promise>.

@@ -1,35 +1,45 @@
 # ISSUES
 
-Here are the open issues in the repo:
+## Skills
+
+Inspect the installed catalog at `~/.agents/skills` (shared by Codex and Claude Code). For a planning spec, read `/implement-spec` from its `SKILL.md` and linked guidance, then apply its whole-spec workflow. Use other installed skills when relevant. Standalone issues follow the single-issue path. The host executes the dependency-safe plan.
+
+Here are the open issues in the repository:
 
 <issues-json>
 
-!`gh issue list --state open --label ready-for-agent --limit 100 --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'`
+!`{{LIST_TASKS_COMMAND}}`
 
 </issues-json>
 
+The list contains activated root issues. A planning spec's children need not
+have the activation label. Select the spec root with `children: []`; the host
+loads every open native sub-issue or documented fallback child and its
+dependencies before execution. Do not select unrelated issues.
+
 # TASK
 
-Analyze the open issues and build a dependency graph. For each issue, determine whether it **blocks** or **is blocked by** any other open issue.
+Build coordinator-owned delivery groups. Group an executable issue by its own
+identity when it has no planning-spec parent. Group planning-spec children under
+their selected parent; the host resolves their relationships from GitHub.
 
-An issue B is **blocked by** issue A if:
-
-- B requires code or infrastructure that A introduces
-- B and A modify overlapping files or modules, making concurrent work likely to produce merge conflicts
-- B's requirements depend on a decision or API shape that A will establish
-
-An issue is **unblocked** if it has zero blocking dependencies on other open issues.
-
-For each unblocked issue, assign a branch name using the exact format `shipyard/issue-{number}` (no slug or other suffix). This must be deterministic so that re-planning the same issue always produces the same branch name and accumulated progress is preserved.
-
-If the issue appears to be a PRD and it has implementation issues which link to it, the PRD cannot be worked on.
+Different delivery groups may run concurrently. The host executes children in
+dependency-safe waves and serializes integration into exactly one branch and
+pull request. A planning spec itself is never an ordinary worker task. Do not
+assign a child an independent pull request, merge phase, or source-issue
+closure authority.
 
 # OUTPUT
 
-Output your plan as a JSON object wrapped in `<plan>` tags:
+Always emit one JSON object wrapped in `<plan>` tags. Use an empty array when
+there is no eligible work:
 
 <plan>
-{"issues": [{"number": 42, "title": "Fix auth bug", "branch": "shipyard/issue-42"}]}
+{"deliveryGroups":[{"id":"owner/repo#100","repository":"owner/repo","mode":"planning-spec","root":{"id":"100","title":"Spec"},"children":[],"integrationBranch":"shipyard/spec-100"}]}
 </plan>
 
-Include only unblocked issues. If every issue is blocked, include the single highest-priority candidate (the one with the fewest or weakest dependencies).
+For a standalone issue, use `mode: "standalone"`, set `root` to that issue,
+include exactly one child with an empty `dependsOn`, and use
+`shipyard/issue-{id}` as `integrationBranch`. For a planning spec, use
+`shipyard/spec-{parent-id}`. IDs and branch names must be deterministic across
+replanning so replay resumes the same delivery.

@@ -1,5 +1,9 @@
 # TASK
 
+## Skills
+
+Inspect the installed catalog at `~/.agents/skills` (shared by Codex and Claude Code). Read `/implement` from `implement/SKILL.md` before working on this issue. Read `/tdd` for changed behavior and `/code-cleanup` before committing. Read linked guidance and use other installed skills when relevant. Use `/code-review` for a local review when relevant.
+
 Implement the assigned child `{{TASK_ID}}` (`{{ISSUE_TITLE}}`) inside delivery
 group `{{DELIVERY_ID}}`.
 

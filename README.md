@@ -80,6 +80,19 @@ Contents and Pull requests write access. Set `SHIPYARD_BASE_BRANCH` if the
 integration branch is not `staging`. Required checks and review findings must
 be resolved before a draft PR is marked ready for merge.
 
+The Docker sandbox startup hook runs
+`npx --yes skills add snappedly/skills --skill '*' -a codex -a claude-code -g -y`
+before each agent starts. Issue templates install project dependencies first.
+This installs the full Snappedly catalog for Codex and Claude Code. Agents read
+the skills and linked guidance from `~/.agents/skills`, and use other skills when
+relevant to the issue. Standalone workers start with `/implement` and use
+`/tdd`, `/code-cleanup`, and `/code-review` where relevant. Planners use
+`/implement-spec` for a planning spec; the host fetches all open native
+sub-issues or documented fallback children and their dependencies, even when
+only the spec parent has the `shipyard` label. Reviewers use `/code-review`.
+Sandbox startup fails if installation fails. Restart the repository runner
+after updating generated `.shipyard/` files.
+
 The coordinator owns delivery identity, branches, pull requests, checks,
 review, repairs, and evidence. Workers return commits and cannot publish,
 merge, or close source issues. A planning spec uses one integration branch and

@@ -466,7 +466,7 @@ describe("InitService scaffold", () => {
       expect(prompt).toContain("@.shipyard/CODING_STANDARDS.md");
     });
 
-    it("review-prompt.md diffs against {{TARGET_BRANCH}} (the fork point), not the branch itself", async () => {
+    it("review-prompt.md diffs the exact base and candidate revisions", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "sequential-reviewer" });
 
@@ -474,13 +474,14 @@ describe("InitService scaffold", () => {
         join(dir, ".shipyard", "review-prompt.md"),
         "utf-8",
       );
-      expect(prompt).toContain("git diff {{TARGET_BRANCH}}...{{BRANCH}}");
-      expect(prompt).toContain("git log {{TARGET_BRANCH}}..{{BRANCH}}");
-      // SOURCE_BRANCH equals BRANCH at run time, so diffing against it is
-      // always empty — the prompt must use TARGET_BRANCH instead.
+      expect(prompt).toContain("git diff {{BASE_SHA}} {{HEAD_SHA}}");
+      expect(prompt).toContain("git log {{BASE_SHA}}..{{HEAD_SHA}}");
       expect(prompt).not.toContain("{{SOURCE_BRANCH}}");
       expect(prompt).not.toContain("git diff main");
       expect(prompt).not.toContain("git log main");
+      const main = await readFile(join(dir, ".shipyard", "main.mts"), "utf8");
+      expect(main).toContain("BASE_SHA: baseSha");
+      expect(main).toContain("HEAD_SHA: implement.commits.at(-1)!.sha");
     });
 
     it("main.mts runs the implementer for a single iteration (one issue per outer pass)", async () => {
@@ -654,6 +655,99 @@ describe("InitService scaffold", () => {
       const main = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
       expect(main).toContain("TASK_ID: String(issue.number)");
     }
+  });
+
+  it.each([
+    {
+      template: "simple-loop",
+      prompts: ["prompt.md"],
+      skills: ["implement", "tdd", "code-cleanup", "code-review"],
+    },
+    {
+      template: "sequential-reviewer",
+      prompts: ["implement-prompt.md", "review-prompt.md"],
+      skills: ["implement", "tdd", "code-cleanup", "code-review"],
+    },
+    {
+      template: "parallel-planner",
+      prompts: ["plan-prompt.md", "implement-prompt.md"],
+      skills: [
+        "implement-spec",
+        "implement",
+        "tdd",
+        "code-cleanup",
+        "code-review",
+      ],
+    },
+    {
+      template: "parallel-planner-with-review",
+      prompts: [
+        "plan-prompt.md",
+        "implement-prompt.md",
+        "repair-prompt.md",
+        "integrated-cleanup-prompt.md",
+        "review-prompt.md",
+      ],
+      skills: [
+        "implement-spec",
+        "implement",
+        "tdd",
+        "code-cleanup",
+        "code-review",
+      ],
+    },
+  ])(
+    "$template installs all Snappedly skills in Docker and selects relevant ones",
+    async ({ template, prompts, skills }) => {
+      const dir = await makeDir();
+      await runScaffold(dir, { templateName: template });
+      const main = await readFile(join(dir, ".shipyard", "main.mts"), "utf8");
+      expect(main).toContain(
+        "npx --yes skills add snappedly/skills --skill '*' -a codex -a claude-code -g -y",
+      );
+      expect(main).toContain("timeoutMs: 300_000");
+      expect(main).not.toContain("loadWorkflowSkills(");
+      const allPrompts = await Promise.all(
+        prompts.map((promptFile) =>
+          readFile(join(dir, ".shipyard", promptFile), "utf8"),
+        ),
+      );
+      for (const skill of skills)
+        expect(allPrompts.join("\n")).toContain(`/${skill}`);
+      for (const promptFile of prompts) {
+        const prompt = await readFile(
+          join(dir, ".shipyard", promptFile),
+          "utf8",
+        );
+        expect(prompt).toContain("~/.agents/skills");
+        expect(prompt).not.toContain("{{SKILLS}}");
+      }
+    },
+  );
+
+  it("the blank Docker template also installs the skill catalog", async () => {
+    const dir = await makeDir();
+    await runScaffold(dir, { templateName: "blank" });
+    const main = await readFile(join(dir, ".shipyard", "main.mts"), "utf8");
+    expect(main).toContain(
+      "npx --yes skills add snappedly/skills --skill '*' -a codex -a claude-code -g -y",
+    );
+  });
+
+  it("the reviewed planner cleans and reviews the integrated spec candidate", async () => {
+    const dir = await makeDir();
+    await runScaffold(dir, { templateName: "parallel-planner-with-review" });
+    const main = await readFile(join(dir, ".shipyard", "main.mts"), "utf8");
+    expect(main).toContain("readPlanningSpecGraph(");
+    expect(main).toContain("readActivatedDeliveryRoot(");
+    expect(main).toContain("current.mode !== group.mode");
+    expect(main).toContain("runIntegratedCleanup(group, currentHead)");
+    expect(main).toContain("`integrated planning spec #${group.root.id}`");
+    expect(main).toContain('Output.object({ tag: "review"');
+    expect(main).toContain("review.output.findings.length > 0");
+    expect(main).toContain("implementation.completionSignal");
+    expect(main).toContain("runRepair(");
+    expect(main).toContain("follow-up");
   });
 
   it("unknown template name throws a clear error", async () => {
@@ -835,7 +929,7 @@ describe("InitService scaffold", () => {
       expect(mainTs).toContain('"@snappedly-tools/shipyard"');
     });
 
-    it("main.mts uses a separate review sandbox per candidate branch", async () => {
+    it("main.mts reviews a fixed candidate on a separate branch", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "parallel-planner-with-review" });
 
@@ -843,9 +937,9 @@ describe("InitService scaffold", () => {
         join(dir, ".shipyard", "main.mts"),
         "utf-8",
       );
-      expect(mainTs).toContain("createSandbox");
-      expect(mainTs).toContain("reviewSandbox.run");
-      expect(mainTs).toContain("reviewSandbox.close");
+      expect(mainTs).toContain('name: "reviewer"');
+      expect(mainTs).toContain("baseBranch: headSha");
+      expect(mainTs).toContain('Output.object({ tag: "review"');
     });
 
     it("main.mts runs implementer then read-only reviewer for each child", async () => {
@@ -871,10 +965,10 @@ describe("InitService scaffold", () => {
         "utf-8",
       );
       // Reviewer result must be captured, not discarded
-      expect(mainTs).toContain("const review = await runReview");
+      expect(mainTs).toContain("let review = await runReview");
       // Review commits are intentionally not adopted by the delivery.
       expect(mainTs).toContain("implementation.commits");
-      expect(mainTs).toContain("if (review.commits.length > 0)");
+      expect(mainTs).toContain("if (review.commits.length > 0 ||");
     });
 
     it("main.mts resumes completed branches and stops on no progress", async () => {
@@ -976,7 +1070,7 @@ describe("InitService scaffold", () => {
       );
       expect(prompt).toContain("read-only findings");
       expect(prompt).toContain("{{DELIVERY_ID}}");
-      expect(prompt).toContain("{{TASK_ID}}");
+      expect(prompt).toContain("{{REVIEW_SCOPE}}");
     });
 
     it("parallel-planner-with-review appears in listTemplates()", () => {
@@ -1038,7 +1132,7 @@ describe("InitService scaffold", () => {
       expect(prompt).toContain("@.shipyard/CODING_STANDARDS.md");
     });
 
-    it("review-prompt.md diffs against {{TARGET_BRANCH}} (the fork point), not the branch itself", async () => {
+    it("review-prompt.md diffs the exact base and candidate revisions", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "parallel-planner-with-review" });
 
@@ -1046,13 +1140,14 @@ describe("InitService scaffold", () => {
         join(dir, ".shipyard", "review-prompt.md"),
         "utf-8",
       );
-      expect(prompt).toContain("git diff {{TARGET_BRANCH}}...{{BRANCH}}");
-      expect(prompt).toContain("git log {{TARGET_BRANCH}}..{{BRANCH}}");
-      // SOURCE_BRANCH equals BRANCH at run time, so diffing against it is
-      // always empty — the prompt must use TARGET_BRANCH instead.
+      expect(prompt).toContain("git diff {{BASE_SHA}} {{HEAD_SHA}}");
+      expect(prompt).toContain("git log {{BASE_SHA}}..{{HEAD_SHA}}");
       expect(prompt).not.toContain("{{SOURCE_BRANCH}}");
       expect(prompt).not.toContain("git diff main");
       expect(prompt).not.toContain("git log main");
+      const main = await readFile(join(dir, ".shipyard", "main.mts"), "utf8");
+      expect(main).toContain("BASE_SHA: baseRef");
+      expect(main).toContain("HEAD_SHA: headSha");
     });
   });
 

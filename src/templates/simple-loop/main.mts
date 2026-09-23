@@ -94,7 +94,10 @@ if (issue === undefined) {
 
     // One selected issue and one deterministic branch per delivery.
     maxIterations: 1,
-    promptArgs: { TASK_ID: String(issue.number), ISSUE_TITLE: issue.title },
+    promptArgs: {
+      TASK_ID: String(issue.number),
+      ISSUE_TITLE: issue.title,
+    },
 
     // Worker-only branch strategy. Publication and integration belong to the
     // coordinator-owned delivery adapter, never to the worker invocation.
@@ -106,8 +109,7 @@ if (issue === undefined) {
 
     // Copy node_modules from the host into the worktree before the sandbox
     // starts. This avoids a full npm install from scratch on every iteration.
-    // The onSandboxReady hook still runs npm install as a safety net to handle
-    // platform-specific binaries and any packages added since the last copy.
+    // The onSandboxReady hook installs dependencies and the full skill catalog.
     copyToWorktree: ["node_modules"],
 
     // Lifecycle hooks — commands grouped by where they run (host or sandbox).
@@ -116,7 +118,13 @@ if (issue === undefined) {
         // onSandboxReady runs once after the sandbox is initialised and the repo is
         // synced in, before the agent starts. Use it to install dependencies or run
         // any other setup steps your project needs.
-        onSandboxReady: [{ command: "npm install" }],
+        onSandboxReady: [
+          {
+            command:
+              "npm install && npx --yes skills add snappedly/skills --skill '*' -a codex -a claude-code -g -y",
+            timeoutMs: 300_000,
+          },
+        ],
       },
     },
   });

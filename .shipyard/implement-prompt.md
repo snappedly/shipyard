@@ -1,12 +1,18 @@
 # TASK
 
-Fix issue #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}}
+## Skills
 
-Pull in the issue using `gh issue view`, with comments. If it has a parent PRD, pull that in too.
+Inspect the installed catalog at `~/.agents/skills` (shared by Codex and Claude Code). Read `/implement` from `implement/SKILL.md` before working on this issue. Read `/tdd` for changed behavior and `/code-cleanup` before committing. Read linked guidance and use other installed skills when relevant. The coordinator runs an independent `/code-review`.
+
+Implement the assigned child `{{TASK_ID}}` (`{{ISSUE_TITLE}}`) inside delivery
+group `{{DELIVERY_ID}}`.
+
+Pull in the issue using `{{VIEW_TASK_COMMAND}}`. If it has a parent PRD, pull that in too.
 
 Only work on the issue specified.
 
-Work on branch {{BRANCH}}. Make commits, run tests, and close the issue when done.
+Work on branch {{BRANCH}}. Make commits and run tests. The parent delivery
+coordinator owns integration into the `{{INTEGRATION_BRANCH}}` candidate.
 
 # CONTEXT
 
@@ -51,9 +57,11 @@ Keep it concise.
 
 # THE ISSUE
 
-If the task is not complete, leave a comment on the GitHub issue with what was done.
+If the task is not complete, leave a comment on the issue with what was done.
 
-Do not close the issue - this will be done later.
+Do not publish a branch or pull request, merge, close the issue, or start
+another delivery. Return only the child commit and verification evidence to
+the coordinator.
 
 Once complete, output <promise>COMPLETE</promise>.
 

@@ -1,6 +1,10 @@
 # TASK
 
-Review the immutable candidate for child `{{TASK_ID}}` in delivery group
+## Skills
+
+Inspect the installed catalog at `~/.agents/skills` (shared by Codex and Claude Code). Read `/code-review` from `code-review/SKILL.md` and linked guidance. Use other installed skills relevant to the review.
+
+Review the immutable candidate for {{REVIEW_SCOPE}} in delivery group
 `{{DELIVERY_ID}}` at branch `{{BRANCH}}`. Return read-only findings and
 verification evidence to the coordinator. Do not edit, publish, merge, or
 close anything.
@@ -9,11 +13,11 @@ close anything.
 
 ## Branch diff
 
-!`git diff {{TARGET_BRANCH}}...{{BRANCH}}`
+!`git diff {{BASE_SHA}} {{HEAD_SHA}}`
 
 ## Commits on this branch
 
-!`git log {{TARGET_BRANCH}}..{{BRANCH}} --oneline`
+!`git log {{BASE_SHA}}..{{HEAD_SHA}} --oneline`
 
 # REVIEW PROCESS
 
@@ -47,10 +51,13 @@ close anything.
 
 # EXECUTION
 
-If you find a problem, report one actionable finding with evidence, the
-requirement it violates, and a suggested verification. A separate bounded
-repair worker may update the coordinator-owned integration candidate.
+Return every actionable finding with evidence, the requirement it violates,
+and a suggested verification. A separate bounded repair worker may update the
+coordinator-owned integration candidate. Return an empty array when no
+findings remain. Always emit this JSON before the completion signal:
 
-If the code is already clean and well-structured, do nothing.
+<review>
+{"findings":[]}
+</review>
 
 Once complete, output <promise>COMPLETE</promise>.

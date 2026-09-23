@@ -30,6 +30,8 @@ import {
 } from "./publication.js";
 import { verifyGitHubWebhookSignature } from "./signature.js";
 import { InMemoryGitHubStore } from "./store.js";
+import { issueReferences } from "./issue-references.js";
+import { githubIssueKind } from "./issue-kind.js";
 import type {
   GitHubActor,
   GitHubAuthorizationPolicy,
@@ -301,37 +303,6 @@ const pullRequestHead = (payload: JsonRecord, fallback: string): string =>
   requiredStringValue(record(payload.check_run)?.head_sha) ??
   requiredStringValue(record(payload.check_suite)?.head_sha) ??
   fallback;
-
-const issueKind = (issue: GitHubIssueSnapshot): WorkItemKind => {
-  const normalized = new Set(issue.labels.map((label) => label.toLowerCase()));
-  if (
-    normalized.has("planning-spec") ||
-    normalized.has("planning") ||
-    /^\s*(?:\*\*)?work item type:(?:\*\*)?\s*planning spec\b/im.test(issue.body)
-  ) {
-    return "planning-spec";
-  }
-  if (normalized.has("pr-repair") || normalized.has("repair")) {
-    return "pr-repair";
-  }
-  return "executable-issue";
-};
-
-const issueReferences = (body: string, field: string): number[] => {
-  const line = body
-    .split(/\r?\n/)
-    .find((entry) =>
-      entry.toLowerCase().startsWith(`shipyard-${field.toLowerCase()}:`),
-    );
-  if (line === undefined) return [];
-  const value = line.slice(line.indexOf(":") + 1).trim();
-  if (!/^(?:#\d+)(?:[\s,]+#\d+)*$/.test(value)) {
-    throw new Error(`Invalid Shipyard-${field} issue references`);
-  }
-  return [
-    ...new Set([...value.matchAll(/#(\d+)/g)].map((match) => Number(match[1]))),
-  ];
-};
 
 const sameIssueContent = (
   brief: WorkBrief,
@@ -811,7 +782,7 @@ export class GitHubIntegration {
                 issueNumber: fallbackParent,
               })));
     if (parent === undefined) return undefined;
-    if (issueKind(parent) !== "planning-spec") {
+    if (githubIssueKind(parent) !== "planning-spec") {
       throw new Error(`Parent issue ${parent.number} is not a planning spec`);
     }
     const nativeChildren = await relationships.fetchSubIssues?.({
@@ -860,7 +831,7 @@ export class GitHubIntegration {
       children: [...children.values()].map((child) => ({
         repository,
         itemId: String(child.number),
-        kind: issueKind(child),
+        kind: githubIssueKind(child),
       })),
       dependencies,
     });
@@ -963,7 +934,7 @@ export class GitHubIntegration {
           name === "issue_comment" ? commentSnapshot(payload) : undefined,
         );
       }
-      const kind = issueKind(issue);
+      const kind = githubIssueKind(issue);
       const draft: Omit<GitHubNormalizedEvent, "workflowEvent"> = {
         kind:
           name === "issue_comment"

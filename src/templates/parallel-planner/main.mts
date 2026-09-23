@@ -39,12 +39,23 @@ const planSchema = z.object({
 
 const MAX_ITERATIONS = 10;
 const hooks = {
-  sandbox: { onSandboxReady: [{ command: "npm install" }] },
+  sandbox: {
+    onSandboxReady: [
+      {
+        command:
+          "npm install && npx --yes skills add snappedly/skills --skill '*' -a codex -a claude-code -g -y",
+        timeoutMs: 300_000,
+      },
+    ],
+  },
 };
 const copyToWorktree = ["node_modules"];
 const exec = promisify(execFile);
 const command = async (file: string, args: string[]) =>
   (await exec(file, args, { encoding: "utf8" })).stdout.trim();
+const repository = JSON.parse(
+  await command("gh", ["repo", "view", "--json", "nameWithOwner"]),
+).nameWithOwner as string;
 const baseBranch = process.env.SHIPYARD_BASE_BRANCH ?? "staging";
 await command("git", ["fetch", "origin", baseBranch]);
 const baseSha = await command("git", ["rev-parse", "FETCH_HEAD"]);
@@ -55,9 +66,12 @@ type Child = z.infer<typeof childSchema>;
 const branchFor = (group: DeliveryGroup, child: Child): string =>
   group.mode === "standalone"
     ? `shipyard/issue-${group.root.id}`
-    : `shipyard/spec-${group.root.id}/child-${child.id}`;
+    : `shipyard/spec-${group.root.id}-child-${child.id}`;
 
 const canonicalGroup = (group: DeliveryGroup) => {
+  if (group.repository !== repository) {
+    throw new Error(`Delivery ${group.id} belongs to another repository`);
+  }
   const expectedBranch =
     group.mode === "planning-spec"
       ? `shipyard/spec-${group.root.id}`
@@ -69,18 +83,49 @@ const canonicalGroup = (group: DeliveryGroup) => {
     group.mode === "planning-spec" ? "planning-spec" : "executable-issue";
   const delivery = shipyard.resolveDeliveryGroup({
     issue: { repository: group.repository, itemId: group.root.id, kind },
-    children: group.children.map((child) => ({
-      repository: group.repository,
-      itemId: child.id,
-      kind: "executable-issue" as const,
-    })),
-    dependencies: group.children.map((child) => ({
-      itemId: child.id,
-      dependsOn: child.dependsOn,
-    })),
+    children:
+      group.mode === "planning-spec"
+        ? group.children.map((child) => ({
+            repository: group.repository,
+            itemId: child.id,
+            kind: "executable-issue" as const,
+          }))
+        : undefined,
+    dependencies:
+      group.mode === "planning-spec"
+        ? group.children.map((child) => ({
+            itemId: child.id,
+            dependsOn: child.dependsOn,
+          }))
+        : undefined,
   });
+  if (delivery.id !== group.id)
+    throw new Error(`Delivery ${group.id} has an unstable identity`);
   if (group.mode === "planning-spec") shipyard.planSpecDelivery(delivery);
   return delivery;
+};
+
+const hydrateGroup = async (group: DeliveryGroup): Promise<DeliveryGroup> => {
+  if (!/^[1-9]\d*$/.test(group.root.id))
+    throw new Error(`Delivery ${group.id} has an invalid issue number`);
+  const current = await shipyard.readActivatedDeliveryRoot(
+    group.repository,
+    Number(group.root.id),
+  );
+  if (current.mode !== group.mode)
+    throw new Error(`Delivery ${group.id} has the wrong issue mode`);
+  if (group.mode === "standalone") {
+    return {
+      ...group,
+      root: { ...group.root, title: current.title },
+      children: [{ id: group.root.id, title: current.title, dependsOn: [] }],
+    };
+  }
+  const graph = await shipyard.readPlanningSpecGraph(
+    group.repository,
+    Number(group.root.id),
+  );
+  return { ...group, root: graph.root, children: graph.children };
 };
 
 const publishGroup = async (
@@ -146,16 +191,18 @@ const runStandaloneGroup = async (group: DeliveryGroup) => {
     return { group, children: [] as const, published: false };
   const result = await runChild(group, child, baseSha);
   const headSha = result.commits.at(-1)?.sha;
-  if (headSha !== undefined) await publishGroup(group, headSha);
+  if (headSha !== undefined && result.completionSignal !== undefined)
+    await publishGroup(group, headSha);
   return {
     group,
     children: [{ child, result }],
-    published: headSha !== undefined,
+    published: headSha !== undefined && result.completionSignal !== undefined,
   };
 };
 
 const runSpecGroup = async (group: DeliveryGroup) => {
   const completed = new Set<string>();
+  const attempted = new Set<string>();
   const results: Array<{
     child: Child;
     result: Awaited<ReturnType<typeof runChild>>;
@@ -165,14 +212,10 @@ const runSpecGroup = async (group: DeliveryGroup) => {
   while (completed.size < group.children.length) {
     const ready = group.children.filter(
       (child) =>
-        !completed.has(child.id) &&
+        !attempted.has(child.id) &&
         child.dependsOn.every((dependency) => completed.has(dependency)),
     );
-    if (ready.length === 0) {
-      throw new Error(
-        `Delivery group ${group.id} has no dependency-safe child`,
-      );
-    }
+    if (ready.length === 0) break;
     const settled = await Promise.allSettled(
       ready.map(async (child) => ({
         child,
@@ -180,18 +223,26 @@ const runSpecGroup = async (group: DeliveryGroup) => {
       })),
     );
     let madeProgress = false;
-    for (const outcome of settled) {
+    for (const [index, outcome] of settled.entries()) {
+      attempted.add(ready[index]!.id);
       if (outcome.status === "fulfilled") {
         results.push(outcome.value);
-        completed.add(outcome.value.child.id);
-        madeProgress = true;
+        if (
+          outcome.value.result.commits.length > 0 &&
+          outcome.value.result.completionSignal !== undefined
+        ) {
+          completed.add(outcome.value.child.id);
+          madeProgress = true;
+        } else {
+          console.error(`Child ${outcome.value.child.id} returned no commit`);
+        }
       } else {
         console.error(`Child worker failed in ${group.id}: ${outcome.reason}`);
       }
     }
     if (!madeProgress) break;
     const commits = settled.flatMap((outcome) =>
-      outcome.status === "fulfilled"
+      outcome.status === "fulfilled" && completed.has(outcome.value.child.id)
         ? outcome.value.result.commits.map((commit) => commit.sha)
         : [],
     );
@@ -210,7 +261,11 @@ const runSpecGroup = async (group: DeliveryGroup) => {
   if (published && completed.size === group.children.length) {
     await publishGroup(group, currentHead);
   }
-  return { group, children: results, published };
+  return {
+    group,
+    children: results,
+    published: published && completed.size === group.children.length,
+  };
 };
 
 for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
@@ -232,7 +287,8 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
     break;
   }
 
-  const canonical = groups.map((group) => ({
+  const hydrated = await Promise.all(groups.map(hydrateGroup));
+  const canonical = hydrated.map((group) => ({
     group,
     delivery: canonicalGroup(group),
   }));

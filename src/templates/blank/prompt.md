@@ -5,6 +5,9 @@
 
 # Task
 
+<!-- Skills are installed at sandbox startup. Inspect ~/.agents/skills for Codex
+     or ~/.claude/skills for Claude Code; read relevant SKILL.md files. -->
+
 <!-- Describe what the agent should do. -->
 
 # Done
