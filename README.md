@@ -109,6 +109,9 @@ relationships stop dispatch for inspection. If GitHub cannot confirm whether a
 PR became ready, Shipyard leaves the issue active for reconciliation. The GitHub token
 needs Contents, Issues, and Pull requests read/write permission plus Metadata
 read permission. Keep the Mac and foreground controller running for wake-ups.
+If GitHub rejects a failure comment or PR label, Shipyard keeps blocked issues
+active without redispatching them and replays the pending handoff on the next
+run from this checkout.
 
 Accept runner installation during `init`, or install it later:
 

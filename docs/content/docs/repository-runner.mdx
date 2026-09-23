@@ -80,6 +80,9 @@ successful retry. Resolve the problem, remove `shipyard:blocked`, and add
 remain in the runner logs and stop the invocation. If GitHub cannot confirm PR
 readiness, Shipyard leaves activation in place so the next invocation can
 reconcile the PR.
+If a blocked comment or PR label fails, Shipyard retains activation and a local
+pending record under Git metadata. The next invocation retries the failure
+handoff before selecting new work; blocked tickets are not implemented again.
 
 Start always preflights the current backlog, recovering labels added while the
 Mac was off. If work exists, it invokes exactly `npx shipyard run`. After a

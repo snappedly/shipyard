@@ -1,4 +1,7 @@
 import { execFileSync } from "node:child_process";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const gh = (...args) =>
   execFileSync("gh", args, {
@@ -9,6 +12,42 @@ const json = (...args) => JSON.parse(gh(...args));
 const repository =
   process.env.GH_REPO ||
   gh("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner");
+const pendingDir = resolve(
+  execFileSync("git", ["rev-parse", "--git-path", "shipyard-pending"], {
+    encoding: "utf8",
+  }).trim(),
+);
+if (existsSync(pendingDir)) {
+  for (const filename of readdirSync(pendingDir)
+    .filter((name) => name.endsWith(".pending"))
+    .sort()) {
+    const contents = readFileSync(resolve(pendingDir, filename), "utf8");
+    const separator = contents.indexOf("\n");
+    if (separator < 0)
+      throw new Error(`Invalid pending block record: ${filename}`);
+    const [root, failed, recordedRepo, scope, branch] = contents
+      .slice(0, separator)
+      .split("\t");
+    if (
+      recordedRepo !== repository ||
+      !/^\d+-\d+\.pending$/.test(filename) ||
+      filename !== `${root}-${failed}.pending`
+    )
+      throw new Error(`Invalid pending block record: ${filename}`);
+    execFileSync(
+      "bash",
+      [
+        fileURLToPath(new URL("./block-scope.sh", import.meta.url)),
+        root,
+        failed,
+        recordedRepo,
+        scope,
+        branch,
+      ],
+      { input: contents.slice(separator + 1), encoding: "utf8" },
+    );
+  }
+}
 const endpoint = (id, suffix) => `repos/${repository}/issues/${id}/${suffix}`;
 const number = (value) => {
   const id = String(value);
@@ -165,20 +204,14 @@ for (const candidate of activated) {
         !selectedIds.has(ticket.id) && !completedTicketIds.includes(ticket.id),
     )
     .map((ticket) => ticket.id);
-  if (root.labels?.some((label) => label.name === "shipyard:blocked")) {
-    for (const activeId of [
-      rootId,
-      ...linkedTickets.map((ticket) => ticket.id),
-    ].filter((item) => activeIds.has(item)))
-      gh(
-        "issue",
-        "edit",
-        activeId,
-        "--repo",
-        repository,
-        "--remove-label",
-        "shipyard",
-      );
+  if (
+    root.labels?.some((label) => label.name === "shipyard:blocked") ||
+    linkedTickets.some(
+      (ticket) =>
+        ticket.labels.some((label) => label.name === "shipyard:blocked") &&
+        !ticket.labels.some((label) => label.name === "shipyard:complete"),
+    )
+  ) {
     continue;
   }
   if (isSpec) {

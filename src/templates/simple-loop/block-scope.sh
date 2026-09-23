@@ -14,6 +14,15 @@ branch=${5:-shipyard/issue-$root}
 [[ "$branch" == "shipyard/issue-$root" || "$branch" == "shipyard/spec-$root" ]] || { echo "Invalid scope branch" >&2; exit 1; }
 reason=$(cat)
 [[ -n "$reason" ]] || { echo "Missing failure reason" >&2; exit 1; }
+reason_hash=$(printf '%s' "$reason" | git hash-object --stdin)
+pending_dir=$(git rev-parse --git-path shipyard-pending)
+mkdir -p "$pending_dir"
+umask 077
+pending_file="$pending_dir/$root-$failed.pending"
+pending_tmp=$(mktemp "$pending_file.XXXXXX")
+trap 'rm -f "$pending_tmp"' EXIT
+printf '%s\t%s\t%s\t%s\t%s\n%s' "$root" "$failed" "$repo" "$scope" "$branch" "$reason" > "$pending_tmp"
+mv "$pending_tmp" "$pending_file"
 
 remove_issue_status() {
   local labels
@@ -33,6 +42,13 @@ remove_pr_status() {
     return 75
   fi
 }
+comment_once() {
+  local comments
+  if comments=$(gh issue view "$1" --repo "$repo" --json comments --jq '.comments[].body'); then
+    if grep -Fq "$3" <<< "$comments"; then return 0; fi
+  fi
+  gh issue comment "$1" --repo "$repo" --body "$2"
+}
 
 gh label create shipyard:blocked --repo "$repo" --color B60205 --description 'Shipyard work needs intervention' --force
 gh issue edit "$failed" --repo "$repo" --add-label shipyard:blocked
@@ -46,29 +62,27 @@ if [[ "$branch" == "shipyard/spec-$root" && "$failed" == "$root" ]]; then
   done
 fi
 
-# Stop automatic retries before ancillary comments or PR labeling.
-IFS=',' read -ra scope_ids <<< "$scope"
-for scope_id in "${scope_ids[@]}"; do
-  labels=$(gh issue view "$scope_id" --repo "$repo" --json labels --jq '.labels[].name')
-  if grep -Fxq shipyard <<< "$labels"; then
-    gh issue edit "$scope_id" --repo "$repo" --remove-label shipyard
-  fi
-done
-
 status=0
-gh issue comment "$failed" --repo "$repo" --body "Shipyard could not complete this issue. Reason: $reason
+marker="shipyard:blocked:$root:$failed:$reason_hash"
+comment_once "$failed" "Shipyard could not complete this issue. Reason: $reason
 
-Work was not handed off. To retry, resolve the problem, remove shipyard:blocked, and add shipyard to the affected ticket." || status=75
+Work was not handed off. To retry, resolve the problem, remove shipyard:blocked, and add shipyard to the affected ticket.
+
+<!-- $marker:failed -->" "$marker:failed" || status=75
 if [[ "$root" != "$failed" ]]; then
-  gh issue comment "$root" --repo "$repo" --body "Shipyard paused this spec because linked ticket #$failed failed. Reason: $reason
+  comment_once "$root" "Shipyard paused this spec because linked ticket #$failed failed. Reason: $reason
 
-Work was not handed off. To retry, resolve the problem, remove shipyard:blocked, and add shipyard to each unfinished ticket." || status=75
+Work was not handed off. To retry, resolve the problem, remove shipyard:blocked, and add shipyard to each unfinished ticket.
+
+<!-- $marker:parent -->" "$marker:parent" || status=75
 fi
 if [[ "$branch" == "shipyard/spec-$root" && "$failed" == "$root" ]]; then
   for affected_id in "${affected_ids[@]:1}"; do
-    gh issue comment "$affected_id" --repo "$repo" --body "Shipyard could not complete this ticket during the spec attempt. Reason: $reason
+    comment_once "$affected_id" "Shipyard could not complete this ticket during the spec attempt. Reason: $reason
 
-Work was not handed off. To retry, resolve the problem, remove shipyard:blocked, and add shipyard to the affected ticket." || status=75
+Work was not handed off. To retry, resolve the problem, remove shipyard:blocked, and add shipyard to the affected ticket.
+
+<!-- $marker:ticket:$affected_id -->" "$marker:ticket:$affected_id" || status=75
   done
 fi
 
@@ -88,5 +102,15 @@ if [[ -n "$pr_number" ]]; then
   remove_pr_status "$pr_number" ready-for-human || status=75
   remove_pr_status "$pr_number" shipyard:outstanding-tasks || status=75
   remove_pr_status "$pr_number" shipyard:complete || status=75
+fi
+if [[ "$status" -eq 0 ]]; then
+  IFS=',' read -ra scope_ids <<< "$scope"
+  for scope_id in "${scope_ids[@]}"; do
+    labels=$(gh issue view "$scope_id" --repo "$repo" --json labels --jq '.labels[].name')
+    if grep -Fxq shipyard <<< "$labels"; then
+      gh issue edit "$scope_id" --repo "$repo" --remove-label shipyard
+    fi
+  done
+  rm -f "$pending_file"
 fi
 exit "$status"

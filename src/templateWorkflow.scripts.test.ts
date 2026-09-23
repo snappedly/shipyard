@@ -10,6 +10,10 @@ const script = (name: string) =>
   join(templateDir, "templates", "simple-loop", name);
 const fixture = async () => {
   const dir = await mkdtemp(join(tmpdir(), "shipyard-skills-"));
+  const initialized = spawnSync("git", ["init", "-q", "-b", "main"], {
+    cwd: dir,
+  });
+  expect(initialized.status).toBe(0);
   const bin = join(dir, "bin");
   await mkdir(bin);
   return { dir, bin };
@@ -57,8 +61,8 @@ else if (args[0] === "issue" && args[1] === "list" && args.includes("open")) {
     {number:4,title:"Sibling",body:""},
     {number:6,title:"Already ready",body:""}
   ];
-  const ids = process.env.PARTIAL_PR ? [2,3] : process.env.NO_LABELLED ? [2] : process.env.LATER_BATCH ? [4] : process.env.ACTIVATION === "parent" ? [2] : process.env.ACTIVATION === "siblings" ? [3,4] : process.env.UNLABELLED_SIBLING ? [1,2,3,6] : [1,2,3,4,6];
-  console.log(JSON.stringify(pool.filter((item) => ids.includes(item.number))));
+  const ids = process.env.PARTIAL_PR ? [2,3] : process.env.NO_LABELLED || process.env.BLOCKED_ROOT ? [2] : process.env.LATER_BATCH ? [4] : process.env.ACTIVATION === "parent" ? [2] : process.env.ACTIVATION === "siblings" ? [3,4] : process.env.UNLABELLED_SIBLING ? [1,2,3,6] : [1,2,3,4,6];
+  console.log(JSON.stringify(pool.filter((item) => ids.includes(item.number)).map((item) => item.number === 2 && process.env.BLOCKED_ROOT ? {...item,labels:[{name:"shipyard"},{name:"shipyard:blocked"}]} : item)));
 }
 else if (args[0] === "issue" && args[1] === "list" && args.includes("all")) console.log(JSON.stringify([
   {number:3,title:"Child",body:"**Work item type:** executable\\n\\n## Parent\\n#2",state:process.env.CLOSED_CHILD ? "CLOSED" : "OPEN",labels:process.env.NO_LABELLED ? [] : process.env.PARTIAL_PR ? [{name:"shipyard"},{name:"shipyard:complete"},{name:"shipyard:blocked"}] : process.env.LATER_BATCH ? [{name:"shipyard:complete"}] : [{name:"shipyard"}]},
@@ -150,6 +154,16 @@ else process.exit(2);
     expect(await readFile(log, "utf8")).toContain(
       "issue edit 2 --repo owner/repo --add-label shipyard:outstanding-tasks",
     );
+    const beforeBlockedRoot = (await readFile(log, "utf8")).length;
+    const blockedRoot = run("node", [script("select-issues.mjs")], dir, bin, {
+      GH_LOG: log,
+      BLOCKED_ROOT: "1",
+    });
+    expect(blockedRoot.status, blockedRoot.stderr).toBe(0);
+    expect(JSON.parse(blockedRoot.stdout)).toEqual([]);
+    expect(
+      (await readFile(log, "utf8")).slice(beforeBlockedRoot),
+    ).not.toContain("issue edit 2 --repo owner/repo --remove-label shipyard");
     const partialReady = run("node", [script("select-issues.mjs")], dir, bin, {
       GH_LOG: log,
       PARTIAL_PR: "1",
@@ -806,6 +820,9 @@ const fs = require("node:fs");
 const args = process.argv.slice(2);
 fs.appendFileSync(process.env.BLOCKED_LOG, args.join(" ") + "\\n");
 if (args[0] === "issue" && args[1] === "view") console.log("shipyard");
+else if (args[0] === "issue" && args[1] === "list") console.log("[]");
+else if (args[0] === "issue" && args[1] === "comment" && process.env.FAIL_COMMENT) process.exit(1);
+else if (args[0] === "repo") console.log("owner/repo");
 else if (args[0] === "pr" && args[1] === "list" && process.env.FAIL_PR_LOOKUP) process.exit(1);
 else if (args[0] === "pr" && args[1] === "list" && process.env.EXISTING_PR) console.log("9");
 `,
@@ -891,8 +908,54 @@ else if (args[0] === "pr" && args[1] === "list" && process.env.EXISTING_PR) cons
     expect(lookupCommands).toContain(
       "issue edit 3 --repo owner/repo --add-label shipyard:blocked",
     );
-    expect(lookupCommands).toContain(
-      "issue edit 3 --repo owner/repo --remove-label shipyard",
+    expect(lookupCommands).not.toContain(
+      "issue edit 3 --repo owner/repo --remove-label shipyard\n",
+    );
+    const pendingPath = join(dir, ".git", "shipyard-pending", "2-3.pending");
+    expect(await readFile(pendingPath, "utf8")).toContain("PR lookup failed");
+
+    await writeFile(log, "");
+    const commentFailure = run(
+      "bash",
+      [
+        script("block-scope.sh"),
+        "2",
+        "3",
+        "owner/repo",
+        "2,3,4",
+        "shipyard/spec-2",
+      ],
+      dir,
+      bin,
+      { BLOCKED_LOG: log, FAIL_COMMENT: "1" },
+      "Comment was unavailable",
+    );
+    expect(commentFailure.status).not.toBe(0);
+    const commentCommands = await readFile(log, "utf8");
+    expect(commentCommands).toContain(
+      "issue edit 3 --repo owner/repo --add-label shipyard:blocked",
+    );
+    expect(commentCommands).not.toContain(
+      "issue edit 3 --repo owner/repo --remove-label shipyard\n",
+    );
+    expect(await readFile(pendingPath, "utf8")).toContain(
+      "Comment was unavailable",
+    );
+
+    await writeFile(log, "");
+    const reconciled = run("node", [script("select-issues.mjs")], dir, bin, {
+      BLOCKED_LOG: log,
+      EXISTING_PR: "1",
+    });
+    expect(reconciled.status, reconciled.stderr).toBe(0);
+    expect(JSON.parse(reconciled.stdout)).toEqual([]);
+    expect(await readFile(pendingPath, "utf8").catch(() => null)).toBeNull();
+    const reconcileCommands = await readFile(log, "utf8");
+    expect(reconcileCommands).toContain(
+      "pr edit 9 --repo owner/repo --add-label shipyard:blocked",
+    );
+    expect(reconcileCommands).toContain(
+      "issue edit 3 --repo owner/repo --remove-label shipyard\n",
     );
 
     await writeFile(log, "");
