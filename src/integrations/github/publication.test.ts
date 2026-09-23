@@ -1108,7 +1108,8 @@ describe("GitHubPublication", () => {
       },
       evidence: {
         phase: "checking",
-        error: "worker failed token=ghp_secret",
+        error:
+          "worker failed token=ghp_secret Authorization: Bearer bearer-secret",
         attempts: 3,
         lastSuccessfulStep: "implementation",
         branch: "shipyard/issue-42",
@@ -1123,6 +1124,9 @@ describe("GitHubPublication", () => {
       expect.objectContaining({ name: "shipyard-blocked", color: "d73a4a" }),
     );
     expect(issue.labels).toEqual(["bug", "shipyard-blocked"]);
+    expect(createComment.mock.calls[0]?.[0].body).not.toContain(
+      "bearer-secret",
+    );
     expect(pullRequest.draft).toBe(true);
     expect(pullRequest.labels).toEqual(["shipyard-blocked"]);
     expect(projected.parentComment?.remote?.body).toContain("child issue #42");

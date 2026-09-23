@@ -15,8 +15,10 @@ For issue workflows, Shipyard adds a coordinator-owned delivery lifecycle:
 each standalone issue gets one draft pull request, while one planning spec and
 its scoped children share one integration pull request. Workers return commits
 and evidence; a maintainer reviews and merges the exact candidate. Local-only
-orphan branches are ignored, and re-adding `shipyard` explicitly retries a
-blocked delivery.
+orphan branches are ignored. When a spec child is blocked, Shipyard removes its
+`shipyard` activation label, adds `shipyard-blocked`, and links it from the open
+parent without blocking that parent. The pull request remains draft. Re-add
+`shipyard` to the blocked child to resume the existing delivery.
 
 The `parallel-planner` template routes standalone groups through the standalone
 delivery lifecycle and planning specs through durable spec delivery. Unrelated

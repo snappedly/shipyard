@@ -28,9 +28,12 @@ handoff evidence.
 Shipyard may create a linked repair issue for bounded pre-merge work, but a
 completed child remains closed and a merged delivery is immutable. Infrastructure
 failures use finite automatic recovery; exhausted work is projected with the
-red `shipyard-blocked` label and sanitized evidence. Re-adding the lowercase
-`shipyard` activation label explicitly resumes the existing delivery. Existing
-triage labels retain their meanings and are not renamed.
+red `shipyard-blocked` label and sanitized evidence. For planning specs, the
+failed child loses its `shipyard` activation label, and the open parent receives
+a link comment without a blocked label. Existing pull requests remain draft and
+receive the blocked label. Re-adding `shipyard` to the blocked child explicitly
+resumes the existing delivery. Existing triage labels retain their meanings and
+are not renamed.
 
 Only a maintainer may merge a pull request. Shipyard observes the exact merged
 candidate and closes a planning-spec parent only after all scoped children and

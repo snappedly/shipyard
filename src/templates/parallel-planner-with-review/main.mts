@@ -16,7 +16,11 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { z } from "zod";
-import { deliverPlannedGroups } from "./deliver-groups.js";
+import {
+  canonicalizeActivatedGroup,
+  deliverPlannedGroups,
+  findActivatedDeliveryRoute,
+} from "./deliver-groups.js";
 
 const childSchema = z.object({
   id: z.string(),
@@ -31,6 +35,7 @@ const deliveryGroupSchema = z.object({
   root: z.object({ id: z.string(), title: z.string() }),
   children: z.array(childSchema),
   integrationBranch: z.string(),
+  activationIssueId: z.string().optional(),
 });
 
 const planSchema = z.object({
@@ -156,20 +161,10 @@ type DeliveryGroup = z.infer<typeof deliveryGroupSchema>;
 const workerIdFor = (group: DeliveryGroup): string =>
   `parallel-planner:${group.id}`;
 
-const canonicalGroup = (group: DeliveryGroup) => {
-  if (group.repository !== repository) {
-    throw new Error(`Delivery ${group.id} belongs to another repository`);
-  }
-  const expectedBranch =
-    group.mode === "planning-spec"
-      ? `shipyard/spec-${group.root.id}`
-      : `shipyard/issue-${group.root.id}`;
-  if (group.integrationBranch !== expectedBranch) {
-    throw new Error(`Delivery ${group.id} has an unstable integration branch`);
-  }
+const resolveGroupDelivery = (group: DeliveryGroup) => {
   const kind =
     group.mode === "planning-spec" ? "planning-spec" : "executable-issue";
-  const delivery = shipyard.resolveDeliveryGroup({
+  return shipyard.resolveDeliveryGroup({
     issue: { repository: group.repository, itemId: group.root.id, kind },
     children:
       group.mode === "planning-spec"
@@ -187,6 +182,20 @@ const canonicalGroup = (group: DeliveryGroup) => {
           }))
         : undefined,
   });
+};
+
+const canonicalGroup = (group: DeliveryGroup) => {
+  if (group.repository !== repository) {
+    throw new Error(`Delivery ${group.id} belongs to another repository`);
+  }
+  const expectedBranch =
+    group.mode === "planning-spec"
+      ? `shipyard/spec-${group.root.id}`
+      : `shipyard/issue-${group.root.id}`;
+  if (group.integrationBranch !== expectedBranch) {
+    throw new Error(`Delivery ${group.id} has an unstable integration branch`);
+  }
+  const delivery = resolveGroupDelivery(group);
   if (delivery.id !== group.id)
     throw new Error(`Delivery ${group.id} has an unstable identity`);
   if (group.mode === "planning-spec") shipyard.planSpecDelivery(delivery);
@@ -196,24 +205,36 @@ const canonicalGroup = (group: DeliveryGroup) => {
 const hydrateGroup = async (group: DeliveryGroup): Promise<DeliveryGroup> => {
   if (!/^[1-9]\d*$/.test(group.root.id))
     throw new Error(`Delivery ${group.id} has an invalid issue number`);
-  const current = await shipyard.readActivatedDeliveryRoot(
-    group.repository,
-    Number(group.root.id),
+  const current = await findActivatedDeliveryRoute(
+    group,
+    async (issueNumber) => {
+      try {
+        return await shipyard.readActivatedDeliveryGroup(
+          group.repository,
+          issueNumber,
+          relationships,
+        );
+      } catch (error) {
+        if (
+          error instanceof shipyard.GitHubDeliveryRouteError &&
+          error.message === `Delivery #${issueNumber} is no longer activated`
+        ) {
+          return undefined;
+        }
+        throw error;
+      }
+    },
   );
-  if (current.mode !== group.mode)
-    throw new Error(`Delivery ${group.id} has the wrong issue mode`);
-  if (group.mode === "standalone") {
-    return {
-      ...group,
-      root: { ...group.root, title: current.title },
-      children: [{ id: group.root.id, title: current.title, dependsOn: [] }],
-    };
+  if (current === undefined) {
+    throw new Error(
+      `Delivery ${group.id} has no activated root or child issue`,
+    );
   }
-  const graph = await shipyard.readPlanningSpecGraph(
-    group.repository,
-    Number(group.root.id),
+  return canonicalizeActivatedGroup(
+    group,
+    current,
+    (hydrated) => resolveGroupDelivery(hydrated).id,
   );
-  return { ...group, root: graph.root, children: graph.children };
 };
 
 const policy = shipyard.createRepositoryPolicy({
@@ -301,26 +322,20 @@ const createBrief = (input: {
 const assertActivated = async (
   group: DeliveryGroup,
 ): Promise<shipyard.GitHubIssueSnapshot> => {
-  const issue = await transport.fetchIssue({
+  const route = await shipyard.readActivatedDeliveryGroup(
     repository,
-    issueNumber: Number(group.root.id),
-  });
-  if (
-    issue === undefined ||
-    issue.state !== "open" ||
-    !issue.labels.some((label) => label.toLowerCase() === "shipyard")
-  ) {
-    throw new Error(`Delivery root #${group.root.id} is no longer activated`);
-  }
-  const activation = await shipyard.readActivatedDeliveryRoot(
-    repository,
-    Number(group.root.id),
+    Number(group.activationIssueId ?? group.root.id),
     relationships,
   );
-  if (activation.mode !== group.mode) {
-    throw new Error(`Delivery root #${group.root.id} changed mode`);
+  if (
+    route.mode !== group.mode ||
+    route.root.number !== Number(group.root.id)
+  ) {
+    throw new Error(
+      `Activated issue no longer resolves to delivery ${group.id}`,
+    );
   }
-  return issue;
+  return route.root;
 };
 
 const candidateChecks = async (
@@ -1081,6 +1096,9 @@ const deliverSpecGroup = async ({
           delivery: current,
           lease: result.lease,
           reason: result.reason ?? "Spec delivery blocked",
+          ...(result.blockedChild === undefined
+            ? {}
+            : { blockedChild: result.blockedChild }),
           ...(sameVersionNotDraft || result.candidate === undefined
             ? {}
             : { candidate: result.candidate }),

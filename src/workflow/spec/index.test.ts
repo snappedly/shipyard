@@ -1038,6 +1038,7 @@ describe("spec delivery orchestration", () => {
 
     expect(result.outcome).toBe("blocked");
     expect(result.reason).toContain("stop after current PR metadata");
+    expect(result.blockedChild?.itemId).toBe("102");
     expect(calls).toEqual({ ensure: 1, worker: 1, integrate: 0, publish: 0 });
     expect(
       (await owner.getDelivery(resolved.key))?.specCheckpoint?.pullRequest,

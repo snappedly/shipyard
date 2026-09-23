@@ -35,6 +35,55 @@ const runScaffold = (repoDir: string, options?: Partial<ScaffoldOptions>) =>
     ),
   );
 
+type GeneratedDeliveryGroup = {
+  id: string;
+  repository: string;
+  mode: "standalone" | "planning-spec";
+  root: { id: string; title: string };
+  children: {
+    id: string;
+    title: string;
+    dependsOn: string[];
+  }[];
+  integrationBranch: string;
+  activationIssueId?: string;
+};
+
+type GeneratedActivationRoute = {
+  activatedIssue: { number: number };
+  root: { number: number; title: string };
+  mode: "standalone" | "planning-spec";
+  children: {
+    id: string;
+    title: string;
+    dependsOn: string[];
+  }[];
+};
+
+type GeneratedDeliveryHelpers = {
+  route: (input: {
+    groups: readonly unknown[];
+    hydrate: (group: never) => Promise<never>;
+    resolve: (group: never) => never;
+    deliverStandalone: (input: never) => Promise<unknown>;
+    deliverSpec: (input: never) => Promise<unknown>;
+  }) => Promise<{
+    outcome: string;
+    groups: readonly unknown[];
+  }>;
+  canonicalize: (
+    planned: GeneratedDeliveryGroup,
+    route: GeneratedActivationRoute,
+    resolveId: (group: GeneratedDeliveryGroup) => string,
+  ) => GeneratedDeliveryGroup;
+  findActivated: (
+    planned: GeneratedDeliveryGroup,
+    readActivated: (
+      issueNumber: number,
+    ) => Promise<GeneratedActivationRoute | undefined>,
+  ) => Promise<GeneratedActivationRoute | undefined>;
+};
+
 // ---------------------------------------------------------------------------
 // Scaffold
 // ---------------------------------------------------------------------------
@@ -876,9 +925,9 @@ describe("InitService scaffold", () => {
     const dir = await makeDir();
     await runScaffold(dir, { templateName: "parallel-planner-with-review" });
     const main = await readFile(join(dir, ".shipyard", "main.mts"), "utf8");
-    expect(main).toContain("readPlanningSpecGraph(");
-    expect(main).toContain("readActivatedDeliveryRoot(");
-    expect(main).toContain("current.mode !== group.mode");
+    expect(main).toContain("readActivatedDeliveryGroup(");
+    expect(main).toContain("canonicalizeActivatedGroup(");
+    expect(main).toContain("activationIssueId");
     expect(main).toContain("verifyIntegrated: async");
     expect(main).toContain(
       "scope: `integrated planning spec #${issue.number}`",
@@ -912,18 +961,15 @@ describe("InitService scaffold", () => {
         /* @vite-ignore */
         `data:text/javascript,${encodeURIComponent(javascript)}`
       )) as {
-        deliverPlannedGroups: (input: {
-          groups: readonly unknown[];
-          hydrate: (group: never) => Promise<never>;
-          resolve: (group: never) => never;
-          deliverStandalone: (input: never) => Promise<unknown>;
-          deliverSpec: (input: never) => Promise<unknown>;
-        }) => Promise<{
-          outcome: string;
-          groups: readonly unknown[];
-        }>;
+        deliverPlannedGroups: GeneratedDeliveryHelpers["route"];
+        canonicalizeActivatedGroup: GeneratedDeliveryHelpers["canonicalize"];
+        findActivatedDeliveryRoute: GeneratedDeliveryHelpers["findActivated"];
       };
-      return imported.deliverPlannedGroups;
+      return {
+        route: imported.deliverPlannedGroups,
+        canonicalize: imported.canonicalizeActivatedGroup,
+        findActivated: imported.findActivatedDeliveryRoute,
+      };
     };
 
     it("produces worker and planner files without a direct merge prompt", async () => {
@@ -1009,8 +1055,66 @@ describe("InitService scaffold", () => {
       expect(mainTs).not.toContain("merge-prompt.md");
     });
 
+    it("promotes an activated child to the complete canonical spec group", async () => {
+      const { canonicalize, findActivated } = await generatedRouter();
+      const checked: number[] = [];
+      const route = await findActivated(
+        {
+          id: "spec-100",
+          repository: "snappedly/shipyard",
+          mode: "planning-spec",
+          root: { id: "100", title: "Planning spec" },
+          children: [
+            { id: "101", title: "Child one", dependsOn: [] },
+            { id: "102", title: "Child two", dependsOn: ["101"] },
+          ],
+          integrationBranch: "shipyard/spec-100",
+        },
+        async (issueNumber) => {
+          checked.push(issueNumber);
+          return issueNumber === 101
+            ? {
+                activatedIssue: { number: 101 },
+                root: { number: 100, title: "Planning spec" },
+                mode: "planning-spec" as const,
+                children: [
+                  { id: "101", title: "Child one", dependsOn: [] },
+                  { id: "102", title: "Child two", dependsOn: ["101"] },
+                ],
+              }
+            : undefined;
+        },
+      );
+      expect(checked).toEqual([100, 101]);
+      expect(route?.activatedIssue.number).toBe(101);
+      const group = canonicalize(
+        {
+          id: "standalone:101",
+          repository: "snappedly/shipyard",
+          mode: "standalone",
+          root: { id: "101", title: "Child one" },
+          children: [{ id: "101", title: "Child one", dependsOn: [] }],
+          integrationBranch: "shipyard/issue-101",
+        },
+        route!,
+        (hydrated) => `${hydrated.mode}:${hydrated.root.id}`,
+      );
+
+      expect(group).toMatchObject({
+        id: "planning-spec:100",
+        mode: "planning-spec",
+        root: { id: "100", title: "Planning spec" },
+        children: [
+          { id: "101", title: "Child one", dependsOn: [] },
+          { id: "102", title: "Child two", dependsOn: ["101"] },
+        ],
+        integrationBranch: "shipyard/spec-100",
+        activationIssueId: "101",
+      });
+    });
+
     it("routes standalone groups through the generated canonical callback", async () => {
-      const route = await generatedRouter();
+      const { route } = await generatedRouter();
       const calls: string[] = [];
       const result = await route({
         groups: [{ id: "standalone-7", mode: "standalone" }],
@@ -1030,7 +1134,7 @@ describe("InitService scaffold", () => {
     });
 
     it("routes a dependency graph intact to one spec delivery", async () => {
-      const route = await generatedRouter();
+      const { route } = await generatedRouter();
       const graph = {
         id: "spec-8",
         mode: "planning-spec",
@@ -1062,7 +1166,7 @@ describe("InitService scaffold", () => {
     });
 
     it("runs mixed unrelated groups concurrently through their canonical callbacks", async () => {
-      const route = await generatedRouter();
+      const { route } = await generatedRouter();
       const started: string[] = [];
       let resolveGate!: () => void;
       const gate = new Promise<void>((resolve) => {
@@ -1092,8 +1196,30 @@ describe("InitService scaffold", () => {
       expect(started).toEqual(["standalone:issue-1", "spec:spec-2"]);
     });
 
+    it("routes sibling activations through one canonical spec delivery", async () => {
+      const { route } = await generatedRouter();
+      const deliverSpec = vi.fn(async () => ({ outcome: "ready-for-human" }));
+      const result = await route({
+        groups: [{ issueId: "101" }, { issueId: "102" }],
+        hydrate: async (planned) =>
+          ({
+            id: "spec-100",
+            mode: "planning-spec",
+            activationIssueId: (planned as { issueId: string }).issueId,
+          }) as never,
+        resolve: (group) => group as never,
+        deliverStandalone: async () => ({ outcome: "blocked" }),
+        deliverSpec,
+      });
+
+      expect(deliverSpec).toHaveBeenCalledOnce();
+      expect(result.groups).toHaveLength(2);
+      expect(result.groups[1]).toMatchObject({ outcome: "already-routed" });
+      expect(result.outcome).toBe("delivered");
+    });
+
     it("replays a delivery through its canonical callback without duplicating its effect", async () => {
-      const route = await generatedRouter();
+      const { route } = await generatedRouter();
       const effects = new Map<string, string>();
       let publishes = 0;
       const deliverStandalone = async ({ delivery }: { delivery: unknown }) => {
@@ -1123,7 +1249,7 @@ describe("InitService scaffold", () => {
     });
 
     it("reports blocked groups and no-work plans without claiming success", async () => {
-      const route = await generatedRouter();
+      const { route } = await generatedRouter();
       const noWork = await route({
         groups: [],
         hydrate: async (group: never) => group,
@@ -1224,8 +1350,15 @@ describe("InitService scaffold", () => {
           outcome: string;
           groups: readonly unknown[];
         }>;
+        canonicalizeActivatedGroup: GeneratedDeliveryHelpers["canonicalize"];
+        findActivatedDeliveryRoute: GeneratedDeliveryHelpers["findActivated"];
       };
-      return { route: imported.deliverPlannedGroups, source };
+      return {
+        route: imported.deliverPlannedGroups,
+        canonicalize: imported.canonicalizeActivatedGroup,
+        findActivated: imported.findActivatedDeliveryRoute,
+        source,
+      };
     };
 
     it("produces worker, planner, and review files without a direct merge prompt", async () => {
@@ -1353,6 +1486,7 @@ describe("InitService scaffold", () => {
         "utf-8",
       );
       expect(mainTs).toContain('from "./deliver-groups.js"');
+      expect(mainTs).toContain("readActivatedDeliveryGroup(");
       expect(mainTs).toContain("integrateTemplateDelivery");
       expect(mainTs).toContain("deliveryGroups");
       expect(mainTs).toContain("deliverStandalone: deliverStandaloneGroup");
@@ -1403,6 +1537,74 @@ describe("InitService scaffold", () => {
 
       expect(result.outcome).toBe("delivered");
       expect(calls).toEqual(["standalone:issue-17", "spec:spec-18"]);
+    });
+
+    it("promotes activated spec children and coalesces siblings", async () => {
+      const { route, canonicalize, findActivated } = await generatedRouter();
+      const activated = await findActivated(
+        {
+          id: "spec-100",
+          repository: "snappedly/shipyard",
+          mode: "planning-spec",
+          root: { id: "100", title: "Planning spec" },
+          children: [
+            { id: "101", title: "Child one", dependsOn: [] },
+            { id: "102", title: "Child two", dependsOn: ["101"] },
+          ],
+          integrationBranch: "shipyard/spec-100",
+        },
+        async (issueNumber) =>
+          issueNumber === 102
+            ? {
+                activatedIssue: { number: 102 },
+                root: { number: 100, title: "Planning spec" },
+                mode: "planning-spec",
+                children: [
+                  { id: "101", title: "Child one", dependsOn: [] },
+                  { id: "102", title: "Child two", dependsOn: ["101"] },
+                ],
+              }
+            : undefined,
+      );
+      const normalized = canonicalize(
+        {
+          id: "standalone:101",
+          repository: "snappedly/shipyard",
+          mode: "standalone",
+          root: { id: "101", title: "Child one" },
+          children: [{ id: "101", title: "Child one", dependsOn: [] }],
+          integrationBranch: "shipyard/issue-101",
+        },
+        activated!,
+        (hydrated) => `${hydrated.mode}:${hydrated.root.id}`,
+      );
+      const deliverSpec = vi.fn(async () => ({ outcome: "ready-for-human" }));
+      const result = await route({
+        groups: [{ issueId: "101" }, { issueId: "102" }],
+        hydrate: async (planned) =>
+          ({
+            ...normalized,
+            activationIssueId: (planned as { issueId: string }).issueId,
+          }) as never,
+        resolve: (group) => group as never,
+        deliverStandalone: async () => ({ outcome: "blocked" }),
+        deliverSpec,
+      });
+
+      expect(normalized).toMatchObject({
+        id: "planning-spec:100",
+        mode: "planning-spec",
+        root: { id: "100", title: "Planning spec" },
+        children: [
+          { id: "101", title: "Child one", dependsOn: [] },
+          { id: "102", title: "Child two", dependsOn: ["101"] },
+        ],
+        integrationBranch: "shipyard/spec-100",
+        activationIssueId: "102",
+      });
+      expect(deliverSpec).toHaveBeenCalledOnce();
+      expect(result.groups[1]).toMatchObject({ outcome: "already-routed" });
+      expect(result.outcome).toBe("delivered");
     });
 
     it("generated router isolates an interrupted group and skips live work for no-work", async () => {

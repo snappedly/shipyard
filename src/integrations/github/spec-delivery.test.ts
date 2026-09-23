@@ -40,7 +40,7 @@ const createFakeGitHub = () => {
         body: "Implement one child.",
         state: "open",
         updatedAt: "2026-09-23T10:00:00.000Z",
-        labels: [],
+        labels: ["shipyard"],
       },
     ],
   ]);
@@ -173,7 +173,7 @@ const createFakeGitHub = () => {
       return updated;
     },
   };
-  return { transport, pullRequests, issues, branches };
+  return { transport, pullRequests, issues, branches, comments };
 };
 
 const makeCoordinator = (): WorkflowCoordinatorType =>
@@ -312,6 +312,83 @@ describe("GitHub spec delivery host", () => {
 
     expect(state.pullRequest?.draft).toBe(false);
     expect(specPullRequest.draft).toBe(true);
+  });
+
+  it("blocks the failed child, links it from the parent, and clears the label on explicit resume", async () => {
+    const coordinator = makeCoordinator();
+    const delivery = await coordinator.resolveDelivery(makeDelivery());
+    const lease = await coordinator.acquireDeliveryLease({
+      repository,
+      key: delivery.key,
+      workerId: "spec-host",
+      ttlMs: 10_000,
+    });
+    const { transport, issues, comments, pullRequests } = createFakeGitHub();
+    const host = createGitHubSpecDeliveryHost({
+      coordinator,
+      transport,
+      git: { reconcile: async () => ({}), integrateChild: async () => head },
+    });
+    const pullRequest = await host.integration.ensureDraftPullRequest({
+      delivery,
+      candidate: head,
+      base,
+      integrationBranch: head.branch,
+      briefRevision: 3,
+      briefHash: "f".repeat(64),
+      lease,
+      signal: new AbortController().signal,
+    });
+    const candidate = {
+      deliveryId: delivery.id,
+      briefRevision: 3,
+      briefHash: "f".repeat(64),
+      base,
+      head,
+      pullRequest,
+    };
+    await host.integration.publishCandidate({
+      delivery,
+      candidate,
+      lease,
+      signal: new AbortController().signal,
+    });
+
+    await host.publishBlocked({
+      delivery,
+      lease,
+      blockedChild: {
+        repository,
+        itemId: "101",
+        kind: "executable-issue",
+      },
+      reason: "Worker failed: Authorization: Bearer bearer-secret",
+      candidate,
+    });
+
+    expect(issues.get(101)?.labels).toEqual(["shipyard-blocked"]);
+    expect(issues.get(100)?.labels).not.toContain("shipyard-blocked");
+    expect(issues.get(100)?.labels).toEqual([]);
+    expect(pullRequests.get(44)).toMatchObject({
+      draft: true,
+      labels: ["shipyard-blocked"],
+    });
+    expect(comments.get(101)?.[0]?.body).toContain("Authorization=[REDACTED]");
+    expect(comments.get(101)?.[0]?.body).not.toContain("bearer-secret");
+    expect(comments.get(100)?.[0]?.body).toContain("#101");
+
+    issues.set(101, {
+      ...issues.get(101)!,
+      labels: ["shipyard", "shipyard-blocked"],
+    });
+    await host.childLifecycle.reconcileChild({
+      delivery,
+      child: { repository, itemId: "101", kind: "executable-issue" },
+      lease,
+      signal: new AbortController().signal,
+    });
+
+    expect(issues.get(101)?.labels).toEqual(["shipyard"]);
   });
 
   it("replays pending candidate metadata when the branch advanced before PR publication", async () => {

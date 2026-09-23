@@ -15,6 +15,7 @@ import {
   type WorkIdentity,
   type WorkflowPhase,
 } from "../contracts/index.js";
+import { sanitizeDiagnostic } from "../diagnostics.js";
 import { sameRevision } from "../shared.js";
 import { InMemoryCoordinatorStorage } from "./in-memory-storage.js";
 import {
@@ -226,19 +227,6 @@ const isSameEventRevision = (
 
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
-
-const sanitizeDiagnostic = (value: string, limit = 600): string =>
-  value
-    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
-    .replace(/(?:gh[pousr]|github_pat)_[A-Za-z0-9_]+/gi, "[REDACTED]")
-    .replace(
-      /\b(?:authorization|token|password|secret|cookie)\s*[:=]\s*[^\s,;]+/gi,
-      "$1=[REDACTED]",
-    )
-    .replace(/[\u0000-\u001f\u007f]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, limit);
 
 const safeReference = (value: string | undefined): string | undefined => {
   if (value === undefined) return undefined;

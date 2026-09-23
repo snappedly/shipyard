@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
 import type { DeliveryFailureEvidence } from "../../workflow/coordinator/index.js";
+import { sanitizeDiagnostic } from "../../workflow/diagnostics.js";
 import { formatPlanningSpecCompletionComment } from "../../workflow/handoff/index.js";
 import { sameRevision } from "../../workflow/shared.js";
 import { GITHUB_PUBLICATION_METADATA_VERSION } from "./types.js";
@@ -37,30 +37,7 @@ import {
   SHIPYARD_BLOCKED_LABEL_DESCRIPTION,
   SHIPYARD_LABEL,
 } from "./types.js";
-
-const markerText = (marker: string): string => `<!-- shipyard:${marker} -->`;
-
-// Markers are embedded in HTML comments and later used for reconciliation.
-// Encode caller-controlled components so a branch/key/name containing `-->`
-// cannot terminate the comment or manufacture a second marker.
-const markerPart = (value: string | number): string =>
-  encodeURIComponent(String(value));
-
-const markerHash = (value: string): string =>
-  createHash("sha256").update(value).digest("hex").slice(0, 16);
-
-const safeDiagnostic = (value: string, limit = 600): string =>
-  value
-    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
-    .replace(/(?:gh[pousr]|github_pat)_[A-Za-z0-9_]+/gi, "[REDACTED]")
-    .replace(
-      /\b(?:authorization|token|password|secret|cookie)\s*[:=]\s*[^\s,;]+/gi,
-      "$1=[REDACTED]",
-    )
-    .replace(/[\u0000-\u001f\u007f]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, limit);
+import { markerHash, markerPart, markerText } from "./markers.js";
 
 export const formatBlockedDeliveryComment = (
   evidence: DeliveryFailureEvidence,
@@ -68,20 +45,20 @@ export const formatBlockedDeliveryComment = (
   [
     "Shipyard blocked this delivery after automatic recovery was exhausted.",
     "",
-    `- Failed phase: \`${safeDiagnostic(evidence.phase, 80)}\``,
-    `- Error: ${safeDiagnostic(evidence.error)}`,
+    `- Failed phase: \`${sanitizeDiagnostic(evidence.phase, 80)}\``,
+    `- Error: ${sanitizeDiagnostic(evidence.error)}`,
     `- Attempts: ${evidence.attempts}`,
-    `- Last successful step: ${safeDiagnostic(evidence.lastSuccessfulStep ?? "not recorded", 160)}`,
+    `- Last successful step: ${sanitizeDiagnostic(evidence.lastSuccessfulStep ?? "not recorded", 160)}`,
     ...(evidence.branch
-      ? [`- Branch: \`${safeDiagnostic(evidence.branch, 160)}\``]
+      ? [`- Branch: \`${sanitizeDiagnostic(evidence.branch, 160)}\``]
       : []),
     ...(evidence.commit
-      ? [`- Commit: \`${safeDiagnostic(evidence.commit, 160)}\``]
+      ? [`- Commit: \`${sanitizeDiagnostic(evidence.commit, 160)}\``]
       : []),
     ...(evidence.pullRequest
-      ? [`- Pull request: ${safeDiagnostic(evidence.pullRequest, 240)}`]
+      ? [`- Pull request: ${sanitizeDiagnostic(evidence.pullRequest, 240)}`]
       : []),
-    `- Recovery: ${safeDiagnostic(evidence.recovery, 300)}`,
+    `- Recovery: ${sanitizeDiagnostic(evidence.recovery, 300)}`,
   ].join("\n");
 
 export const projectBlockedLabels = (

@@ -620,6 +620,9 @@ try {
             delivery: current,
             lease: result.lease,
             reason: result.reason ?? "Spec delivery blocked",
+            ...(result.blockedChild === undefined
+              ? {}
+              : { blockedChild: result.blockedChild }),
             ...(result.candidate === undefined
               ? {}
               : { candidate: result.candidate }),

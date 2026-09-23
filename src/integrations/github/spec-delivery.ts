@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type {
   DeliveryEffectExecution,
   DeliveryKey,
@@ -11,6 +10,7 @@ import type {
   WorkIdentity,
 } from "../../workflow/contracts/index.js";
 import { sameRevision } from "../../workflow/shared.js";
+import { sanitizeDiagnostic } from "../../workflow/diagnostics.js";
 import type {
   CompleteSpecChildInput,
   EnsureSpecPullRequestInput,
@@ -27,8 +27,10 @@ import {
   parseGitHubPublicationMetadata,
   projectActiveLabels,
   projectBlockedLabels,
+  projectResumedLabels,
   serializeGitHubPublicationMetadata,
 } from "./publication.js";
+import { markerHash, markerPart, markerText } from "./markers.js";
 import {
   GITHUB_PUBLICATION_METADATA_VERSION,
   READY_FOR_HUMAN_LABEL,
@@ -38,19 +40,12 @@ import {
   SHIPYARD_BLOCKED_LABEL_DESCRIPTION,
 } from "./types.js";
 import type {
+  GitHubIssueSnapshot,
   GitHubCheckSnapshot,
   GitHubPullRequestSnapshot,
   GitHubReadTransport,
   GitHubWriteTransport,
 } from "./types.js";
-
-const markerPart = (value: string | number): string =>
-  encodeURIComponent(String(value));
-
-const markerText = (marker: string): string => `<!-- shipyard:${marker} -->`;
-
-const markerHash = (value: string): string =>
-  createHash("sha256").update(value).digest("hex").slice(0, 16);
 
 const issueNumber = (identity: WorkIdentity): number => {
   if (!/^[1-9]\d*$/.test(identity.itemId)) {
@@ -102,6 +97,7 @@ export interface PublishGitHubSpecBlockedInput {
   readonly delivery: ReconcileSpecDeliveryInput["delivery"];
   readonly lease: DeliveryLease;
   readonly reason: string;
+  readonly blockedChild?: WorkIdentity;
   readonly candidate?: SpecCandidate;
   readonly signal?: AbortSignal;
 }
@@ -774,12 +770,77 @@ export const createGitHubSpecDeliveryHost = (
     reconcileChild: async ({ delivery, child, lease }) => {
       await coordinator.assertDeliveryLeaseOwnership(lease, delivery.version);
       assertChildInScope(delivery.graph.children, child);
+      const repository = child.repository;
+      const number = issueNumber(child);
       const issue = await transport.fetchIssue({
-        repository: child.repository,
-        issueNumber: issueNumber(child),
+        repository,
+        issueNumber: number,
       });
       if (issue === undefined)
         throw new Error(`Child issue #${child.itemId} is missing`);
+      if (
+        issue.state === "open" &&
+        issue.labels.some((label) => label.toLowerCase() === SHIPYARD_LABEL) &&
+        issue.labels.includes(SHIPYARD_BLOCKED_LABEL)
+      ) {
+        if (transport.updateIssue === undefined) {
+          throw new Error(
+            "GitHub transport cannot resume blocked child issues",
+          );
+        }
+        const marker = `spec-child-resume:${markerPart(repository)}:${markerPart(delivery.key.itemId)}:${markerPart(number)}:${markerPart(delivery.version)}`;
+        const resumed = await coordinator.publishDeliveryEffect({
+          key: delivery.key,
+          lease,
+          expectedDeliveryVersion: delivery.version,
+          kind: "github-spec-child-resume",
+          marker,
+          payload: { issueNumber: number },
+          reconcile: async () => {
+            const current = await transport.fetchIssue({
+              repository,
+              issueNumber: number,
+            });
+            return current !== undefined &&
+              current.state === "open" &&
+              current.labels.some(
+                (label) => label.toLowerCase() === SHIPYARD_LABEL,
+              ) &&
+              !current.labels.includes(SHIPYARD_BLOCKED_LABEL)
+              ? current
+              : undefined;
+          },
+          publish: async () => {
+            const current = await transport.fetchIssue({
+              repository,
+              issueNumber: number,
+            });
+            if (
+              current === undefined ||
+              current.state !== "open" ||
+              !current.labels.some(
+                (label) => label.toLowerCase() === SHIPYARD_LABEL,
+              )
+            ) {
+              throw new Error(
+                `Child issue #${number} is no longer explicitly activated`,
+              );
+            }
+            return transport.updateIssue!({
+              repository,
+              issueNumber: number,
+              labels: projectResumedLabels(current.labels),
+              marker: markerText(marker),
+            });
+          },
+        });
+        const current = requireRemote(
+          resumed,
+          `Child issue #${number} resume has no remote result`,
+        );
+        await coordinator.assertDeliveryLeaseOwnership(lease, delivery.version);
+        return current.state;
+      }
       return issue.state;
     },
     closeChild: async (input: CompleteSpecChildInput) => {
@@ -919,8 +980,25 @@ export const createGitHubSpecDeliveryHost = (
         repository,
         issueNumber: number,
       });
-      if (issue === undefined)
+      if (issue === undefined || issue.state !== "open")
         throw new Error(`Planning spec #${number} is missing`);
+      let blockedChild: GitHubIssueSnapshot | undefined;
+      if (input.blockedChild !== undefined) {
+        assertChildInScope(input.delivery.graph.children, input.blockedChild);
+        const childNumber = issueNumber(input.blockedChild);
+        blockedChild = await transport.fetchIssue({
+          repository,
+          issueNumber: childNumber,
+        });
+        if (blockedChild === undefined || blockedChild.state !== "open") {
+          throw new Error(
+            `Blocked child issue #${childNumber} is missing or closed`,
+          );
+        }
+        if (transport.updateIssue === undefined) {
+          throw new Error("GitHub transport cannot mark blocked child issues");
+        }
+      }
       if (transport.ensureLabel !== undefined) {
         const labelMarker = `spec-blocked-label:${markerPart(repository)}:${markerPart(input.delivery.key.itemId)}`;
         await coordinator.publishDeliveryEffect({
@@ -945,46 +1023,129 @@ export const createGitHubSpecDeliveryHost = (
             }),
         });
       }
-      if (transport.updateIssue === undefined) {
-        throw new Error("GitHub transport cannot mark blocked spec issues");
-      }
       const issueMarker = `spec-blocked:${markerPart(repository)}:${markerPart(number)}:${markerPart(input.delivery.version)}`;
-      await coordinator.publishDeliveryEffect({
-        key: input.delivery.key,
-        lease: input.lease,
-        expectedDeliveryVersion: input.delivery.version,
-        kind: "github-spec-blocked-issue",
-        marker: issueMarker,
-        payload: { issueNumber: number },
-        reconcile: async () => {
-          const current = await transport.fetchIssue({
-            repository,
-            issueNumber: number,
-          });
-          return current !== undefined &&
-            current.labels.includes(SHIPYARD_BLOCKED_LABEL)
-            ? current
-            : undefined;
-        },
-        publish: async () => {
-          const current = await transport.fetchIssue({
-            repository,
-            issueNumber: number,
-          });
-          if (current === undefined || current.state !== "open") {
-            throw new Error(
-              "Planning spec changed before blocked-state projection",
-            );
-          }
-          return transport.updateIssue!({
-            repository,
-            issueNumber: number,
-            labels: projectBlockedLabels(current.labels),
-            marker: markerText(issueMarker),
-          });
-        },
-      });
+      if (blockedChild !== undefined) {
+        const childNumber = blockedChild.number;
+        const childMarker = `${issueMarker}:child:${markerPart(childNumber)}`;
+        await coordinator.publishDeliveryEffect({
+          key: input.delivery.key,
+          lease: input.lease,
+          expectedDeliveryVersion: input.delivery.version,
+          kind: "github-spec-blocked-child",
+          marker: childMarker,
+          payload: { issueNumber: childNumber },
+          reconcile: async () => {
+            const current = await transport.fetchIssue({
+              repository,
+              issueNumber: childNumber,
+            });
+            return current !== undefined &&
+              current.state === "open" &&
+              current.labels.includes(SHIPYARD_BLOCKED_LABEL) &&
+              !current.labels.some(
+                (label) => label.toLowerCase() === SHIPYARD_LABEL,
+              )
+              ? current
+              : undefined;
+          },
+          publish: async () => {
+            const current = await transport.fetchIssue({
+              repository,
+              issueNumber: childNumber,
+            });
+            if (current === undefined || current.state !== "open") {
+              throw new Error(
+                `Child issue #${childNumber} changed before blocked-state projection`,
+              );
+            }
+            return transport.updateIssue!({
+              repository,
+              issueNumber: childNumber,
+              labels: projectBlockedLabels(current.labels),
+              marker: markerText(childMarker),
+            });
+          },
+        });
+        const childCommentMarker = `${childMarker}:comment:${markerHash(input.reason)}`;
+        await coordinator.publishDeliveryEffect({
+          key: input.delivery.key,
+          lease: input.lease,
+          expectedDeliveryVersion: input.delivery.version,
+          kind: "github-spec-blocked-child-comment",
+          marker: childCommentMarker,
+          payload: { issueNumber: childNumber },
+          reconcile: () =>
+            transport.findCommentByMarker({
+              repository,
+              issueNumber: childNumber,
+              marker: markerText(childCommentMarker),
+            }),
+          publish: () =>
+            transport.createComment({
+              repository,
+              issueNumber: childNumber,
+              body: `${markerText(childCommentMarker)}\nShipyard blocked this child issue.\n\n${sanitizeDiagnostic(input.reason)}\n\nResolve the blocker, then re-add the shipyard label to resume the existing spec delivery.`,
+            }),
+        });
+      }
+      const currentParentLabels = projectActiveLabels(issue.labels);
+      if (
+        currentParentLabels.length !== issue.labels.length ||
+        currentParentLabels.some(
+          (label, index) => label !== issue.labels[index],
+        )
+      ) {
+        if (transport.updateIssue === undefined) {
+          throw new Error(
+            "GitHub transport cannot deactivate blocked spec issues",
+          );
+        }
+        const parentLabelMarker = `${issueMarker}:parent-labels`;
+        await coordinator.publishDeliveryEffect({
+          key: input.delivery.key,
+          lease: input.lease,
+          expectedDeliveryVersion: input.delivery.version,
+          kind: "github-spec-blocked-parent-labels",
+          marker: parentLabelMarker,
+          payload: { issueNumber: number },
+          reconcile: async () => {
+            const current = await transport.fetchIssue({
+              repository,
+              issueNumber: number,
+            });
+            return current !== undefined &&
+              current.state === "open" &&
+              current.labels.length === currentParentLabels.length &&
+              currentParentLabels.every((label) =>
+                current.labels.includes(label),
+              )
+              ? current
+              : undefined;
+          },
+          publish: async () => {
+            const current = await transport.fetchIssue({
+              repository,
+              issueNumber: number,
+            });
+            if (current === undefined || current.state !== "open") {
+              throw new Error(
+                "Planning spec changed before blocked-state projection",
+              );
+            }
+            return transport.updateIssue!({
+              repository,
+              issueNumber: number,
+              labels: projectActiveLabels(current.labels),
+              marker: markerText(parentLabelMarker),
+            });
+          },
+        });
+      }
       const commentMarker = `spec-blocked-comment:${issueMarker}:${markerHash(input.reason)}`;
+      const parentMessage =
+        blockedChild === undefined
+          ? "Shipyard paused this planning spec. No single child issue could be isolated as the blocker."
+          : `Shipyard paused this planning spec because child [#${blockedChild.number}](${blockedChild.htmlUrl ?? `https://github.com/${repository}/issues/${blockedChild.number}`}) is blocked.`;
       await coordinator.publishDeliveryEffect({
         key: input.delivery.key,
         lease: input.lease,
@@ -1002,7 +1163,7 @@ export const createGitHubSpecDeliveryHost = (
           transport.createComment({
             repository,
             issueNumber: number,
-            body: `${markerText(commentMarker)}\nShipyard blocked this planning spec.\n\n${input.reason}\n\nRe-add the shipyard label after resolving the blocker to resume the existing delivery.`,
+            body: `${markerText(commentMarker)}\n${parentMessage}\n\n${sanitizeDiagnostic(input.reason)}\n\nResolve the child blocker and re-add the shipyard label to that child to resume the existing delivery.`,
           }),
       });
       if (input.candidate !== undefined) {

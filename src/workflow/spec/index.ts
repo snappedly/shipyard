@@ -499,6 +499,7 @@ export interface SpecDeliveryResult {
     readonly state: "open";
     readonly merged: false;
   };
+  readonly blockedChild?: WorkIdentity;
   readonly reason?: string;
 }
 
@@ -668,6 +669,7 @@ const resultFor = (input: {
   readonly reviews: readonly SpecReviewRound[];
   readonly repairBatches: number;
   readonly followUps: number;
+  readonly blockedChild?: WorkIdentity;
   readonly reason?: string;
 }): SpecDeliveryResult => ({
   ...input,
@@ -1068,34 +1070,39 @@ export const deliverSpec = async (
       ) {
         continue;
       }
-      await refreshLease();
-      const sourceState = await options.childLifecycle.reconcileChild({
-        delivery,
-        child: child.identity,
-        lease: currentLease,
-        signal: controller.signal,
-      });
-      assertOwned();
-      if (sourceState !== "open") {
-        throw new Error(
-          `Child ${child.identity.itemId} is closed without coordinator completion evidence`,
-        );
+      try {
+        await refreshLease();
+        const sourceState = await options.childLifecycle.reconcileChild({
+          delivery,
+          child: child.identity,
+          lease: currentLease,
+          signal: controller.signal,
+        });
+        assertOwned();
+        if (sourceState !== "open") {
+          throw new Error(
+            `Child ${child.identity.itemId} is closed without coordinator completion evidence`,
+          );
+        }
+        const workerBase = freezeClone(currentHead);
+        await saveChildProgress({
+          child: child.identity,
+          status: "working",
+          workerBase,
+        });
+        const request = Object.freeze({
+          delivery: freezeClone(delivery),
+          child: freezeClone(child.identity),
+          base: workerBase,
+          integrationBranch: options.integrationBranch,
+          lease: freezeClone(currentLease),
+          signal: controller.signal,
+        });
+        starts.push({ child, workerBase, request });
+      } catch (error) {
+        blockedChild = child.identity;
+        throw error;
       }
-      const workerBase = freezeClone(currentHead);
-      await saveChildProgress({
-        child: child.identity,
-        status: "working",
-        workerBase,
-      });
-      const request = Object.freeze({
-        delivery: freezeClone(delivery),
-        child: freezeClone(child.identity),
-        base: workerBase,
-        integrationBranch: options.integrationBranch,
-        lease: freezeClone(currentLease),
-        signal: controller.signal,
-      });
-      starts.push({ child, workerBase, request });
     }
     if (starts.length > 0) await refreshLease();
     for (const { child, workerBase, request } of starts) {
@@ -1148,6 +1155,7 @@ export const deliverSpec = async (
     active.clear();
   };
 
+  let blockedChild: WorkIdentity | undefined;
   let blockedReason: string | undefined;
   try {
     await refreshLease();
@@ -1327,39 +1335,44 @@ export const deliverSpec = async (
 
     await refreshScope();
     for (const child of plan.children) {
-      await refreshLease();
-      const progress = checkpoint.children.find(
-        (entry) => entry.child.itemId === child.identity.itemId,
-      );
-      const childState = await options.childLifecycle.reconcileChild({
-        delivery,
-        child: child.identity,
-        lease: currentLease,
-        signal: controller.signal,
-      });
-      assertOwned();
-      if (progress?.status === "closed") {
-        if (childState !== "closed") {
+      try {
+        await refreshLease();
+        const progress = checkpoint.children.find(
+          (entry) => entry.child.itemId === child.identity.itemId,
+        );
+        const childState = await options.childLifecycle.reconcileChild({
+          delivery,
+          child: child.identity,
+          lease: currentLease,
+          signal: controller.signal,
+        });
+        assertOwned();
+        if (progress?.status === "closed") {
+          if (childState !== "closed") {
+            throw new Error(
+              `GitHub child #${child.identity.itemId} contradicts closed coordinator evidence`,
+            );
+          }
+          records.set(child.identity.itemId, recordFromCheckpoint(progress));
+          states.set(child.identity.itemId, "closed");
+        } else if (childState === "closed" && progress?.status !== "closing") {
           throw new Error(
-            `GitHub child #${child.identity.itemId} contradicts closed coordinator evidence`,
+            `Child ${child.identity.itemId} is closed without coordinator completion evidence`,
           );
         }
-        records.set(child.identity.itemId, recordFromCheckpoint(progress));
-        states.set(child.identity.itemId, "closed");
-      } else if (childState === "closed" && progress?.status !== "closing") {
-        throw new Error(
-          `Child ${child.identity.itemId} is closed without coordinator completion evidence`,
-        );
-      }
-      if (progress?.status === "closing" && childState === "closed") {
-        const closed = {
-          ...progress,
-          status: "closed" as const,
-          closedAt: new Date().toISOString(),
-        };
-        await saveChildProgress(closed);
-        records.set(child.identity.itemId, recordFromCheckpoint(closed));
-        states.set(child.identity.itemId, "closed");
+        if (progress?.status === "closing" && childState === "closed") {
+          const closed = {
+            ...progress,
+            status: "closed" as const,
+            closedAt: new Date().toISOString(),
+          };
+          await saveChildProgress(closed);
+          records.set(child.identity.itemId, recordFromCheckpoint(closed));
+          states.set(child.identity.itemId, "closed");
+        }
+      } catch (error) {
+        blockedChild = child.identity;
+        throw error;
       }
     }
 
@@ -1380,142 +1393,147 @@ export const deliverSpec = async (
             `Checkpoint child ${resumable.child.itemId} is outside the current scope`,
           );
         }
-        if (resumable.status === "integrating") {
-          if (
-            resumable.workerBase === undefined ||
-            resumable.sourceCommit === undefined
-          ) {
-            throw new Error(
-              `Child ${child.identity.itemId} integration checkpoint is incomplete`,
-            );
-          }
-          await refreshLease();
-          const integratedHead = await options.integration.integrateChild({
-            delivery,
-            child: child.identity,
-            sourceCommit: resumable.sourceCommit,
-            currentHead: freezeClone(currentHead),
-            integrationBranch: options.integrationBranch,
-            lease: currentLease,
-            signal: controller.signal,
-          });
-          assertOwned();
-          if (
-            !revisionIsValid(integratedHead) ||
-            integratedHead.branch !== options.integrationBranch ||
-            integratedHead.sha === currentHead.sha
-          ) {
-            throw new Error(
-              "Integration adapter returned an invalid shared head",
-            );
-          }
-          currentHead = freezeClone(integratedHead);
-          await refreshLease();
-          await ensurePullRequest(currentHead);
-          const candidate = makeCandidate({
-            delivery,
-            briefRevision: brief.revision,
-            briefHash: brief.hash,
-            base: options.base,
-            head: currentHead,
-            pullRequest: pullRequest!,
-          });
-          await saveChildProgress({
-            ...resumable,
-            status: "publishing",
-            candidate,
-          });
-          await publishCandidate(candidate, {
-            ...resumable,
-            status: "publishing",
-            candidate,
-          });
-          continue;
-        }
-        if (resumable.status === "publishing") {
-          if (resumable.candidate === undefined) {
-            throw new Error(
-              `Child ${child.identity.itemId} publication checkpoint is incomplete`,
-            );
-          }
-          await publishCandidate(resumable.candidate, resumable);
-          continue;
-        }
-        if (resumable.status === "verifying") {
-          if (
-            resumable.candidate === undefined ||
-            resumable.sourceCommit === undefined
-          ) {
-            throw new Error(
-              `Child ${child.identity.itemId} verification checkpoint is incomplete`,
-            );
-          }
-          await refreshLease();
-          const childVerification = await options.verification.verifyChild({
-            delivery,
-            child: child.identity,
-            sourceCommit: resumable.sourceCommit,
-            candidate: freezeClone(resumable.candidate),
-            lease: currentLease,
-            signal: controller.signal,
-          });
-          assertOwned();
-          const issue = verificationFailure(childVerification, policy);
-          if (issue !== undefined) throw new Error(issue);
-          await saveChildProgress({
-            ...resumable,
-            status: "closing",
-            verification: {
-              checks: childVerification.checks,
-              cleanup: {
-                status: "passed",
-                summary: childVerification.cleanup.summary,
-              },
-              evidence: childVerification.evidence,
-            },
-          });
-          continue;
-        }
-        if (resumable.status === "closing") {
-          if (
-            resumable.candidate === undefined ||
-            resumable.sourceCommit === undefined ||
-            resumable.verification === undefined
-          ) {
-            throw new Error(
-              `Child ${child.identity.itemId} closure checkpoint is incomplete`,
-            );
-          }
-          await refreshLease();
-          const providerState = await options.childLifecycle.reconcileChild({
-            delivery,
-            child: child.identity,
-            lease: currentLease,
-            signal: controller.signal,
-          });
-          assertOwned();
-          if (providerState === "open") {
+        try {
+          if (resumable.status === "integrating") {
+            if (
+              resumable.workerBase === undefined ||
+              resumable.sourceCommit === undefined
+            ) {
+              throw new Error(
+                `Child ${child.identity.itemId} integration checkpoint is incomplete`,
+              );
+            }
             await refreshLease();
-            await options.childLifecycle.closeChild({
+            const integratedHead = await options.integration.integrateChild({
               delivery,
               child: child.identity,
-              sourceCommit: freezeClone(resumable.sourceCommit),
-              candidate: freezeClone(resumable.candidate),
-              verification: freezeClone(resumable.verification),
+              sourceCommit: resumable.sourceCommit,
+              currentHead: freezeClone(currentHead),
+              integrationBranch: options.integrationBranch,
               lease: currentLease,
               signal: controller.signal,
             });
             assertOwned();
+            if (
+              !revisionIsValid(integratedHead) ||
+              integratedHead.branch !== options.integrationBranch ||
+              integratedHead.sha === currentHead.sha
+            ) {
+              throw new Error(
+                "Integration adapter returned an invalid shared head",
+              );
+            }
+            currentHead = freezeClone(integratedHead);
+            await refreshLease();
+            await ensurePullRequest(currentHead);
+            const candidate = makeCandidate({
+              delivery,
+              briefRevision: brief.revision,
+              briefHash: brief.hash,
+              base: options.base,
+              head: currentHead,
+              pullRequest: pullRequest!,
+            });
+            await saveChildProgress({
+              ...resumable,
+              status: "publishing",
+              candidate,
+            });
+            await publishCandidate(candidate, {
+              ...resumable,
+              status: "publishing",
+              candidate,
+            });
+            continue;
           }
-          const closed: SpecChildCheckpoint = {
-            ...resumable,
-            status: "closed",
-            closedAt: new Date().toISOString(),
-          };
-          await saveChildProgress(closed);
-          records.set(child.identity.itemId, recordFromCheckpoint(closed));
-          states.set(child.identity.itemId, "closed");
-          continue;
+          if (resumable.status === "publishing") {
+            if (resumable.candidate === undefined) {
+              throw new Error(
+                `Child ${child.identity.itemId} publication checkpoint is incomplete`,
+              );
+            }
+            await publishCandidate(resumable.candidate, resumable);
+            continue;
+          }
+          if (resumable.status === "verifying") {
+            if (
+              resumable.candidate === undefined ||
+              resumable.sourceCommit === undefined
+            ) {
+              throw new Error(
+                `Child ${child.identity.itemId} verification checkpoint is incomplete`,
+              );
+            }
+            await refreshLease();
+            const childVerification = await options.verification.verifyChild({
+              delivery,
+              child: child.identity,
+              sourceCommit: resumable.sourceCommit,
+              candidate: freezeClone(resumable.candidate),
+              lease: currentLease,
+              signal: controller.signal,
+            });
+            assertOwned();
+            const issue = verificationFailure(childVerification, policy);
+            if (issue !== undefined) throw new Error(issue);
+            await saveChildProgress({
+              ...resumable,
+              status: "closing",
+              verification: {
+                checks: childVerification.checks,
+                cleanup: {
+                  status: "passed",
+                  summary: childVerification.cleanup.summary,
+                },
+                evidence: childVerification.evidence,
+              },
+            });
+            continue;
+          }
+          if (resumable.status === "closing") {
+            if (
+              resumable.candidate === undefined ||
+              resumable.sourceCommit === undefined ||
+              resumable.verification === undefined
+            ) {
+              throw new Error(
+                `Child ${child.identity.itemId} closure checkpoint is incomplete`,
+              );
+            }
+            await refreshLease();
+            const providerState = await options.childLifecycle.reconcileChild({
+              delivery,
+              child: child.identity,
+              lease: currentLease,
+              signal: controller.signal,
+            });
+            assertOwned();
+            if (providerState === "open") {
+              await refreshLease();
+              await options.childLifecycle.closeChild({
+                delivery,
+                child: child.identity,
+                sourceCommit: freezeClone(resumable.sourceCommit),
+                candidate: freezeClone(resumable.candidate),
+                verification: freezeClone(resumable.verification),
+                lease: currentLease,
+                signal: controller.signal,
+              });
+              assertOwned();
+            }
+            const closed: SpecChildCheckpoint = {
+              ...resumable,
+              status: "closed",
+              closedAt: new Date().toISOString(),
+            };
+            await saveChildProgress(closed);
+            records.set(child.identity.itemId, recordFromCheckpoint(closed));
+            states.set(child.identity.itemId, "closed");
+            continue;
+          }
+        } catch (error) {
+          blockedChild = child.identity;
+          throw error;
         }
       }
       if (
@@ -1535,11 +1553,13 @@ export const deliverSpec = async (
       const completion = await waitForWorker();
       active.delete(completion.child.identity.itemId);
       if (completion.error !== undefined) {
+        blockedChild = completion.child.identity;
         throw new Error(
           `Child ${completion.child.identity.itemId} failed: ${errorMessage(completion.error)}`,
         );
       }
       if (completion.result === undefined) {
+        blockedChild = completion.child.identity;
         throw new Error(
           `Child ${completion.child.identity.itemId} returned no result`,
         );
@@ -1550,6 +1570,7 @@ export const deliverSpec = async (
         sourceCommit.branch === options.integrationBranch ||
         sourceCommit.sha === completion.workerBase.sha
       ) {
+        blockedChild = completion.child.identity;
         throw new Error(
           `Child ${completion.child.identity.itemId} returned an invalid or shared-branch commit`,
         );
@@ -1770,6 +1791,7 @@ export const deliverSpec = async (
     reviews,
     repairBatches,
     followUps,
+    blockedChild,
     reason: blockedReason,
   });
 };
