@@ -57,7 +57,7 @@ const TEMPLATES: TemplateMetadata[] = [
   },
   {
     name: "simple-loop",
-    description: "Picks issues one by one and closes them",
+    description: "Implements standalone issues one by one and opens review PRs",
   },
   {
     name: "sequential-reviewer",
@@ -67,13 +67,13 @@ const TEMPLATES: TemplateMetadata[] = [
   {
     name: "parallel-planner",
     description:
-      "Plans parallelizable issues, executes on separate branches, merges",
+      "Plans parallelizable issues, implements them, and opens review PRs",
     dependencies: ["zod"],
   },
   {
     name: "parallel-planner-with-review",
     description:
-      "Plans parallelizable issues, executes with per-branch review, merges",
+      "Plans and implements parallel issues with per-branch review and PRs",
     dependencies: ["zod"],
   },
 ];
@@ -350,7 +350,7 @@ const ISSUE_TRACKER_REGISTRY: IssueTrackerEntry[] = [
     envExample: `# GitHub personal access token — the agent uses it to read and manage GitHub Issues
 # Runner installation/start uses the host \`gh\` login for repository administration.
 # Create a fine-grained token: https://github.com/settings/personal-access-tokens/new
-# Required repository permissions: Issues (Read and write) and Metadata (Read)
+# Required repository permissions: Contents, Issues, and Pull requests (Read and write); Metadata (Read)
 # Or leave blank and run: GH_TOKEN="$(gh auth token)" npx shipyard run
 GH_TOKEN=
 # GitHub repository (owner/repository)
@@ -462,7 +462,8 @@ const copyTemplateFiles = (
           (f) =>
             f !== "template.json" &&
             f !== ".env.example" &&
-            !COMPILED_FILE_EXTENSIONS.some((ext) => f.endsWith(ext)),
+            (f === "select-issues.mjs" ||
+              !COMPILED_FILE_EXTENSIONS.some((ext) => f.endsWith(ext))),
         )
         .map((f) => {
           const destName = f === "main.mts" ? mainFilename : f;

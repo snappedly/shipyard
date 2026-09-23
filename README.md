@@ -61,13 +61,13 @@ the [agent guide](docs/content/docs/agents.mdx) for authentication details.
 
 ## Pick the workflow you need
 
-| Template                       | Best for              | Built-in flow                                     |
-| ------------------------------ | --------------------- | ------------------------------------------------- |
-| `blank`                        | One custom task       | One agent run                                     |
-| `simple-loop`                  | A small issue backlog | Implement issues sequentially                     |
-| `sequential-reviewer`          | Safer issue delivery  | Implement → review, one issue at a time           |
-| `parallel-planner`             | Independent issues    | Plan dependencies → implement in parallel → merge |
-| `parallel-planner-with-review` | Maximum autonomy      | Plan → implement and review in parallel → merge   |
+| Template                       | Best for              | Built-in flow                                 |
+| ------------------------------ | --------------------- | --------------------------------------------- |
+| `blank`                        | One custom task       | One agent run                                 |
+| `simple-loop`                  | A small issue backlog | Implement issues sequentially → review PRs    |
+| `sequential-reviewer`          | Safer issue delivery  | Implement → review → review PR                |
+| `parallel-planner`             | Independent issues    | Plan → implement in parallel → review PRs     |
+| `parallel-planner-with-review` | Maximum autonomy      | Plan → implement and review in parallel → PRs |
 
 All templates are generated TypeScript. Adjust prompts, models, iteration
 limits, branch strategy, hooks, and checks in `.shipyard/main.ts` or
@@ -81,11 +81,20 @@ controller wakes, drains a finite batch of eligible work, coalesces duplicate
 wake-ups, and stops when it makes no progress. Restarting it recovers work
 labelled while the host was offline.
 
+The bundled issue workflows install Snappedly skills and the candidate's
+dependencies in Docker. They implement activated standalone issues with
+`/implement`, apply their selected review stages, and open a non-draft PR for
+human merge. Successful handoff removes `shipyard` from the source issue;
+the issue stays open under the target repository's closure policy. Planning
+specs and linked children wait for the whole-spec workflow. The GitHub token
+needs Contents, Issues, and Pull requests read/write permission plus Metadata
+read permission. Keep the Mac and foreground controller running for wake-ups.
+
 Accept runner installation during `init`, or install it later:
 
 ```sh
 npx shipyard runner install
-git add .github/workflows/shipyard-wake.yml .shipyard/.gitignore
+git add .shipyard .github/workflows/shipyard-wake.yml
 git commit -m "Add Shipyard wake workflow"
 git push
 npx shipyard runner start

@@ -1,26 +1,8 @@
-# TASK
+# Final validation for issue #{{TASK_ID}}: {{ISSUE_TITLE}}
 
-Merge the following branches into the current branch:
+On branch `{{BRANCH}}`, inspect the issue and final diff from `{{TARGET_BRANCH}}`. The selected template has already run an independent `/code-review`; preserve its result and perform only final integration cleanup and checks needed after those changes. Reinstall candidate dependencies with `bash .shipyard/setup.sh` after manifest changes. Commit any authorized correction, report its affected checks and preserve the existing review evidence when unchanged.
 
-{{BRANCHES}}
+Do not close the issue, merge into the target, publish the PR, or start another review chain. If checks remain unresolved, explain why without completion. After verified final content, report commands/results and limitations:
 
-For each branch:
-
-1. Run `git merge <branch> --no-edit`
-2. If there are merge conflicts, resolve them intelligently by reading both sides and choosing the correct resolution
-3. After resolving conflicts, read the repository's configured feedback-loop contract and run every applicable check for the merged change
-4. If a check fails, fix the issue before proceeding to the next branch
-
-After all branches are merged, make a single commit summarizing the merge.
-
-# CLOSE ISSUES
-
-For each branch that was merged, close its issue using the following command:
-
-`{{CLOSE_TASK_COMMAND}}`
-
-Here are all the issues:
-
-{{ISSUES}}
-
-Once you've merged everything you can, output <promise>COMPLETE</promise>.
+<handoff>...</handoff>
+<promise>COMPLETE</promise>

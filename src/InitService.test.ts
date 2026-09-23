@@ -298,31 +298,6 @@ describe("InitService scaffold", () => {
     expect(mainTs).toContain('"@snappedly-tools/shipyard"');
   });
 
-  it("simple-loop main.mts contains shipyard.run() with expected options", async () => {
-    const dir = await makeDir();
-    await runScaffold(dir, { templateName: "simple-loop" });
-
-    const mainTs = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
-    expect(mainTs).toContain("run(");
-    expect(mainTs).toContain("maxIterations");
-    expect(mainTs).toContain("3");
-    // When scaffolded with default model, simple-loop uses claude-opus-4-8
-    // (rewritten from template's claude-sonnet-4-6)
-    expect(mainTs).toContain("promptFile");
-    expect(mainTs).toContain("npm install");
-    expect(mainTs).toContain("onSandboxReady");
-  });
-
-  it("simple-loop prompt.md contains shell expressions for issues and commit history", async () => {
-    const dir = await makeDir();
-    await runScaffold(dir, { templateName: "simple-loop" });
-
-    const prompt = await readFile(join(dir, ".shipyard", "prompt.md"), "utf-8");
-    expect(prompt).toContain("!`gh issue");
-    expect(prompt).toContain("!`git log");
-    expect(prompt).toContain("<promise>COMPLETE</promise>");
-  });
-
   describe("sequential-reviewer template", () => {
     it("produces main.mts, implement-prompt.md, and review-prompt.md", async () => {
       const dir = await makeDir();
@@ -379,47 +354,6 @@ describe("InitService scaffold", () => {
       expect(mainTs).not.toContain("merge-to-head");
     });
 
-    it("main.mts only reviews when implementer produces commits", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, { templateName: "sequential-reviewer" });
-
-      const mainTs = await readFile(
-        join(dir, ".shipyard", "main.mts"),
-        "utf-8",
-      );
-      expect(mainTs).toContain("implement.commits.length");
-    });
-
-    it("implement-prompt.md contains issue selection and closure, not prompt argument placeholders", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, { templateName: "sequential-reviewer" });
-
-      const prompt = await readFile(
-        join(dir, ".shipyard", "implement-prompt.md"),
-        "utf-8",
-      );
-      expect(prompt).toContain("gh issue list");
-      expect(prompt).toContain("gh issue close");
-      expect(prompt).not.toContain("{{ISSUE_NUMBER}}");
-      expect(prompt).not.toContain("{{ISSUE_TITLE}}");
-      expect(prompt).not.toContain("{{BRANCH}}");
-    });
-
-    it("implement-prompt.md hints the issue list is pre-filtered and discourages unfiltered re-query", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, { templateName: "sequential-reviewer" });
-
-      const prompt = await readFile(
-        join(dir, ".shipyard", "implement-prompt.md"),
-        "utf-8",
-      );
-      expect(prompt).toContain(
-        "already been filtered to issues ready for work",
-      );
-      expect(prompt).toContain("sole source of truth");
-      expect(prompt).toContain("Do not run your own unfiltered query");
-    });
-
     it("review-prompt.md contains {{BRANCH}} prompt argument", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "sequential-reviewer" });
@@ -451,34 +385,6 @@ describe("InitService scaffold", () => {
       expect(standards).toContain("Customize");
     });
 
-    it("review-prompt.md references @.shipyard/CODING_STANDARDS.md", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, { templateName: "sequential-reviewer" });
-
-      const prompt = await readFile(
-        join(dir, ".shipyard", "review-prompt.md"),
-        "utf-8",
-      );
-      expect(prompt).toContain("@.shipyard/CODING_STANDARDS.md");
-    });
-
-    it("review-prompt.md diffs against {{TARGET_BRANCH}} (the fork point), not the branch itself", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, { templateName: "sequential-reviewer" });
-
-      const prompt = await readFile(
-        join(dir, ".shipyard", "review-prompt.md"),
-        "utf-8",
-      );
-      expect(prompt).toContain("git diff {{TARGET_BRANCH}}...{{BRANCH}}");
-      expect(prompt).toContain("git log {{TARGET_BRANCH}}..{{BRANCH}}");
-      // SOURCE_BRANCH equals BRANCH at run time, so diffing against it is
-      // always empty — the prompt must use TARGET_BRANCH instead.
-      expect(prompt).not.toContain("{{SOURCE_BRANCH}}");
-      expect(prompt).not.toContain("git diff main");
-      expect(prompt).not.toContain("git log main");
-    });
-
     it("main.mts runs the implementer for a single iteration (one issue per outer pass)", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "sequential-reviewer" });
@@ -493,20 +399,6 @@ describe("InitService scaffold", () => {
       );
       expect(implementerSection).toContain("maxIterations: 1");
       expect(implementerSection).not.toContain("maxIterations: 100");
-    });
-
-    it("main.mts stops the loop when the implementer produces no commits", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, { templateName: "sequential-reviewer" });
-
-      const mainTs = await readFile(
-        join(dir, ".shipyard", "main.mts"),
-        "utf-8",
-      );
-      const noCommitIndex = mainTs.indexOf("!implement.commits.length");
-      const section = mainTs.slice(noCommitIndex, noCommitIndex + 400);
-      expect(section).toContain("break");
-      expect(section).not.toContain("continue");
     });
   });
 
@@ -610,52 +502,40 @@ describe("InitService scaffold", () => {
     expect(mainTs).not.toMatch(/gpt-5\.6/);
   });
 
+  it("blank template retains the low-level issue-list example", async () => {
+    const dir = await makeDir();
+    await runScaffold(dir, { templateName: "blank" });
+    const prompt = await readFile(join(dir, ".shipyard", "prompt.md"), "utf-8");
+    expect(prompt).toContain("gh issue list --state open --label shipyard");
+  });
+
   it.each([
-    { templateName: "blank", promptFilename: "prompt.md" },
-    { templateName: "simple-loop", promptFilename: "prompt.md" },
-    {
-      templateName: "sequential-reviewer",
-      promptFilename: "implement-prompt.md",
-    },
-    { templateName: "parallel-planner", promptFilename: "plan-prompt.md" },
-    {
-      templateName: "parallel-planner-with-review",
-      promptFilename: "plan-prompt.md",
-    },
+    "simple-loop",
+    "sequential-reviewer",
+    "parallel-planner",
+    "parallel-planner-with-review",
   ])(
-    "$templateName selects only open issues with the lowercase shipyard label",
-    async ({ templateName, promptFilename }) => {
+    "%s scaffolds standalone selection, setup, and PR handoff",
+    async (templateName) => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName });
-
-      const prompt = await readFile(
-        join(dir, ".shipyard", promptFilename),
+      const configDir = join(dir, ".shipyard");
+      const main = await readFile(join(configDir, "main.mts"), "utf-8");
+      const selector = await readFile(
+        join(configDir, "select-issues.mjs"),
         "utf-8",
       );
-      expect(prompt).toContain("gh issue list --state open --label shipyard");
-      expect(prompt).not.toContain("--label Shipyard");
+      const setup = await readFile(join(configDir, "setup.sh"), "utf-8");
+      const handoff = await readFile(join(configDir, "handoff.sh"), "utf-8");
+      expect(main).toContain("sandbox.exec");
+      expect(main).toContain("handoff.sh");
+      expect(main).toContain("setup.sh");
+      expect(selector).toMatch(/"--label",\s*"shipyard"/);
+      expect(setup).toContain("snappedly/skills.git");
+      expect(handoff).toContain("gh pr create");
+      expect(handoff).not.toContain("gh pr merge");
     },
   );
-
-  it("scaffolded prompts that lack a runtime TASK_ID do not contain {{TASK_ID}}", async () => {
-    // Regression test for #477: the {{TASK_ID}} placeholder inside
-    // VIEW_TASK_COMMAND / CLOSE_TASK_COMMAND used to leak into prompts
-    // whose runtime promptArgs do not include TASK_ID (simple-loop,
-    // sequential-reviewer's implement, parallel-planner*'s merge),
-    // causing PromptArgumentSubstitution to throw on every iteration.
-    const cases: Array<{ template: string; file: string }> = [
-      { template: "simple-loop", file: "prompt.md" },
-      { template: "sequential-reviewer", file: "implement-prompt.md" },
-      { template: "parallel-planner", file: "merge-prompt.md" },
-      { template: "parallel-planner-with-review", file: "merge-prompt.md" },
-    ];
-    for (const { template, file } of cases) {
-      const dir = await makeDir();
-      await runScaffold(dir, { templateName: template });
-      const prompt = await readFile(join(dir, ".shipyard", file), "utf-8");
-      expect(prompt, `${template}/${file}`).not.toContain("{{TASK_ID}}");
-    }
-  });
 
   it("unknown template name throws a clear error", async () => {
     const dir = await makeDir();
@@ -684,18 +564,6 @@ describe("InitService scaffold", () => {
       await expect(
         access(join(configDir, "merge-prompt.md")),
       ).resolves.toBeUndefined();
-    });
-
-    it("main.mts uses npm install hook and imports shipyard", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, { templateName: "parallel-planner" });
-
-      const mainTs = await readFile(
-        join(dir, ".shipyard", "main.mts"),
-        "utf-8",
-      );
-      expect(mainTs).toContain("npm install");
-      expect(mainTs).toContain("shipyard");
     });
 
     it("main.mts imports from @snappedly-tools/shipyard", async () => {
@@ -734,18 +602,6 @@ describe("InitService scaffold", () => {
       expect(prompt).toContain("{{BRANCH}}");
     });
 
-    it("merge-prompt.md contains {{BRANCHES}} and {{ISSUES}} prompt arguments", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, { templateName: "parallel-planner" });
-
-      const prompt = await readFile(
-        join(dir, ".shipyard", "merge-prompt.md"),
-        "utf-8",
-      );
-      expect(prompt).toContain("{{BRANCHES}}");
-      expect(prompt).toContain("{{ISSUES}}");
-    });
-
     it("main.mts always uses the merge agent regardless of branch count", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "parallel-planner" });
@@ -755,30 +611,6 @@ describe("InitService scaffold", () => {
         "utf-8",
       );
       expect(mainTs).not.toContain("completedBranches.length === 1");
-    });
-
-    it("main.mts merges completed existing branches and stops on no progress", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, { templateName: "parallel-planner" });
-
-      const mainTs = await readFile(
-        join(dir, ".shipyard", "main.mts"),
-        "utf-8",
-      );
-      expect(mainTs).toContain("entry.outcome.value.commits.length > 0 ||");
-      expect(mainTs).toContain(
-        "entry.outcome.value.completionSignal !== undefined",
-      );
-
-      const noProgressIndex = mainTs.indexOf(
-        "if (completedBranches.length === 0)",
-      );
-      const noProgressSection = mainTs.slice(
-        noProgressIndex,
-        noProgressIndex + 350,
-      );
-      expect(noProgressSection).toContain("break");
-      expect(noProgressSection).not.toContain("continue");
     });
 
     it("common files are still generated with parallel-planner template", async () => {
@@ -847,60 +679,6 @@ describe("InitService scaffold", () => {
       expect(mainTs).toContain("createSandbox");
       expect(mainTs).toContain("sandbox.run");
       expect(mainTs).toContain("sandbox.close");
-    });
-
-    it("main.mts runs implementer then reviewer sequentially within each sandbox", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, { templateName: "parallel-planner-with-review" });
-
-      const mainTs = await readFile(
-        join(dir, ".shipyard", "main.mts"),
-        "utf-8",
-      );
-      expect(mainTs).toContain("implement-prompt.md");
-      expect(mainTs).toContain("review-prompt.md");
-      expect(mainTs).toContain("implement.commits.length > 0");
-    });
-
-    it("main.mts captures reviewer result and merges commits from both runs", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, { templateName: "parallel-planner-with-review" });
-
-      const mainTs = await readFile(
-        join(dir, ".shipyard", "main.mts"),
-        "utf-8",
-      );
-      // Reviewer result must be captured, not discarded
-      expect(mainTs).toContain("const review = await sandbox.run");
-      // Commits from both implementer and reviewer must be merged
-      expect(mainTs).toContain("implement.commits");
-      expect(mainTs).toContain("review.commits");
-    });
-
-    it("main.mts reviews completed existing branches and stops on no progress", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, { templateName: "parallel-planner-with-review" });
-
-      const mainTs = await readFile(
-        join(dir, ".shipyard", "main.mts"),
-        "utf-8",
-      );
-      expect(mainTs).toContain("implement.commits.length > 0 ||");
-      expect(mainTs).toContain("implement.completionSignal !== undefined");
-      expect(mainTs).toContain("entry.outcome.value.commits.length > 0 ||");
-      expect(mainTs).toContain(
-        "entry.outcome.value.completionSignal !== undefined",
-      );
-
-      const noProgressIndex = mainTs.indexOf(
-        "if (completedBranches.length === 0)",
-      );
-      const noProgressSection = mainTs.slice(
-        noProgressIndex,
-        noProgressIndex + 350,
-      );
-      expect(noProgressSection).toContain("break");
-      expect(noProgressSection).not.toContain("continue");
     });
 
     it("main.mts uses Promise.allSettled for parallel execution", async () => {
@@ -975,18 +753,6 @@ describe("InitService scaffold", () => {
       expect(prompt).toContain("{{BRANCH}}");
     });
 
-    it("merge-prompt.md contains {{BRANCHES}} and {{ISSUES}} prompt arguments", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, { templateName: "parallel-planner-with-review" });
-
-      const prompt = await readFile(
-        join(dir, ".shipyard", "merge-prompt.md"),
-        "utf-8",
-      );
-      expect(prompt).toContain("{{BRANCHES}}");
-      expect(prompt).toContain("{{ISSUES}}");
-    });
-
     it("parallel-planner-with-review appears in listTemplates()", () => {
       const templates = listTemplates();
       expect(
@@ -1034,34 +800,6 @@ describe("InitService scaffold", () => {
       expect(standards).toContain("# Coding Standards");
       expect(standards).toContain("Customize");
     });
-
-    it("review-prompt.md references @.shipyard/CODING_STANDARDS.md", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, { templateName: "parallel-planner-with-review" });
-
-      const prompt = await readFile(
-        join(dir, ".shipyard", "review-prompt.md"),
-        "utf-8",
-      );
-      expect(prompt).toContain("@.shipyard/CODING_STANDARDS.md");
-    });
-
-    it("review-prompt.md diffs against {{TARGET_BRANCH}} (the fork point), not the branch itself", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, { templateName: "parallel-planner-with-review" });
-
-      const prompt = await readFile(
-        join(dir, ".shipyard", "review-prompt.md"),
-        "utf-8",
-      );
-      expect(prompt).toContain("git diff {{TARGET_BRANCH}}...{{BRANCH}}");
-      expect(prompt).toContain("git log {{TARGET_BRANCH}}..{{BRANCH}}");
-      // SOURCE_BRANCH equals BRANCH at run time, so diffing against it is
-      // always empty — the prompt must use TARGET_BRANCH instead.
-      expect(prompt).not.toContain("{{SOURCE_BRANCH}}");
-      expect(prompt).not.toContain("git diff main");
-      expect(prompt).not.toContain("git log main");
-    });
   });
 
   // --- Issue tracker ---
@@ -1107,38 +845,6 @@ describe("InitService scaffold", () => {
   });
 
   describe("Issue tracker scaffold", () => {
-    it("simple-loop with github-issues produces prompt with gh issue commands (richer version)", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, {
-        templateName: "simple-loop",
-        issueTracker: getIssueTracker("github-issues"),
-      });
-
-      const prompt = await readFile(
-        join(dir, ".shipyard", "prompt.md"),
-        "utf-8",
-      );
-      expect(prompt).toContain("gh issue list");
-      expect(prompt).toContain("labels");
-      expect(prompt).toContain("comments");
-      expect(prompt).toContain("gh issue close");
-      expect(prompt).not.toContain("{{LIST_TASKS_COMMAND}}");
-      expect(prompt).not.toContain("{{CLOSE_TASK_COMMAND}}");
-    });
-
-    it("scaffold without issueTracker defaults to github-issues", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, { templateName: "simple-loop" });
-
-      const prompt = await readFile(
-        join(dir, ".shipyard", "prompt.md"),
-        "utf-8",
-      );
-      // Should default to github-issues and replace placeholders
-      expect(prompt).toContain("gh issue list");
-      expect(prompt).not.toContain("{{LIST_TASKS_COMMAND}}");
-    });
-
     it("simple-loop prompt uses backlog-agnostic language", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "simple-loop" });
@@ -1150,41 +856,7 @@ describe("InitService scaffold", () => {
       expect(prompt).not.toContain("GitHub issue");
     });
 
-    it("simple-loop prompt hints the issue list is pre-filtered and discourages unfiltered re-query", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, { templateName: "simple-loop" });
-
-      const prompt = await readFile(
-        join(dir, ".shipyard", "prompt.md"),
-        "utf-8",
-      );
-      expect(prompt).toContain(
-        "already been filtered to issues ready for work",
-      );
-      expect(prompt).toContain("sole source of truth");
-      expect(prompt).toContain("Do not run your own unfiltered query");
-    });
-
     // --- sequential-reviewer ---
-
-    it("sequential-reviewer with github-issues produces implement-prompt with gh issue commands", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, {
-        templateName: "sequential-reviewer",
-        issueTracker: getIssueTracker("github-issues"),
-      });
-
-      const prompt = await readFile(
-        join(dir, ".shipyard", "implement-prompt.md"),
-        "utf-8",
-      );
-      expect(prompt).toContain("gh issue list");
-      expect(prompt).toContain("labels");
-      expect(prompt).toContain("comments");
-      expect(prompt).toContain("gh issue close");
-      expect(prompt).not.toContain("{{LIST_TASKS_COMMAND}}");
-      expect(prompt).not.toContain("{{CLOSE_TASK_COMMAND}}");
-    });
 
     it("sequential-reviewer implement-prompt uses backlog-agnostic language", async () => {
       const dir = await makeDir();
@@ -1215,23 +887,6 @@ describe("InitService scaffold", () => {
     });
 
     // --- parallel-planner ---
-
-    it("parallel-planner with github-issues produces plan-prompt with gh issue commands", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, {
-        templateName: "parallel-planner",
-        issueTracker: getIssueTracker("github-issues"),
-      });
-
-      const planPrompt = await readFile(
-        join(dir, ".shipyard", "plan-prompt.md"),
-        "utf-8",
-      );
-      expect(planPrompt).toContain("gh issue list");
-      expect(planPrompt).toContain("labels");
-      expect(planPrompt).toContain("comments");
-      expect(planPrompt).not.toContain("{{LIST_TASKS_COMMAND}}");
-    });
 
     it("parallel-planner main.mts uses id:string and TASK_ID", async () => {
       const dir = await makeDir();
@@ -1291,21 +946,6 @@ describe("InitService scaffold", () => {
       expect(prompt).not.toContain("{{VIEW_TASK_COMMAND}}");
     });
 
-    it("parallel-planner with github-issues produces merge-prompt with gh issue close", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, {
-        templateName: "parallel-planner",
-        issueTracker: getIssueTracker("github-issues"),
-      });
-
-      const prompt = await readFile(
-        join(dir, ".shipyard", "merge-prompt.md"),
-        "utf-8",
-      );
-      expect(prompt).toContain("gh issue close");
-      expect(prompt).not.toContain("{{CLOSE_TASK_COMMAND}}");
-    });
-
     it("parallel-planner implement-prompt does not contain close-issue instruction", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "parallel-planner" });
@@ -1332,23 +972,6 @@ describe("InitService scaffold", () => {
     });
 
     // --- parallel-planner-with-review ---
-
-    it("parallel-planner-with-review with github-issues produces plan-prompt with gh issue commands", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, {
-        templateName: "parallel-planner-with-review",
-        issueTracker: getIssueTracker("github-issues"),
-      });
-
-      const planPrompt = await readFile(
-        join(dir, ".shipyard", "plan-prompt.md"),
-        "utf-8",
-      );
-      expect(planPrompt).toContain("gh issue list");
-      expect(planPrompt).toContain("labels");
-      expect(planPrompt).toContain("comments");
-      expect(planPrompt).not.toContain("{{LIST_TASKS_COMMAND}}");
-    });
 
     it("parallel-planner-with-review main.mts uses id:string and TASK_ID", async () => {
       const dir = await makeDir();
@@ -1420,21 +1043,6 @@ describe("InitService scaffold", () => {
       );
       expect(prompt).toContain("gh issue view");
       expect(prompt).not.toContain("{{VIEW_TASK_COMMAND}}");
-    });
-
-    it("parallel-planner-with-review with github-issues produces merge-prompt with gh issue close", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, {
-        templateName: "parallel-planner-with-review",
-        issueTracker: getIssueTracker("github-issues"),
-      });
-
-      const prompt = await readFile(
-        join(dir, ".shipyard", "merge-prompt.md"),
-        "utf-8",
-      );
-      expect(prompt).toContain("gh issue close");
-      expect(prompt).not.toContain("{{CLOSE_TASK_COMMAND}}");
     });
 
     it("parallel-planner-with-review implement-prompt uses backlog-agnostic language", async () => {

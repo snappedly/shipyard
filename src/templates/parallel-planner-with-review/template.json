@@ -1,4 +1,4 @@
 {
   "name": "parallel-planner-with-review",
-  "description": "Plans parallelizable issues, executes with per-branch review, merges"
+  "description": "Plans and implements independent issues in parallel with review, then opens PRs"
 }

@@ -1,51 +1,75 @@
-import { CODEX_MODELS, run, codex } from "@snappedly-tools/shipyard";
+// Simple loop: select one activated standalone issue per iteration, implement
+// it, then hand its verified commit to a human through a pull request.
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import * as shipyard from "@snappedly-tools/shipyard";
 import { docker } from "@snappedly-tools/shipyard/sandboxes/docker";
 
-// Simple loop: an agent that picks open issues one by one and closes them.
-// Generated entrypoint: .shipyard/main.mts
-// Run this with: npx shipyard run
-// Or add to package.json scripts: "shipyard": "shipyard run"
-
-await run({
-  // A name for this run, shown as a prefix in log output.
-  name: "worker",
-
-  // Sandbox provider — runs the agent inside an isolated container.
-  sandbox: docker(),
-
-  // The agent provider. The routine configured Codex model runs at max
-  // reasoning by default. Switch to CODEX_MODELS.strong for more demanding
-  // planning or review work.
-  agent: codex(CODEX_MODELS.routine),
-
-  // Path to the prompt file. Shell expressions inside are evaluated inside the
-  // sandbox at the start of each iteration, so the agent always sees fresh data.
-  promptFile: "./.shipyard/prompt.md",
-
-  // Maximum number of iterations (agent invocations) to run in a session.
-  // Each iteration works on a single issue. Increase this to process more issues
-  // per run, or set it to 1 for a single-shot mode.
-  maxIterations: 3,
-
-  // Branch strategy — merge-to-head creates a temporary branch for the agent
-  // to work on, then merges the result back to HEAD when the run completes.
-  // This is required when using copyToWorktree, since head mode bind-mounts
-  // the host directory directly (no worktree to copy into).
-  branchStrategy: { type: "merge-to-head" },
-
-  // Copy node_modules from the host into the worktree before the sandbox
-  // starts. This avoids a full npm install from scratch on every iteration.
-  // The onSandboxReady hook still runs npm install as a safety net to handle
-  // platform-specific binaries and any packages added since the last copy.
-  copyToWorktree: ["node_modules"],
-
-  // Lifecycle hooks — commands grouped by where they run (host or sandbox).
-  hooks: {
-    sandbox: {
-      // onSandboxReady runs once after the sandbox is initialised and the repo is
-      // synced in, before the agent starts. Use it to install dependencies or run
-      // any other setup steps your project needs.
-      onSandboxReady: [{ command: "npm install" }],
-    },
+if (process.loadEnvFile && existsSync(".shipyard/.env"))
+  process.loadEnvFile(".shipyard/.env");
+const targetBranch = execFileSync("git", ["branch", "--show-current"], {
+  encoding: "utf8",
+}).trim();
+const repository = execFileSync(
+  "gh",
+  ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
+  { encoding: "utf8" },
+).trim();
+if (
+  !/^[A-Za-z0-9._/-]+$/.test(targetBranch) ||
+  !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)
+) {
+  throw new Error("Invalid target branch or GitHub repository");
+}
+process.env.GH_REPO = repository;
+const hooks = {
+  sandbox: {
+    onSandboxReady: [
+      { command: "timeout 300 bash .shipyard/setup.sh", timeoutMs: 300_000 },
+    ],
   },
-});
+};
+
+const handoffEvidence = (stdout: string): string | undefined =>
+  [...stdout.matchAll(/<handoff>([\s\S]*?)<\/handoff>/g)].at(-1)?.[1]?.trim();
+
+for (let iteration = 0; iteration < 3; iteration++) {
+  const issues = JSON.parse(
+    execFileSync("node", [".shipyard/select-issues.mjs"], { encoding: "utf8" }),
+  ) as Array<{ id: string; title: string; branch: string }>;
+  const issue = issues[0];
+  if (!issue) break;
+
+  const sandbox = await shipyard.createSandbox({
+    branch: issue.branch,
+    sandbox: docker(),
+    hooks,
+  });
+  try {
+    const result = await sandbox.run({
+      name: "implementer",
+      agent: shipyard.codex(shipyard.CODEX_MODELS.routine),
+      maxIterations: 1,
+      promptFile: "./.shipyard/prompt.md",
+      promptArgs: {
+        TASK_ID: issue.id,
+        ISSUE_TITLE: issue.title,
+        BRANCH: issue.branch,
+      },
+    });
+    const evidence = handoffEvidence(result.stdout);
+    if (!result.completionSignal || !evidence)
+      throw new Error(`Issue #${issue.id} has no verified completion evidence`);
+    const handoff = await sandbox.exec(
+      `bash .shipyard/handoff.sh ${issue.id} ${issue.branch} ${targetBranch} ${repository}`,
+      { stdin: evidence },
+    );
+    if (handoff.exitCode !== 0)
+      throw new Error(
+        `PR handoff for #${issue.id} failed: ${handoff.stderr || handoff.stdout}`,
+      );
+    console.log(handoff.stdout.trim());
+  } finally {
+    await sandbox.close();
+  }
+}

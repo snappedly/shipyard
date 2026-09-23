@@ -1278,6 +1278,26 @@ describe("createSandbox", () => {
     }
   });
 
+  it("refuses agent startup when an onSandboxReady install command fails", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "sandbox-test-"));
+    await initRepo(hostDir);
+    await commitFile(hostDir, "init.txt", "init", "initial commit");
+
+    try {
+      await expect(
+        createSandbox({
+          branch: "test-failed-install",
+          sandbox: testSandbox,
+          hooks: { sandbox: { onSandboxReady: [{ command: "exit 17" }] } },
+          cwd: hostDir,
+          _test: { buildSandbox: (sandboxDir) => makeLocalSandbox(sandboxDir) },
+        }),
+      ).rejects.toThrow("exit 17");
+    } finally {
+      await rm(hostDir, { recursive: true, force: true });
+    }
+  });
+
   it("provider's create() is called exactly once across multiple .run() calls", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "sandbox-test-"));
     await initRepo(hostDir);

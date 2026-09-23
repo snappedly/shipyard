@@ -1,4 +1,4 @@
 {
   "name": "simple-loop",
-  "description": "Picks issues one by one and closes them"
+  "description": "Implements standalone issues sequentially and opens review PRs"
 }

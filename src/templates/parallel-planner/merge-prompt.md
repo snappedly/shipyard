@@ -1,26 +1,8 @@
-# TASK
+# Final validation for issue #{{TASK_ID}}: {{ISSUE_TITLE}}
 
-Merge the following branches into the current branch:
+On branch `{{BRANCH}}`, inspect its complete diff from `{{TARGET_BRANCH}}` and the source issue. This is the existing planner's final integration stage, now ending in one PR per standalone issue instead of merging into the target branch. Follow `/code-cleanup` and local `/code-review` appropriate to the issue, using the worker's existing valid check evidence. Run required integrated checks and reinstall candidate dependencies with `bash .shipyard/setup.sh` after manifest changes. Resolve findings, commit corrections and inspect the final branch.
 
-{{BRANCHES}}
+Do not close the issue, merge into the target, or publish the PR. If checks or review remain unresolved, explain why without completion. After a verified final commit, report checks, review outcome and limitations:
 
-For each branch:
-
-1. Run `git merge <branch> --no-edit`
-2. If there are merge conflicts, resolve them intelligently by reading both sides and choosing the correct resolution
-3. After resolving conflicts, read the repository's configured feedback-loop contract and run every applicable check for the merged change
-4. If a check fails, fix the issue before proceeding to the next branch
-
-After all branches are merged, make a single commit summarizing the merge.
-
-# CLOSE ISSUES
-
-For each branch that was merged, close its issue using the following command:
-
-`{{CLOSE_TASK_COMMAND}}`
-
-Here are all the issues:
-
-{{ISSUES}}
-
-Once you've merged everything you can, output <promise>COMPLETE</promise>.
+<handoff>...</handoff>
+<promise>COMPLETE</promise>
