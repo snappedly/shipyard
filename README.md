@@ -93,7 +93,8 @@ ready tickets to `/implement` workers, integrate dependency waves, resolve ticke
 merge conflicts on the spec branch, and review the integrated change. One
 non-draft PR per spec awaits human merge. Later selected tickets update that PR.
 Shipyard also recognizes a ticket added to an open verified spec PR's `Source
-issues:` line, even without a GitHub sub-issue or `## Parent` link.
+issues:` line as belonging to that spec, even without a GitHub sub-issue or
+`## Parent` link. Conflicting links block the selected ticket for correction.
 Selected tickets receive `shipyard:pending` while Shipyard works on them.
 Successful handoff replaces it with `shipyard:complete` and removes `shipyard`.
 The parent spec and PR show `shipyard:blocked` if an unfinished child is blocked,
@@ -110,7 +111,7 @@ removes `shipyard` from the scope. The parent spec and any existing PR show
 publish a new PR for failed work. Resolve the problem, remove
 `shipyard:blocked` from a ticket, then add `shipyard` to retry that ticket;
 the parent spec's status label needs no manual change. Missing or ambiguous
-relationships stop dispatch for inspection. If GitHub cannot confirm whether a
+relationships block the affected selected issue and record the reason. If GitHub cannot confirm whether a
 PR became ready, Shipyard leaves the issue active for reconciliation. The GitHub token
 needs Contents, Issues, and Pull requests read/write permission plus Metadata
 read permission. Keep the Mac and foreground controller running for wake-ups.

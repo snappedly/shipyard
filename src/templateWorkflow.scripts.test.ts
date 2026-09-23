@@ -398,32 +398,65 @@ else process.exit(2);
 
   it("rejects conflicting native and body parent links", async () => {
     const { dir, bin } = await fixture();
+    const log = join(dir, "validation.log");
     await executable(
       join(bin, "gh"),
       `
+const fs = require("node:fs");
 const args = process.argv.slice(2);
+fs.appendFileSync(process.env.VALIDATION_LOG, args.join(" ") + "\\n");
 if (args[0] === "repo") console.log("owner/repo");
 else if (args[0] === "issue" && args[1] === "list") console.log(JSON.stringify([{number:3,title:"Child",body:"## Parent\\n#9"}]));
-else if (args[0] === "api" && args[1].endsWith("/parent")) console.log(JSON.stringify({number:2}));
-else if (args[0] === "pr" && args[1] === "list") console.log("[]");
+else if (args[0] === "issue" && args[1] === "view") console.log("shipyard");
+else if (args[0] === "issue" || args[0] === "label") {}
+else if (args[0] === "api" && args[1].endsWith("/parent")) {
+  if (process.env.FAIL_PARENT_READ) process.exit(1);
+  console.log(JSON.stringify({number:2}));
+}
+else if (args[0] === "pr" && args[1] === "list") console.log(args.includes("--jq") ? "" : "[]");
 else process.exit(2);
 `,
     );
-    const result = run("node", [script("select-issues.mjs")], dir, bin);
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("Conflicting parent links for #3");
+    const result = run("node", [script("select-issues.mjs")], dir, bin, {
+      VALIDATION_LOG: log,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual([]);
+    const calls = await readFile(log, "utf8");
+    expect(calls).toContain(
+      "issue edit 3 --repo owner/repo --add-label shipyard:blocked",
+    );
+    expect(calls).toContain("Conflicting parent links for #3");
+    expect(calls).toContain(
+      "issue edit 3 --repo owner/repo --remove-label shipyard",
+    );
+
+    await writeFile(log, "");
+    const unknown = run("node", [script("select-issues.mjs")], dir, bin, {
+      VALIDATION_LOG: log,
+      FAIL_PARENT_READ: "1",
+    });
+    expect(unknown.status).not.toBe(0);
+    expect(await readFile(log, "utf8")).not.toContain(
+      "--add-label shipyard:blocked",
+    );
   });
 
   it("rejects incomplete or non-executable spec relationships", async () => {
     const { dir, bin } = await fixture();
+    const log = join(dir, "validation.log");
     await executable(
       join(bin, "gh"),
       `
+const fs = require("node:fs");
 const args = process.argv.slice(2); const path = args[1] || "";
+fs.appendFileSync(process.env.VALIDATION_LOG, args.join(" ") + "\\n");
 if (args[0] === "repo") console.log("owner/repo");
 else if (args[0] === "issue" && args[1] === "list" && args.includes("open")) console.log(JSON.stringify([{number:2,title:"Spec",body:"**Work item type:** planning spec"}]));
 else if (args[0] === "issue" && args[1] === "list" && args.includes("all")) console.log("[]");
-else if (args[0] === "pr" && args[1] === "list") console.log("[]");
+else if (args[0] === "issue" && args[1] === "view") console.log("shipyard");
+else if (args[0] === "pr" && args[1] === "list") console.log(args.includes("--jq") ? "" : "[]");
+else if (args[0] === "issue" || args[0] === "label" || args[0] === "pr") {}
 else if (args[0] === "api" && path.endsWith("/parent")) { console.error("Not Found (HTTP 404)"); process.exit(1); }
 else if (args[0] === "api" && path.includes("/sub_issues?")) console.log(JSON.stringify(process.env.CASE === "missing" ? [] : [{number:3,title:"Planning child",body:"**Work item type:** planning spec",state:"open",labels:[{name:"shipyard"}]}]));
 else if (args[0] === "api" && path.includes("/dependencies/blocked_by?")) console.log("[]");
@@ -436,9 +469,15 @@ else process.exit(2);
     ] as const) {
       const result = run("node", [script("select-issues.mjs")], dir, bin, {
         CASE: scenario,
+        VALIDATION_LOG: log,
       });
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain(message);
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual([]);
+      const calls = await readFile(log, "utf8");
+      expect(calls).toContain(message);
+      expect(calls).toContain(
+        `issue edit ${scenario === "missing" ? 2 : 3} --repo owner/repo --add-label shipyard:blocked`,
+      );
     }
   });
 

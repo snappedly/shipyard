@@ -65,7 +65,8 @@ integration, and merge each dependency wave into one spec branch. The complete
 scope gets one open, non-draft PR per spec. Later selected tickets update the
 same PR. The workflow never merges into the target branch or closes issues.
 An open verified spec PR's `Source issues:` line can also link a newly labelled
-ticket to that spec.
+ticket to that spec when no other parent link exists. Conflicting links block
+the selected ticket for correction.
 Selected tickets get `shipyard:pending` while Shipyard works. Successful handoff
 replaces it with `shipyard:complete` and removes `shipyard` from activated issues
 so later wake-ups do not repeat work. The parent spec and existing PR show
@@ -79,8 +80,8 @@ tickets become `shipyard:blocked` and lose `shipyard:pending` and `shipyard`, so
 they do not retry automatically. The parent spec and existing PR reflect the block; failed
 work does not create a new PR. Resolve the problem, remove `shipyard:blocked`
 from the ticket, and add `shipyard` to retry; the spec label is recalculated.
-Relationship resolution failures before a scope is selected
-remain in the runner logs and stop the invocation. If GitHub cannot confirm PR
+Missing or conflicting relationships and invalid selected children receive
+`shipyard:blocked` with an issue comment explaining the failure. If GitHub cannot confirm PR
 readiness, Shipyard leaves activation in place so the next invocation can
 reconcile the PR.
 If a failure comment cannot be written, Shipyard retains a local pending report

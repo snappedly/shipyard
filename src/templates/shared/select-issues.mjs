@@ -87,6 +87,15 @@ const number = (value) => {
   if (!/^\d+$/.test(id)) throw new Error(`Invalid GitHub issue number: ${id}`);
   return id;
 };
+class SelectionError extends Error {
+  constructor(message, issueId) {
+    super(message);
+    this.issueId = issueId;
+  }
+}
+const invalid = (message, issueId) => {
+  throw new SelectionError(message, issueId);
+};
 const notFound = (error) => /HTTP 404/.test(String(error.stderr));
 const api = (id, suffix) => json("api", `${endpoint(id, suffix)}?per_page=100`);
 const parentLink = (id) => {
@@ -100,13 +109,13 @@ const parentLink = (id) => {
 const children = (id) => {
   const result = api(id, "sub_issues");
   if (!Array.isArray(result) || result.length === 100)
-    throw new Error(`Could not resolve complete child scope for #${id}`);
+    invalid(`Could not resolve complete child scope for #${id}`, id);
   return result;
 };
 const dependencies = (id) => {
   const result = api(id, "dependencies/blocked_by");
   if (!Array.isArray(result) || result.length === 100)
-    throw new Error(`Could not resolve complete dependencies for #${id}`);
+    invalid(`Could not resolve complete dependencies for #${id}`, id);
   return result.map((item) => ({
     id: number(item.number),
     title: item.title,
@@ -115,7 +124,7 @@ const dependencies = (id) => {
 };
 const planningSpec = (body) =>
   /work item type:\*?\*?\s*planning spec/i.test(body ?? "");
-const textParent = (body) => {
+const textParent = (body, issueId) => {
   const match = /^##?\s*Parent\b[^\n]*\n/im.exec(body ?? "");
   if (!match) return undefined;
   const tail = body.slice(match.index + match[0].length);
@@ -123,7 +132,7 @@ const textParent = (body) => {
   const section = next ? tail.slice(0, next.index) : tail;
   const refs = [...section.matchAll(/#(\d+)/g)].map((entry) => entry[1]);
   if (new Set(refs).size !== 1 || refs.length === 0)
-    throw new Error("Ambiguous or missing ## Parent issue reference");
+    invalid("Ambiguous or missing ## Parent issue reference", issueId);
   return refs[0];
 };
 let issueCatalog;
@@ -140,7 +149,7 @@ const allIssues = () => {
       "number,title,body,state,labels",
     );
     if (!Array.isArray(issueCatalog) || issueCatalog.length === 1000)
-      throw new Error("Could not resolve complete issue relationship catalog");
+      invalid("Could not resolve complete issue relationship catalog");
   }
   return issueCatalog;
 };
@@ -160,7 +169,7 @@ const specPRs = () => {
       "number,headRefName,body",
     );
     if (!Array.isArray(specPRCatalog) || specPRCatalog.length === 1000)
-      throw new Error("Could not resolve complete open PR catalog");
+      invalid("Could not resolve complete open PR catalog");
   }
   return specPRCatalog.filter(
     (pr) =>
@@ -179,7 +188,7 @@ const prParentLink = (id) => {
     .map((pr) => number(pr.headRefName.slice("shipyard/spec-".length)))
     .filter((root) => root !== id);
   if (new Set(roots).size > 1)
-    throw new Error(`Ticket #${id} is linked to multiple Shipyard spec PRs`);
+    invalid(`Ticket #${id} is linked to multiple Shipyard spec PRs`, id);
   return roots[0];
 };
 const prChildren = (rootId) => {
@@ -192,7 +201,7 @@ const prChildren = (rootId) => {
   if (!ids.size) return [];
   const tickets = allIssues().filter((item) => ids.has(number(item.number)));
   if (tickets.length !== ids.size)
-    throw new Error(`Spec PR for #${rootId} references an unknown ticket`);
+    invalid(`Spec PR for #${rootId} references an unknown ticket`, rootId);
   return tickets;
 };
 const fullIssue = (id) =>
@@ -333,44 +342,180 @@ if (activated.length === 100)
   throw new Error("Could not resolve complete activated issue set");
 const scopes = new Map();
 const processedBranches = new Set();
+const blockedIds = new Set();
 const activeIds = new Set(activated.map((item) => number(item.number)));
 for (const candidate of activated) {
   const id = number(candidate.number);
-  const nativeParent = parentLink(id);
-  const bodyParent = textParent(candidate.body);
-  const prParent = prParentLink(id);
-  if (new Set([nativeParent, bodyParent, prParent].filter(Boolean)).size > 1)
-    throw new Error(`Conflicting parent links for #${id}`);
-  const parentId = nativeParent ?? bodyParent ?? prParent;
-  const root = parentId ? fullIssue(parentId) : candidate;
-  const rootId = number(root.number);
-  const nativeChildren = children(rootId);
-  const isSpec =
-    planningSpec(root.body) || nativeChildren.length > 0 || !!parentId;
-  const linked = isSpec
-    ? [
-        ...new Map(
-          [
-            ...nativeChildren,
-            ...allIssues().filter((item) => textParent(item.body) === rootId),
-            ...prChildren(rootId),
-          ].map((item) => [number(item.number), item]),
-        ).values(),
-      ]
-    : [];
-  if (isSpec && !planningSpec(root.body))
-    throw new Error(`Parent #${rootId} is not a planning spec`);
-  if (isSpec && linked.length === 0)
-    throw new Error(
-      `Planning spec #${rootId} has no linked executable tickets`,
+  if (blockedIds.has(id)) continue;
+  let resolvedRootId;
+  let resolvedSpec = false;
+  let selectedTicketIds = new Set();
+  try {
+    const nativeParent = parentLink(id);
+    const bodyParent = textParent(candidate.body, id);
+    const prParent = prParentLink(id);
+    if (new Set([nativeParent, bodyParent, prParent].filter(Boolean)).size > 1)
+      invalid(`Conflicting parent links for #${id}`, id);
+    const parentId = nativeParent ?? bodyParent ?? prParent;
+    const root = parentId ? fullIssue(parentId) : candidate;
+    const rootId = number(root.number);
+    resolvedRootId = rootId;
+    const nativeChildren = children(rootId);
+    const isSpec =
+      planningSpec(root.body) || nativeChildren.length > 0 || !!parentId;
+    resolvedSpec = isSpec;
+    const linked = isSpec
+      ? [
+          ...new Map(
+            [
+              ...nativeChildren,
+              ...allIssues().filter(
+                (item) => textParent(item.body, number(item.number)) === rootId,
+              ),
+              ...prChildren(rootId),
+            ].map((item) => [number(item.number), item]),
+          ).values(),
+        ]
+      : [];
+    if (isSpec && !planningSpec(root.body))
+      invalid(`Parent #${rootId} is not a planning spec`, id);
+    if (isSpec && linked.length === 0)
+      invalid(`Planning spec #${rootId} has no linked executable tickets`, id);
+    const branch = isSpec ? `shipyard/spec-${rootId}` : `shipyard/issue-${id}`;
+    if (processedBranches.has(branch)) continue;
+    processedBranches.add(branch);
+    if (
+      !isSpec &&
+      candidate.labels?.some((label) => label.name === "shipyard:complete")
+    ) {
+      const existing = json(
+        "pr",
+        "list",
+        "--repo",
+        repository,
+        "--head",
+        branch,
+        "--state",
+        "open",
+        "--json",
+        "number,isDraft,labels,body",
+      );
+      const synced = syncStatus(candidate, [candidate], existing[0]);
+      if (candidate.labels.some((label) => label.name === "shipyard:pending"))
+        gh(
+          "issue",
+          "edit",
+          id,
+          "--repo",
+          repository,
+          "--remove-label",
+          "shipyard:pending",
+        );
+      if (synced)
+        gh(
+          "issue",
+          "edit",
+          id,
+          "--repo",
+          repository,
+          "--remove-label",
+          "shipyard",
+        );
+      continue;
+    }
+    if (
+      !isSpec &&
+      candidate.labels?.some((label) => label.name === "shipyard:blocked")
+    ) {
+      gh(
+        "issue",
+        "edit",
+        id,
+        "--repo",
+        repository,
+        "--remove-label",
+        "shipyard",
+      );
+      continue;
+    }
+    const linkedTickets = isSpec
+      ? linked.map((child) => ({
+          id: number(child.number),
+          title: child.title,
+          body: child.body ?? "",
+          state: child.state,
+          labels: child.labels ?? [],
+        }))
+      : [];
+    const blockedActiveIds = [];
+    for (const ticket of linkedTickets) {
+      if (
+        ticket.labels.some((label) => label.name === "shipyard:blocked") &&
+        ticket.labels.some((label) => label.name === "shipyard")
+      )
+        blockedActiveIds.push(ticket.id);
+      if (
+        ticket.labels.some((label) => label.name === "shipyard:complete") &&
+        ticket.labels.some((label) => label.name === "shipyard:pending")
+      )
+        gh(
+          "issue",
+          "edit",
+          ticket.id,
+          "--repo",
+          repository,
+          "--remove-label",
+          "shipyard:pending",
+        );
+    }
+    const selectableTickets = linkedTickets.filter(
+      (ticket) =>
+        ticket.labels.some((label) => label.name === "shipyard") &&
+        !ticket.labels.some((label) =>
+          ["shipyard:complete", "shipyard:blocked"].includes(label.name),
+        ),
     );
-  const branch = isSpec ? `shipyard/spec-${rootId}` : `shipyard/issue-${id}`;
-  if (processedBranches.has(branch)) continue;
-  processedBranches.add(branch);
-  if (
-    !isSpec &&
-    candidate.labels?.some((label) => label.name === "shipyard:complete")
-  ) {
+    selectedTicketIds = new Set(selectableTickets.map((ticket) => ticket.id));
+    const tickets = selectableTickets.map(({ labels: _labels, ...ticket }) => ({
+      ...ticket,
+      blockedBy: dependencies(ticket.id),
+    }));
+    const completedTicketIds = linkedTickets
+      .filter((ticket) =>
+        ticket.labels.some((label) => label.name === "shipyard:complete"),
+      )
+      .map((ticket) => ticket.id);
+    const selectedIds = new Set(tickets.map((ticket) => ticket.id));
+    const outstandingTicketIds = linkedTickets
+      .filter(
+        (ticket) =>
+          !selectedIds.has(ticket.id) &&
+          !completedTicketIds.includes(ticket.id),
+      )
+      .map((ticket) => ticket.id);
+    if (isSpec) {
+      if (parentId && !linkedTickets.some((ticket) => ticket.id === id))
+        invalid(
+          `Activated child #${id} is absent from parent #${rootId}'s linked scope`,
+          id,
+        );
+      for (const ticket of tickets) {
+        if (!/work item type:\*?\*?\s*executable/i.test(ticket.body))
+          invalid(
+            `Linked child #${ticket.id} is not an executable ticket`,
+            ticket.id,
+          );
+        const native = parentLink(ticket.id);
+        const textual = textParent(ticket.body, ticket.id);
+        const linkedPR = prParentLink(ticket.id);
+        if (
+          (native && native !== rootId) ||
+          (textual && textual !== rootId) ||
+          (linkedPR && linkedPR !== rootId)
+        )
+          invalid(`Conflicting parent links for #${ticket.id}`, ticket.id);
+      }
+    }
     const existing = json(
       "pr",
       "list",
@@ -383,273 +528,213 @@ for (const candidate of activated) {
       "--json",
       "number,isDraft,labels,body",
     );
-    const synced = syncStatus(candidate, [candidate], existing[0]);
-    if (candidate.labels.some((label) => label.name === "shipyard:pending"))
-      gh(
-        "issue",
-        "edit",
-        id,
-        "--repo",
-        repository,
-        "--remove-label",
-        "shipyard:pending",
-      );
-    if (synced)
-      gh(
-        "issue",
-        "edit",
-        id,
-        "--repo",
-        repository,
-        "--remove-label",
-        "shipyard",
-      );
-    continue;
-  }
-  if (
-    !isSpec &&
-    candidate.labels?.some((label) => label.name === "shipyard:blocked")
-  ) {
-    gh("issue", "edit", id, "--repo", repository, "--remove-label", "shipyard");
-    continue;
-  }
-  const linkedTickets = isSpec
-    ? linked.map((child) => ({
-        id: number(child.number),
-        title: child.title,
-        body: child.body ?? "",
-        state: child.state,
-        labels: child.labels ?? [],
-      }))
-    : [];
-  const blockedActiveIds = [];
-  for (const ticket of linkedTickets) {
-    if (
-      ticket.labels.some((label) => label.name === "shipyard:blocked") &&
-      ticket.labels.some((label) => label.name === "shipyard")
-    )
-      blockedActiveIds.push(ticket.id);
-    if (
-      ticket.labels.some((label) => label.name === "shipyard:complete") &&
-      ticket.labels.some((label) => label.name === "shipyard:pending")
-    )
-      gh(
-        "issue",
-        "edit",
-        ticket.id,
-        "--repo",
-        repository,
-        "--remove-label",
-        "shipyard:pending",
-      );
-  }
-  const tickets = linkedTickets
-    .filter(
-      (ticket) =>
-        ticket.labels.some((label) => label.name === "shipyard") &&
-        !ticket.labels.some((label) =>
-          ["shipyard:complete", "shipyard:blocked"].includes(label.name),
-        ),
-    )
-    .map(({ labels: _labels, ...ticket }) => ({
-      ...ticket,
-      blockedBy: dependencies(ticket.id),
-    }));
-  const completedTicketIds = linkedTickets
-    .filter((ticket) =>
-      ticket.labels.some((label) => label.name === "shipyard:complete"),
-    )
-    .map((ticket) => ticket.id);
-  const selectedIds = new Set(tickets.map((ticket) => ticket.id));
-  const outstandingTicketIds = linkedTickets
-    .filter(
-      (ticket) =>
-        !selectedIds.has(ticket.id) && !completedTicketIds.includes(ticket.id),
-    )
-    .map((ticket) => ticket.id);
-  if (isSpec) {
-    if (parentId && !linkedTickets.some((ticket) => ticket.id === id))
-      throw new Error(
-        `Activated child #${id} is absent from parent #${rootId}'s linked scope`,
-      );
-    for (const ticket of tickets) {
-      if (!/work item type:\*?\*?\s*executable/i.test(ticket.body))
-        throw new Error(
-          `Linked child #${ticket.id} is not an executable ticket`,
+    const ready = existing.find(
+      (pr) =>
+        !pr.isDraft && pr.body?.includes("<!-- shipyard:verified-handoff -->"),
+    );
+    const statusSynced = isSpec
+      ? syncStatus(root, linkedTickets, existing[0])
+      : true;
+    if (statusSynced) {
+      for (const blockedId of blockedActiveIds)
+        gh(
+          "issue",
+          "edit",
+          blockedId,
+          "--repo",
+          repository,
+          "--remove-label",
+          "shipyard",
         );
-      const native = parentLink(ticket.id);
-      const textual = textParent(ticket.body);
-      const linkedPR = prParentLink(ticket.id);
-      if (
-        (native && native !== rootId) ||
-        (textual && textual !== rootId) ||
-        (linkedPR && linkedPR !== rootId)
-      )
-        throw new Error(`Conflicting parent links for #${ticket.id}`);
     }
-  }
-  const existing = json(
-    "pr",
-    "list",
-    "--repo",
-    repository,
-    "--head",
-    branch,
-    "--state",
-    "open",
-    "--json",
-    "number,isDraft,labels,body",
-  );
-  const ready = existing.find(
-    (pr) =>
-      !pr.isDraft && pr.body?.includes("<!-- shipyard:verified-handoff -->"),
-  );
-  const statusSynced = isSpec
-    ? syncStatus(root, linkedTickets, existing[0])
-    : true;
-  if (statusSynced) {
-    for (const blockedId of blockedActiveIds)
-      gh(
-        "issue",
-        "edit",
-        blockedId,
-        "--repo",
-        repository,
-        "--remove-label",
-        "shipyard",
-      );
-  }
-  if (ready) {
-    const recordedIds = ready.body
-      ?.match(/^Source issues:[ \t]*((?:#[0-9]+[ \t]*)+)$/m)?.[1]
-      ?.match(/#[0-9]+/g)
-      ?.map((issue) => issue.slice(1));
-    const implementedIds =
-      ready.body
-        ?.match(/^Implemented tickets:[ \t]*((?:#[0-9]+[ \t]*)*)$/m)?.[1]
+    if (ready) {
+      const recordedIds = ready.body
+        ?.match(/^Source issues:[ \t]*((?:#[0-9]+[ \t]*)+)$/m)?.[1]
         ?.match(/#[0-9]+/g)
-        ?.map((issue) => issue.slice(1)) ??
-      recordedIds?.slice(1) ??
-      [];
-    const recordedSet = new Set(recordedIds ?? []);
-    const implementedSet = new Set(implementedIds);
-    const knownIds = new Set([
-      rootId,
-      ...linkedTickets.map((ticket) => ticket.id),
-    ]);
-    if (
-      !recordedIds ||
-      !recordedSet.has(rootId) ||
-      recordedIds.length !== recordedSet.size ||
-      recordedIds.some((issue) => !knownIds.has(issue))
-    )
-      throw new Error(
-        `PR #${ready.number} issue scope differs from current #${rootId} scope`,
-      );
-    if (tickets.every((ticket) => implementedSet.has(ticket.id))) {
-      for (const ticket of tickets) {
-        gh(
-          "issue",
-          "edit",
-          ticket.id,
-          "--repo",
-          repository,
-          "--add-label",
-          "shipyard:complete",
+        ?.map((issue) => issue.slice(1));
+      const implementedIds =
+        ready.body
+          ?.match(/^Implemented tickets:[ \t]*((?:#[0-9]+[ \t]*)*)$/m)?.[1]
+          ?.match(/#[0-9]+/g)
+          ?.map((issue) => issue.slice(1)) ??
+        recordedIds?.slice(1) ??
+        [];
+      const recordedSet = new Set(recordedIds ?? []);
+      const implementedSet = new Set(implementedIds);
+      const knownIds = new Set([
+        rootId,
+        ...linkedTickets.map((ticket) => ticket.id),
+      ]);
+      if (
+        !recordedIds ||
+        !recordedSet.has(rootId) ||
+        recordedIds.length !== recordedSet.size ||
+        recordedIds.some((issue) => !knownIds.has(issue))
+      )
+        invalid(
+          `PR #${ready.number} issue scope differs from current #${rootId} scope`,
+          id,
         );
-        if (
-          linkedTickets
-            .find((item) => item.id === ticket.id)
-            ?.labels.some((label) => label.name === "shipyard:blocked")
-        )
+      if (tickets.every((ticket) => implementedSet.has(ticket.id))) {
+        for (const ticket of tickets) {
           gh(
             "issue",
             "edit",
             ticket.id,
             "--repo",
             repository,
-            "--remove-label",
-            "shipyard:blocked",
+            "--add-label",
+            "shipyard:complete",
           );
-        if (
-          linkedTickets
-            .find((item) => item.id === ticket.id)
-            ?.labels.some((label) => label.name === "shipyard:pending")
-        )
-          gh(
-            "issue",
-            "edit",
-            ticket.id,
-            "--repo",
-            repository,
-            "--remove-label",
-            "shipyard:pending",
+          if (
+            linkedTickets
+              .find((item) => item.id === ticket.id)
+              ?.labels.some((label) => label.name === "shipyard:blocked")
+          )
+            gh(
+              "issue",
+              "edit",
+              ticket.id,
+              "--repo",
+              repository,
+              "--remove-label",
+              "shipyard:blocked",
+            );
+          if (
+            linkedTickets
+              .find((item) => item.id === ticket.id)
+              ?.labels.some((label) => label.name === "shipyard:pending")
+          )
+            gh(
+              "issue",
+              "edit",
+              ticket.id,
+              "--repo",
+              repository,
+              "--remove-label",
+              "shipyard:pending",
+            );
+        }
+        for (const ticket of linkedTickets) {
+          if (
+            ticket.labels.some((label) => label.name === "shipyard:complete") &&
+            ticket.labels.some((label) => label.name === "shipyard:blocked")
+          )
+            gh(
+              "issue",
+              "edit",
+              ticket.id,
+              "--repo",
+              repository,
+              "--remove-label",
+              "shipyard:blocked",
+            );
+        }
+        let completedStatusSynced = statusSynced;
+        if (isSpec) {
+          const completed = new Set(tickets.map((ticket) => ticket.id));
+          completedStatusSynced = syncStatus(
+            root,
+            linkedTickets.map((ticket) =>
+              completed.has(ticket.id)
+                ? { ...ticket, labels: [{ name: "shipyard:complete" }] }
+                : ticket,
+            ),
+            ready,
           );
-      }
-      for (const ticket of linkedTickets) {
-        if (
-          ticket.labels.some((label) => label.name === "shipyard:complete") &&
-          ticket.labels.some((label) => label.name === "shipyard:blocked")
-        )
-          gh(
-            "issue",
-            "edit",
-            ticket.id,
-            "--repo",
-            repository,
-            "--remove-label",
-            "shipyard:blocked",
-          );
-      }
-      let completedStatusSynced = statusSynced;
-      if (isSpec) {
-        const completed = new Set(tickets.map((ticket) => ticket.id));
-        completedStatusSynced = syncStatus(
-          root,
-          linkedTickets.map((ticket) =>
-            completed.has(ticket.id)
-              ? { ...ticket, labels: [{ name: "shipyard:complete" }] }
-              : ticket,
-          ),
-          ready,
-        );
-      } else {
-        gh(
-          "issue",
-          "edit",
-          rootId,
-          "--repo",
-          repository,
-          "--add-label",
-          "shipyard:complete",
-        );
-        if (root.labels?.some((label) => label.name === "shipyard:pending"))
+        } else {
           gh(
             "issue",
             "edit",
             rootId,
             "--repo",
             repository,
-            "--remove-label",
-            "shipyard:pending",
+            "--add-label",
+            "shipyard:complete",
           );
-        gh(
-          "pr",
-          "edit",
-          String(ready.number),
-          "--repo",
-          repository,
-          "--add-label",
-          "shipyard:complete",
-        );
+          if (root.labels?.some((label) => label.name === "shipyard:pending"))
+            gh(
+              "issue",
+              "edit",
+              rootId,
+              "--repo",
+              repository,
+              "--remove-label",
+              "shipyard:pending",
+            );
+          gh(
+            "pr",
+            "edit",
+            String(ready.number),
+            "--repo",
+            repository,
+            "--add-label",
+            "shipyard:complete",
+          );
+        }
+        const activatedIds = [
+          rootId,
+          ...tickets.map((ticket) => ticket.id),
+          ...completedTicketIds,
+        ].filter((item) => activeIds.has(item));
+        if (completedStatusSynced)
+          for (const activeId of activatedIds)
+            gh(
+              "issue",
+              "edit",
+              activeId,
+              "--repo",
+              repository,
+              "--remove-label",
+              "shipyard",
+            );
+        continue;
       }
-      const activatedIds = [
-        rootId,
-        ...tickets.map((ticket) => ticket.id),
-        ...completedTicketIds,
-      ].filter((item) => activeIds.has(item));
-      if (completedStatusSynced)
-        for (const activeId of activatedIds)
+    }
+    if (isSpec) {
+      if (root.state && String(root.state).toLowerCase() !== "open")
+        invalid(`Planning spec #${rootId} is closed`, id);
+      const ticketIds = new Set(tickets.map((ticket) => ticket.id));
+      const completedIds = new Set(completedTicketIds);
+      for (const ticket of tickets) {
+        if (String(ticket.state).toLowerCase() !== "open")
+          invalid(
+            `Linked executable ticket #${ticket.id} is closed`,
+            ticket.id,
+          );
+        for (const blocker of ticket.blockedBy) {
+          if (
+            String(blocker.state).toLowerCase() !== "closed" &&
+            !ticketIds.has(blocker.id) &&
+            !completedIds.has(blocker.id)
+          )
+            invalid(
+              `Ticket #${ticket.id} has unresolved external dependency #${blocker.id}`,
+              ticket.id,
+            );
+        }
+      }
+      const waiting = new Set(ticketIds);
+      while (waiting.size) {
+        const ready = tickets.filter(
+          (ticket) =>
+            waiting.has(ticket.id) &&
+            ticket.blockedBy.every(
+              (blocker) =>
+                String(blocker.state).toLowerCase() === "closed" ||
+                !waiting.has(blocker.id),
+            ),
+        );
+        if (!ready.length)
+          invalid(`Spec #${rootId} has cyclic dependencies`, id);
+        for (const ticket of ready) waiting.delete(ticket.id);
+      }
+    }
+    if (isSpec && tickets.length === 0) {
+      if (statusSynced)
+        for (const activeId of [rootId, ...completedTicketIds].filter((item) =>
+          activeIds.has(item),
+        ))
           gh(
             "issue",
             "edit",
@@ -661,72 +746,46 @@ for (const candidate of activated) {
           );
       continue;
     }
+    scopes.set(
+      branch,
+      isSpec
+        ? {
+            id: rootId,
+            title: root.title,
+            body: root.body ?? "",
+            branch,
+            kind: "spec",
+            tickets,
+            completedTicketIds,
+            outstandingTicketIds,
+          }
+        : { id, title: candidate.title, branch, kind: "standalone" },
+    );
+  } catch (error) {
+    if (!(error instanceof SelectionError)) throw error;
+    const affectedId =
+      error.issueId &&
+      (activeIds.has(error.issueId) || selectedTicketIds.has(error.issueId))
+        ? error.issueId
+        : id;
+    const specChild = resolvedSpec && resolvedRootId !== affectedId;
+    const blockRoot = specChild ? resolvedRootId : affectedId;
+    execFileSync(
+      "bash",
+      [
+        fileURLToPath(new URL("./block-scope.sh", import.meta.url)),
+        blockRoot,
+        affectedId,
+        repository,
+        specChild ? `${blockRoot},${affectedId}` : affectedId,
+        specChild
+          ? `shipyard/spec-${blockRoot}`
+          : `shipyard/issue-${affectedId}`,
+      ],
+      { input: error.message, encoding: "utf8" },
+    );
+    blockedIds.add(affectedId);
+    console.error(`Shipyard blocked issue #${affectedId}: ${error.message}`);
   }
-  if (isSpec) {
-    if (root.state && String(root.state).toLowerCase() !== "open")
-      throw new Error(`Planning spec #${rootId} is closed`);
-    const ticketIds = new Set(tickets.map((ticket) => ticket.id));
-    const completedIds = new Set(completedTicketIds);
-    for (const ticket of tickets) {
-      if (String(ticket.state).toLowerCase() !== "open")
-        throw new Error(`Linked executable ticket #${ticket.id} is closed`);
-      for (const blocker of ticket.blockedBy) {
-        if (
-          String(blocker.state).toLowerCase() !== "closed" &&
-          !ticketIds.has(blocker.id) &&
-          !completedIds.has(blocker.id)
-        )
-          throw new Error(
-            `Ticket #${ticket.id} has unresolved external dependency #${blocker.id}`,
-          );
-      }
-    }
-    const waiting = new Set(ticketIds);
-    while (waiting.size) {
-      const ready = tickets.filter(
-        (ticket) =>
-          waiting.has(ticket.id) &&
-          ticket.blockedBy.every(
-            (blocker) =>
-              String(blocker.state).toLowerCase() === "closed" ||
-              !waiting.has(blocker.id),
-          ),
-      );
-      if (!ready.length)
-        throw new Error(`Spec #${rootId} has cyclic dependencies`);
-      for (const ticket of ready) waiting.delete(ticket.id);
-    }
-  }
-  if (isSpec && tickets.length === 0) {
-    if (statusSynced)
-      for (const activeId of [rootId, ...completedTicketIds].filter((item) =>
-        activeIds.has(item),
-      ))
-        gh(
-          "issue",
-          "edit",
-          activeId,
-          "--repo",
-          repository,
-          "--remove-label",
-          "shipyard",
-        );
-    continue;
-  }
-  scopes.set(
-    branch,
-    isSpec
-      ? {
-          id: rootId,
-          title: root.title,
-          body: root.body ?? "",
-          branch,
-          kind: "spec",
-          tickets,
-          completedTicketIds,
-          outstandingTicketIds,
-        }
-      : { id, title: candidate.title, branch, kind: "standalone" },
-  );
 }
 process.stdout.write(`${JSON.stringify([...scopes.values()])}\n`);
