@@ -28,6 +28,7 @@ import {
   type ReviewRunOutcome,
 } from "../review/index.js";
 import { deepFreeze, sameRevision } from "../shared.js";
+import { sanitizeDiagnostic } from "../diagnostics.js";
 
 export interface SpecChildPlan {
   readonly identity: WorkIdentity;
@@ -1604,11 +1605,7 @@ export const deliverSpec = async (
       const completion = await waitForWorker();
       active.delete(completion.child.identity.itemId);
       if (completion.error !== undefined) {
-        throw new SpecChildDeliveryFailure(
-          completion.child.identity,
-          "implementation",
-          `Child ${completion.child.identity.itemId} failed: ${errorMessage(completion.error)}`,
-        );
+        throw completion.error;
       }
       if (completion.result === undefined) {
         throw new SpecChildDeliveryFailure(
@@ -1858,7 +1855,7 @@ export const deliverSpec = async (
       ? undefined
       : {
           phase: blockedPhase ?? currentPhase,
-          error: blockedReason,
+          error: sanitizeDiagnostic(blockedReason),
           attempts:
             blockedChild === undefined
               ? 1
@@ -1897,6 +1894,9 @@ export const deliverSpec = async (
     followUps,
     blockedChild,
     blockedEvidence,
-    reason: blockedReason,
+    reason:
+      blockedReason === undefined
+        ? undefined
+        : sanitizeDiagnostic(blockedReason),
   });
 };

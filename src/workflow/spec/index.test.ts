@@ -1022,7 +1022,9 @@ describe("spec delivery orchestration", () => {
       childWorker: {
         implement: async () => {
           calls.worker += 1;
-          throw new Error("stop after current PR metadata is refreshed");
+          throw new Error(
+            "stop after current PR metadata is refreshed token=secret-value",
+          );
         },
       },
       integration,
@@ -1038,13 +1040,16 @@ describe("spec delivery orchestration", () => {
 
     expect(result.outcome).toBe("blocked");
     expect(result.reason).toContain("stop after current PR metadata");
-    expect(result.blockedChild?.itemId).toBe("102");
+    expect(result.reason).not.toContain("secret-value");
+    expect(result.blockedChild).toBeUndefined();
     expect(result.blockedEvidence).toMatchObject({
       phase: "implementation",
       attempts: 1,
       error: expect.stringContaining("stop after current PR metadata"),
       lastSuccessfulStep: expect.stringContaining("pull request #pr-100"),
     });
+    expect(result.blockedEvidence?.error).toContain("token=[REDACTED]");
+    expect(result.blockedEvidence?.error).not.toContain("secret-value");
     expect(calls).toEqual({ ensure: 1, worker: 1, integrate: 0, publish: 0 });
     expect(
       (await owner.getDelivery(resolved.key))?.specCheckpoint?.pullRequest,
