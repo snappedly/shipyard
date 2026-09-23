@@ -215,7 +215,7 @@ export const expandSpecDeliveryScope = async (
 };
 
 export interface SpecChildWorkerRequest {
-  readonly delivery: DeliveryGroup;
+  readonly delivery: DeliveryRecord;
   readonly child: WorkIdentity;
   /** The current integration head from which this child may create its branch. */
   readonly base: RevisionReference;
@@ -242,7 +242,7 @@ export interface SpecPullRequest {
 }
 
 export interface ReconcileSpecDeliveryInput {
-  readonly delivery: DeliveryGroup;
+  readonly delivery: DeliveryRecord;
   readonly base: RevisionReference;
   readonly integrationBranch: string;
   readonly lease: DeliveryLease;
@@ -251,6 +251,10 @@ export interface ReconcileSpecDeliveryInput {
 
 export interface SpecRemoteDeliveryState {
   readonly pullRequest?: SpecPullRequest;
+  /** Remote metadata predates the current graph version and must be refreshed. */
+  readonly scopeVersionChanged?: boolean;
+  /** The host retracted a ready PR after detecting a newer delivery graph. */
+  readonly scopeChangeRetracted?: boolean;
   /** Current remote integration branch head, when a draft PR exists. */
   readonly head?: RevisionReference;
   /** Exact in-flight child integration completed on the remote branch. */
@@ -263,6 +267,7 @@ export interface SpecRemoteDeliveryState {
 
 export interface SpecCandidate {
   readonly deliveryId: string;
+  readonly briefRevision?: number;
   readonly briefHash: string;
   readonly base: RevisionReference;
   readonly head: RevisionReference;
@@ -270,16 +275,18 @@ export interface SpecCandidate {
 }
 
 export interface EnsureSpecPullRequestInput {
-  readonly delivery: DeliveryGroup;
+  readonly delivery: DeliveryRecord;
   readonly candidate: RevisionReference;
   readonly base: RevisionReference;
   readonly integrationBranch: string;
+  readonly briefRevision: number;
+  readonly briefHash: string;
   readonly lease: DeliveryLease;
   readonly signal: AbortSignal;
 }
 
 export interface IntegrateSpecChildInput {
-  readonly delivery: DeliveryGroup;
+  readonly delivery: DeliveryRecord;
   readonly child: WorkIdentity;
   readonly sourceCommit: RevisionReference;
   readonly currentHead: RevisionReference;
@@ -289,7 +296,7 @@ export interface IntegrateSpecChildInput {
 }
 
 export interface PublishSpecCandidateInput {
-  readonly delivery: DeliveryGroup;
+  readonly delivery: DeliveryRecord;
   readonly candidate: SpecCandidate;
   readonly lease: DeliveryLease;
   readonly signal: AbortSignal;
@@ -321,6 +328,8 @@ export interface SpecIntegrationAdapter {
   publishCandidate(
     input: PublishSpecCandidateInput,
   ): Promise<SpecPublishedCandidate>;
+  /** Publish the exact reviewed candidate for human review without merging. */
+  publishHumanHandoff?(input: PublishSpecCandidateInput): Promise<void>;
 }
 
 export interface SpecCleanupResult {
@@ -335,7 +344,7 @@ export interface SpecVerificationResult {
 }
 
 export interface SpecChildVerificationInput {
-  readonly delivery: DeliveryGroup;
+  readonly delivery: DeliveryRecord;
   readonly child: WorkIdentity;
   readonly sourceCommit: RevisionReference;
   readonly candidate: SpecCandidate;
@@ -344,7 +353,7 @@ export interface SpecChildVerificationInput {
 }
 
 export interface SpecIntegratedVerificationInput {
-  readonly delivery: DeliveryGroup;
+  readonly delivery: DeliveryRecord;
   readonly candidate: SpecCandidate;
   readonly lease: DeliveryLease;
   readonly signal: AbortSignal;
@@ -366,7 +375,7 @@ export interface CompleteSpecChildInput extends SpecChildVerificationInput {
 export interface SpecChildLifecycle {
   /** Read provider closure state to reconcile a crash around issue closure. */
   reconcileChild(input: {
-    readonly delivery: DeliveryGroup;
+    readonly delivery: DeliveryRecord;
     readonly child: WorkIdentity;
     readonly lease: DeliveryLease;
     readonly signal: AbortSignal;
@@ -410,11 +419,12 @@ export interface SpecCurrentCandidate {
     readonly headSha: string;
     readonly briefHash: string;
     readonly deliveryId: string;
+    readonly readyForHuman?: boolean;
   };
 }
 
 export interface SpecFixRequest {
-  readonly delivery: DeliveryGroup;
+  readonly delivery: DeliveryRecord;
   readonly candidate: SpecCandidate;
   readonly findings: readonly Finding[];
   readonly batch: 1;
@@ -545,6 +555,7 @@ const childRecordsInPlanOrder = (
 
 const makeCandidate = (input: {
   readonly delivery: DeliveryGroup;
+  readonly briefRevision: number;
   readonly briefHash: string;
   readonly base: RevisionReference;
   readonly head: RevisionReference;
@@ -552,6 +563,7 @@ const makeCandidate = (input: {
 }): SpecCandidate =>
   freezeClone({
     deliveryId: input.delivery.id,
+    briefRevision: input.briefRevision,
     briefHash: input.briefHash,
     base: input.base,
     head: input.head,
@@ -592,6 +604,7 @@ const samePullRequest = (
 const currentCandidateMismatch = (
   candidate: SpecCandidate,
   current: SpecCurrentCandidate,
+  allowHumanHandoff = false,
 ): string | undefined => {
   if (!sameRevision(current.base, candidate.base)) {
     return "Current provider base does not match the reviewed candidate";
@@ -609,7 +622,10 @@ const currentCandidateMismatch = (
   if (pullRequest.state !== "open") {
     return "Current pull request is closed or abandoned";
   }
-  if (!pullRequest.draft) {
+  if (
+    !pullRequest.draft &&
+    (!allowHumanHandoff || pullRequest.readyForHuman !== true)
+  ) {
     return "Current pull request is no longer a draft";
   }
   if (
@@ -628,9 +644,14 @@ const currentCandidateMismatch = (
 const readCurrentCandidate = async (
   candidate: SpecCandidate,
   readCurrent: () => Promise<SpecCurrentCandidate>,
+  allowHumanHandoff = false,
 ): Promise<SpecCurrentCandidate> => {
   const current = await readCurrent();
-  const mismatch = currentCandidateMismatch(candidate, current);
+  const mismatch = currentCandidateMismatch(
+    candidate,
+    current,
+    allowHumanHandoff,
+  );
   if (mismatch !== undefined) throw new Error(mismatch);
   return current;
 };
@@ -875,6 +896,7 @@ export const deliverSpec = async (
   };
   scheduleLeaseHeartbeat();
 
+  let allowScopeChangeDraftRetraction = false;
   const saveCheckpoint = async (
     next: SpecDeliveryCheckpoint,
   ): Promise<void> => {
@@ -883,8 +905,12 @@ export const deliverSpec = async (
       delivery.key,
       currentLease,
       next,
+      allowScopeChangeDraftRetraction
+        ? { allowScopeChangeDraftRetraction: true }
+        : undefined,
     );
     checkpoint = delivery.specCheckpoint ?? next;
+    allowScopeChangeDraftRetraction = false;
   };
 
   const saveChildProgress = async (
@@ -923,6 +949,7 @@ export const deliverSpec = async (
       ? undefined
       : makeCandidate({
           delivery,
+          briefRevision: brief.revision,
           briefHash: brief.hash,
           base: options.base,
           head: publishedHead,
@@ -931,8 +958,9 @@ export const deliverSpec = async (
 
   const ensurePullRequest = async (
     candidateHead: RevisionReference,
+    refreshExisting = false,
   ): Promise<SpecPullRequest> => {
-    if (pullRequest !== undefined) return pullRequest;
+    if (pullRequest !== undefined && !refreshExisting) return pullRequest;
     await refreshLease();
     assertOwned();
     const created = await options.integration.ensureDraftPullRequest({
@@ -940,6 +968,8 @@ export const deliverSpec = async (
       candidate: candidateHead,
       base: options.base,
       integrationBranch: options.integrationBranch,
+      briefRevision: brief.revision,
+      briefHash: brief.hash,
       lease: currentLease,
       signal: controller.signal,
     });
@@ -953,6 +983,9 @@ export const deliverSpec = async (
       throw new Error(
         "Integration adapter returned an invalid draft pull request",
       );
+    }
+    if (pullRequest !== undefined && created.id !== pullRequest.id) {
+      throw new Error("Spec delivery refresh created another pull request");
     }
     pullRequest = freezeClone(created);
     await saveCheckpoint({
@@ -1009,6 +1042,7 @@ export const deliverSpec = async (
     return publishCandidate(
       makeCandidate({
         delivery,
+        briefRevision: brief.revision,
         briefHash: brief.hash,
         base: options.base,
         head: currentHead,
@@ -1125,6 +1159,8 @@ export const deliverSpec = async (
       signal: controller.signal,
     });
     assertOwned();
+    allowScopeChangeDraftRetraction = remote.scopeChangeRetracted === true;
+    const refreshScopePublication = remote.scopeVersionChanged === true;
     const expectedHead = checkpoint.currentHead ?? baseHead;
     const pendingPublish = checkpoint.children.find(
       (child) => child.status === "publishing",
@@ -1154,7 +1190,35 @@ export const deliverSpec = async (
       remote.pullRequest !== undefined &&
       !samePullRequest(pullRequest, remote.pullRequest)
     ) {
-      throw new Error("GitHub pull request contradicts coordinator evidence");
+      const safeScopeRetraction =
+        remote.scopeChangeRetracted === true &&
+        pullRequest.id === remote.pullRequest.id &&
+        pullRequest.baseBranch === remote.pullRequest.baseBranch &&
+        pullRequest.headBranch === remote.pullRequest.headBranch &&
+        pullRequest.draft === false &&
+        remote.pullRequest.draft === true;
+      if (!safeScopeRetraction) {
+        throw new Error("GitHub pull request contradicts coordinator evidence");
+      }
+      pullRequest = freezeClone(remote.pullRequest);
+      checkpoint = {
+        ...checkpoint,
+        pullRequest,
+        children: checkpoint.children.map((child) =>
+          child.candidate === undefined
+            ? child
+            : {
+                ...child,
+                candidate: {
+                  ...child.candidate,
+                  pullRequest: {
+                    ...child.candidate.pullRequest,
+                    draft: pullRequest!.draft,
+                  },
+                },
+              },
+        ),
+      };
     }
     if (remote.head !== undefined) {
       if (
@@ -1237,6 +1301,7 @@ export const deliverSpec = async (
       );
       const candidate = makeCandidate({
         delivery,
+        briefRevision: brief.revision,
         briefHash: brief.hash,
         base: options.base,
         head: recoveredIntegration.head,
@@ -1255,6 +1320,9 @@ export const deliverSpec = async (
       JSON.stringify(checkpoint) !== JSON.stringify(delivery.specCheckpoint)
     ) {
       await saveCheckpoint(checkpoint);
+    }
+    if (refreshScopePublication) {
+      await ensurePullRequest(currentHead, true);
     }
 
     await refreshScope();
@@ -1346,6 +1414,7 @@ export const deliverSpec = async (
           await ensurePullRequest(currentHead);
           const candidate = makeCandidate({
             delivery,
+            briefRevision: brief.revision,
             briefHash: brief.hash,
             base: options.base,
             head: currentHead,
@@ -1647,12 +1716,24 @@ export const deliverSpec = async (
     }
 
     try {
-      await readCurrentCandidate(finalCandidate, options.readCurrent);
+      await readCurrentCandidate(finalCandidate, options.readCurrent, true);
     } catch (error) {
       reviews.splice(0);
       throw new Error(
         `Current provider state changed before human handoff: ${errorMessage(error)}`,
       );
+    }
+
+    if (options.integration.publishHumanHandoff !== undefined) {
+      await refreshLease();
+      await options.integration.publishHumanHandoff({
+        delivery,
+        candidate: finalCandidate,
+        lease: currentLease,
+        signal: controller.signal,
+      });
+      assertOwned();
+      await readCurrentCandidate(finalCandidate, options.readCurrent, true);
     }
 
     return resultFor({

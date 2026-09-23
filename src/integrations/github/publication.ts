@@ -139,6 +139,10 @@ export const parseGitHubPublicationMetadata = (
     const candidate = value as Record<string, unknown>;
     if (
       candidate.version !== GITHUB_PUBLICATION_METADATA_VERSION ||
+      (candidate.deliveryVersion !== undefined &&
+        (typeof candidate.deliveryVersion !== "number" ||
+          !Number.isInteger(candidate.deliveryVersion) ||
+          candidate.deliveryVersion < 1)) ||
       !nonEmptyMetadataString(candidate.repository) ||
       !nonEmptyMetadataString(candidate.itemId) ||
       !["planning-spec", "executable-issue", "pr-repair"].includes(

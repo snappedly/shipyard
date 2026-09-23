@@ -103,6 +103,7 @@ export interface SpecChildCheckpoint {
   readonly sourceCommit?: RevisionReference;
   readonly candidate?: {
     readonly deliveryId: string;
+    readonly briefRevision?: number;
     readonly briefHash: string;
     readonly base: RevisionReference;
     readonly head: RevisionReference;
@@ -250,6 +251,24 @@ export interface EffectIntent {
   readonly updatedAt: string;
 }
 
+/** Durable provider effect scoped to a delivery group rather than one job. */
+export interface DeliveryEffectIntent {
+  readonly id: string;
+  readonly key: DeliveryKey;
+  readonly kind: string;
+  readonly marker: string;
+  readonly payload?: unknown;
+  readonly status: EffectStatus;
+  readonly externalRef?: unknown;
+  readonly workerId?: string;
+  readonly fencingToken?: number;
+  readonly claimedAt?: number;
+  readonly claimExpiresAt?: number;
+  readonly error?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export interface BranchLease {
   readonly leaseId: string;
   readonly resourceKey: string;
@@ -322,6 +341,17 @@ export interface CoordinatorStorageTransaction {
     effect: EffectIntent,
   ): Promise<{ readonly effect: EffectIntent; readonly inserted: boolean }>;
   saveEffect(effect: EffectIntent): Promise<void>;
+
+  findDeliveryEffect(
+    key: DeliveryKey,
+    kind: string,
+    marker: string,
+  ): Promise<DeliveryEffectIntent | undefined>;
+  insertDeliveryEffectIfAbsent(effect: DeliveryEffectIntent): Promise<{
+    readonly effect: DeliveryEffectIntent;
+    readonly inserted: boolean;
+  }>;
+  saveDeliveryEffect(effect: DeliveryEffectIntent): Promise<void>;
 
   getLease(
     repository: string,
@@ -498,6 +528,11 @@ export interface EffectOperationContext {
   readonly fencingToken: number;
 }
 
+export interface DeliveryEffectOperationContext {
+  readonly effect: DeliveryEffectIntent;
+  readonly fencingToken: number;
+}
+
 export interface PublishEffectInput<T> {
   readonly jobId: string;
   readonly lease: BranchLease;
@@ -518,6 +553,20 @@ export interface PublishEffectInput<T> {
   readonly publish: (context: EffectOperationContext) => Promise<T>;
 }
 
+export interface PublishDeliveryEffectInput<T> {
+  readonly key: DeliveryKey;
+  readonly lease: DeliveryLease;
+  /** Reject publication after the delivery graph changes during preparation. */
+  readonly expectedDeliveryVersion?: number;
+  readonly kind: string;
+  readonly marker: string;
+  readonly payload?: unknown;
+  readonly reconcile?: (
+    context: DeliveryEffectOperationContext,
+  ) => Promise<T | undefined>;
+  readonly publish: (context: DeliveryEffectOperationContext) => Promise<T>;
+}
+
 export interface EffectExecution<T> {
   readonly disposition:
     | "published"
@@ -525,5 +574,15 @@ export interface EffectExecution<T> {
     | "already-succeeded"
     | "in-flight";
   readonly effect: EffectIntent;
+  readonly externalRef?: T;
+}
+
+export interface DeliveryEffectExecution<T> {
+  readonly disposition:
+    | "published"
+    | "reconciled"
+    | "already-succeeded"
+    | "in-flight";
+  readonly effect: DeliveryEffectIntent;
   readonly externalRef?: T;
 }

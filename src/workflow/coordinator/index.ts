@@ -36,6 +36,8 @@ import type {
   DeliveryFailureEvidence,
   DeliveryGroup,
   DeliveryKey,
+  DeliveryEffectExecution,
+  DeliveryEffectIntent,
   DeliveryLease,
   DeliveryRecord,
   DeliveryWorkflowState,
@@ -50,6 +52,7 @@ import type {
   InfrastructureRetryResult,
   IngestResult,
   PublishEffectInput,
+  PublishDeliveryEffectInput,
   RepairRequestResult,
   ReclaimBlockedJobResult,
   RepositoryControl,
@@ -448,6 +451,7 @@ export class WorkflowCoordinator {
     key: DeliveryKey,
     lease: DeliveryLease,
     checkpoint: SpecDeliveryCheckpoint,
+    options: { readonly allowScopeChangeDraftRetraction?: boolean } = {},
   ): Promise<DeliveryRecord> {
     return this.storage.transaction(async (transaction) => {
       await transaction.lockDelivery(key);
@@ -462,16 +466,23 @@ export class WorkflowCoordinator {
       this.assertDeliveryLease(currentLease, lease);
 
       const previous = existing.specCheckpoint;
-      if (
-        previous?.pullRequest !== undefined &&
-        (checkpoint.pullRequest?.id !== previous.pullRequest.id ||
-          checkpoint.pullRequest.baseBranch !==
-            previous.pullRequest.baseBranch ||
-          checkpoint.pullRequest.headBranch !==
-            previous.pullRequest.headBranch ||
-          checkpoint.pullRequest.draft !== previous.pullRequest.draft)
-      ) {
-        throw new Error("Spec delivery pull request reference changed");
+      if (previous?.pullRequest !== undefined) {
+        const samePullRequest =
+          checkpoint.pullRequest?.id === previous.pullRequest.id &&
+          checkpoint.pullRequest.baseBranch ===
+            previous.pullRequest.baseBranch &&
+          checkpoint.pullRequest.headBranch === previous.pullRequest.headBranch;
+        const authorizedRetraction =
+          options.allowScopeChangeDraftRetraction === true &&
+          previous.pullRequest.draft === false &&
+          checkpoint.pullRequest?.draft === true;
+        if (
+          !samePullRequest ||
+          (checkpoint.pullRequest.draft !== previous.pullRequest.draft &&
+            !authorizedRetraction)
+        ) {
+          throw new Error("Spec delivery pull request reference changed");
+        }
       }
       const children = new Map(
         checkpoint.children.map((child) => [child.child.itemId, child]),
@@ -482,15 +493,35 @@ export class WorkflowCoordinator {
       for (const prior of previous?.children ?? []) {
         const current = children.get(prior.child.itemId);
         if (prior.status === "closed") {
+          const scopeRetractionOnlyChangesCandidateDraft =
+            options.allowScopeChangeDraftRetraction === true &&
+            prior.candidate !== undefined &&
+            current?.candidate !== undefined &&
+            prior.candidate.pullRequest.draft === false &&
+            current.candidate.pullRequest.draft === true &&
+            JSON.stringify({
+              ...current,
+              candidate: {
+                ...current.candidate,
+                pullRequest: {
+                  ...current.candidate.pullRequest,
+                  draft: false,
+                },
+              },
+            }) === JSON.stringify(prior);
           if (
             current !== undefined &&
-            JSON.stringify(current) !== JSON.stringify(prior)
+            JSON.stringify(current) !== JSON.stringify(prior) &&
+            !scopeRetractionOnlyChangesCandidateDraft
           ) {
             throw new Error(
               `Closed child ${prior.child.itemId} completion evidence is immutable`,
             );
           }
-          children.set(prior.child.itemId, prior);
+          children.set(
+            prior.child.itemId,
+            scopeRetractionOnlyChangesCandidateDraft ? current! : prior,
+          );
         }
       }
       const updated = parseDeliveryRecord({
@@ -1103,6 +1134,22 @@ export class WorkflowCoordinator {
     });
   }
 
+  /** Validate live ownership before a host adapter performs a delivery effect. */
+  async assertDeliveryLeaseOwnership(
+    lease: DeliveryLease,
+    expectedDeliveryVersion?: number,
+  ): Promise<DeliveryRecord> {
+    return this.storage.transaction(async (transaction) => {
+      await transaction.lockDelivery(lease.key);
+      return this.assertDeliveryPublicationAllowed(
+        transaction,
+        lease.key,
+        lease,
+        expectedDeliveryVersion,
+      );
+    });
+  }
+
   private async claimDeliveryLease(
     transaction: CoordinatorStorageTransaction,
     key: DeliveryKey,
@@ -1411,6 +1458,243 @@ export class WorkflowCoordinator {
       });
       throw error;
     }
+  }
+
+  /** Publish one idempotent host effect under a durable delivery-wide fence. */
+  async publishDeliveryEffect<T>(
+    input: PublishDeliveryEffectInput<T>,
+  ): Promise<DeliveryEffectExecution<T>> {
+    const prepared = await this.storage.transaction(async (transaction) => {
+      await transaction.lockDelivery(input.key);
+      await this.assertDeliveryPublicationAllowed(
+        transaction,
+        input.key,
+        input.lease,
+        input.expectedDeliveryVersion,
+      );
+      const existing = await transaction.findDeliveryEffect(
+        input.key,
+        input.kind,
+        input.marker,
+      );
+      if (existing?.status === "succeeded") {
+        return { kind: "already-succeeded" as const, effect: existing };
+      }
+      const now = this.clock.nowMilliseconds();
+      if (
+        existing?.status === "claimed" &&
+        existing.claimExpiresAt !== undefined &&
+        existing.claimExpiresAt > now
+      ) {
+        return { kind: "in-flight" as const, effect: existing };
+      }
+      const effect: DeliveryEffectIntent = existing ?? {
+        id: this.idFactory("delivery-effect"),
+        key: input.key,
+        kind: input.kind,
+        marker: input.marker,
+        payload: input.payload,
+        status: "pending",
+        createdAt: this.clock.now(),
+        updatedAt: this.clock.now(),
+      };
+      const claimed: DeliveryEffectIntent = {
+        ...effect,
+        status: "claimed",
+        workerId: input.lease.workerId,
+        fencingToken: input.lease.fencingToken,
+        claimedAt: now,
+        claimExpiresAt: now + this.effectClaimTtlMs,
+        updatedAt: this.clock.now(),
+      };
+      const inserted = await transaction.insertDeliveryEffectIfAbsent(claimed);
+      if (!inserted.inserted) {
+        if (
+          inserted.effect.status === "claimed" &&
+          inserted.effect.claimExpiresAt !== undefined &&
+          inserted.effect.claimExpiresAt > now
+        ) {
+          return { kind: "in-flight" as const, effect: inserted.effect };
+        }
+        await transaction.saveDeliveryEffect(claimed);
+      }
+      return { kind: "execute" as const, effect: claimed };
+    });
+
+    if (prepared.kind === "already-succeeded") {
+      return {
+        disposition: "already-succeeded",
+        effect: prepared.effect,
+        externalRef: prepared.effect.externalRef as T | undefined,
+      };
+    }
+    if (prepared.kind === "in-flight") {
+      return { disposition: "in-flight", effect: prepared.effect };
+    }
+
+    const context = {
+      effect: prepared.effect,
+      fencingToken: input.lease.fencingToken,
+    };
+    if (input.reconcile !== undefined) {
+      const reconciled = await input.reconcile(context);
+      if (reconciled !== undefined) {
+        const effect = await this.finishDeliveryEffect(
+          prepared.effect,
+          input.lease,
+          reconciled,
+          input.expectedDeliveryVersion,
+        );
+        return {
+          disposition: "reconciled",
+          effect,
+          externalRef: effect.externalRef as T,
+        };
+      }
+    }
+
+    await this.storage.transaction(async (transaction) => {
+      await this.assertDeliveryPublicationAllowed(
+        transaction,
+        input.key,
+        input.lease,
+        input.expectedDeliveryVersion,
+      );
+      const current = await transaction.findDeliveryEffect(
+        input.key,
+        input.kind,
+        input.marker,
+      );
+      this.assertDeliveryEffectClaim(current, prepared.effect, input.lease);
+    });
+    try {
+      const externalRef = await input.publish(context);
+      const effect = await this.finishDeliveryEffect(
+        prepared.effect,
+        input.lease,
+        externalRef,
+        input.expectedDeliveryVersion,
+      );
+      return {
+        disposition: "published",
+        effect,
+        externalRef: effect.externalRef as T,
+      };
+    } catch (error) {
+      await this.storage.transaction(async (transaction) => {
+        const current = await transaction.findDeliveryEffect(
+          input.key,
+          input.kind,
+          input.marker,
+        );
+        if (
+          current !== undefined &&
+          current.id === prepared.effect.id &&
+          current.status === "claimed" &&
+          current.workerId === input.lease.workerId &&
+          current.fencingToken === input.lease.fencingToken
+        ) {
+          await transaction.saveDeliveryEffect({
+            ...current,
+            status: "uncertain",
+            error: errorMessage(error),
+            updatedAt: this.clock.now(),
+          });
+        }
+      });
+      throw error;
+    }
+  }
+
+  private async assertDeliveryPublicationAllowed(
+    transaction: CoordinatorStorageTransaction,
+    key: DeliveryKey,
+    lease: DeliveryLease,
+    expectedDeliveryVersion?: number,
+  ): Promise<DeliveryRecord> {
+    if (
+      key.repository !== lease.key.repository ||
+      key.itemId !== lease.key.itemId
+    ) {
+      throw new LeaseLostError(
+        `Delivery lease ${lease.leaseId} is not bound to ${deliveryIdFor(key)}`,
+      );
+    }
+    const delivery = await transaction.getDelivery(key);
+    if (delivery === undefined) {
+      throw new Error(`Delivery ${deliveryIdFor(key)} does not exist`);
+    }
+    if (delivery.mergedAt !== undefined) {
+      throw new Error(`Merged delivery ${deliveryIdFor(key)} cannot publish`);
+    }
+    if (
+      expectedDeliveryVersion !== undefined &&
+      delivery.version !== expectedDeliveryVersion
+    ) {
+      throw new LeaseLostError(
+        `Delivery ${deliveryIdFor(key)} changed from version ${expectedDeliveryVersion} to ${delivery.version}`,
+      );
+    }
+    const control = await transaction.getRepositoryControl(key.repository);
+    if (control?.stopped) {
+      throw new Error(`Repository ${key.repository} is stopped`);
+    }
+    const currentLease = await transaction.getDeliveryLease(key);
+    this.assertDeliveryLease(currentLease, lease);
+    return delivery;
+  }
+
+  private assertDeliveryEffectClaim(
+    current: DeliveryEffectIntent | undefined,
+    claimed: DeliveryEffectIntent,
+    lease: DeliveryLease,
+  ): asserts current is DeliveryEffectIntent {
+    if (
+      current === undefined ||
+      current.id !== claimed.id ||
+      current.status !== "claimed" ||
+      current.workerId !== lease.workerId ||
+      current.fencingToken !== lease.fencingToken ||
+      current.claimedAt !== claimed.claimedAt ||
+      current.claimExpiresAt === undefined ||
+      current.claimExpiresAt <= this.clock.nowMilliseconds()
+    ) {
+      throw new LeaseLostError(
+        "Delivery publication claim is no longer current",
+      );
+    }
+  }
+
+  private async finishDeliveryEffect<T>(
+    effect: DeliveryEffectIntent,
+    lease: DeliveryLease,
+    externalRef: T,
+    expectedDeliveryVersion?: number,
+  ): Promise<DeliveryEffectIntent> {
+    return this.storage.transaction(async (transaction) => {
+      await transaction.lockDelivery(effect.key);
+      await this.assertDeliveryPublicationAllowed(
+        transaction,
+        effect.key,
+        lease,
+        expectedDeliveryVersion,
+      );
+      const current = await transaction.findDeliveryEffect(
+        effect.key,
+        effect.kind,
+        effect.marker,
+      );
+      if (current?.status === "succeeded") return current;
+      this.assertDeliveryEffectClaim(current, effect, lease);
+      const finished: DeliveryEffectIntent = {
+        ...current,
+        status: "succeeded",
+        externalRef,
+        updatedAt: this.clock.now(),
+      };
+      await transaction.saveDeliveryEffect(finished);
+      return finished;
+    });
   }
 
   private async assertPublicationAllowed<T>(

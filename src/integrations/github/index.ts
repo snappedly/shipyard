@@ -18,6 +18,14 @@ export {
   serializeGitHubPublicationMetadata,
 } from "./publication.js";
 export {
+  createGitHubSpecDeliveryHost,
+  type GitHubSpecDeliveryHost,
+  type GitHubSpecDeliveryHostOptions,
+  type GitHubSpecDeliveryGitAdapter,
+  type PublishGitHubSpecCheckInput,
+  type PublishGitHubSpecBlockedInput,
+} from "./spec-delivery.js";
+export {
   READY_FOR_HUMAN_LABEL,
   SHIPYARD_BLOCKED_LABEL,
   SHIPYARD_BLOCKED_LABEL_COLOR,

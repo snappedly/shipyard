@@ -7,6 +7,7 @@ import {
   type WorkBrief,
 } from "../contracts/index.js";
 import {
+  defaultDeliveryGroup,
   InMemoryCoordinatorStorage,
   LeaseLostError,
   WorkflowCoordinator,
@@ -130,6 +131,98 @@ const createCoordinator = (clock = createClock()) => {
 };
 
 describe("workflow coordinator", () => {
+  it("reconciles a delivery effect after a remote write and retries it idempotently", async () => {
+    const { coordinator, clock } = createCoordinator();
+    const delivery = await coordinator.resolveDelivery(
+      defaultDeliveryGroup({
+        repository,
+        itemId: "delivery-effect",
+        kind: "executable-issue",
+      }),
+    );
+    const lease = await coordinator.acquireDeliveryLease({
+      repository,
+      key: delivery.key,
+      workerId: "worker-a",
+      ttlMs: 10,
+    });
+    let remoteRef: string | undefined;
+    const publish = vi.fn(async () => {
+      remoteRef = "pull/44";
+      throw new Error("connection lost after remote write");
+    });
+
+    await expect(
+      coordinator.publishDeliveryEffect({
+        key: delivery.key,
+        lease,
+        kind: "github-spec-pull-request",
+        marker: "delivery-effect:pull-request:44",
+        publish,
+      }),
+    ).rejects.toThrow("connection lost");
+
+    clock.advance(11);
+    const resumedLease = await coordinator.acquireDeliveryLease({
+      repository,
+      key: delivery.key,
+      workerId: "worker-b",
+      ttlMs: 100,
+    });
+    const resumed = await coordinator.publishDeliveryEffect({
+      key: delivery.key,
+      lease: resumedLease,
+      kind: "github-spec-pull-request",
+      marker: "delivery-effect:pull-request:44",
+      reconcile: async () => remoteRef,
+      publish: vi.fn(async () => "unexpected-duplicate"),
+    });
+
+    expect(resumed.disposition).toBe("reconciled");
+    expect(resumed.externalRef).toBe("pull/44");
+    expect(publish).toHaveBeenCalledOnce();
+  });
+
+  it("stops a delivery effect when lease ownership is lost during reconciliation", async () => {
+    const { coordinator, clock } = createCoordinator();
+    const delivery = await coordinator.resolveDelivery(
+      defaultDeliveryGroup({
+        repository,
+        itemId: "delivery-effect-fence",
+        kind: "executable-issue",
+      }),
+    );
+    const lease = await coordinator.acquireDeliveryLease({
+      repository,
+      key: delivery.key,
+      workerId: "worker-a",
+      ttlMs: 10,
+    });
+    const publish = vi.fn(async () => "must-not-publish");
+
+    await expect(
+      coordinator.publishDeliveryEffect({
+        key: delivery.key,
+        lease,
+        kind: "github-spec-pull-request",
+        marker: "delivery-effect-fence:pull-request",
+        reconcile: async () => {
+          clock.advance(11);
+          await coordinator.acquireDeliveryLease({
+            repository,
+            key: delivery.key,
+            workerId: "worker-b",
+            ttlMs: 100,
+          });
+          return undefined;
+        },
+        publish,
+      }),
+    ).rejects.toBeInstanceOf(LeaseLostError);
+
+    expect(publish).not.toHaveBeenCalled();
+  });
+
   it("converges duplicate and out-of-order deliveries on one job and dispatch", async () => {
     const { coordinator } = createCoordinator();
     const newer = await coordinator.ingest(

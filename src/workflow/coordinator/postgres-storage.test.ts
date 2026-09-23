@@ -19,6 +19,97 @@ describe("PostgresCoordinatorStorage", () => {
     );
     expect(migration).toContain("ON CONFLICT (repository, item_id) DO NOTHING");
   });
+
+  it("creates delivery-keyed durable effects with a unique replay identity", async () => {
+    const migration = await readFile(
+      new URL("./migrations/002_delivery_effects.sql", import.meta.url),
+      "utf8",
+    );
+    expect(migration).toContain(
+      "CREATE TABLE IF NOT EXISTS shipyard_delivery_effects",
+    );
+    expect(migration).toContain("UNIQUE (repository, item_id, kind, marker)");
+    expect(migration).toContain(
+      "REFERENCES shipyard_deliveries (repository, item_id)",
+    );
+
+    const row = {
+      id: "effect-1",
+      repository: "snappedly/shipyard",
+      item_id: "100",
+      kind: "github-spec-pull-request",
+      marker: "spec:100:pull-request",
+      payload: { title: "Spec" },
+      status: "succeeded",
+      external_ref: { number: 14 },
+      worker_id: "worker-a",
+      fencing_token: 3,
+      claimed_at: 10,
+      claim_expires_at: 20,
+      error: null,
+      created_at: "2026-09-23T10:00:00.000Z",
+      updated_at: "2026-09-23T10:00:01.000Z",
+    };
+    const query = vi.fn(
+      async (statement: string, _values?: readonly unknown[]) => ({
+        rows: statement.includes("INSERT INTO shipyard_delivery_effects")
+          ? [row]
+          : statement.includes("SELECT * FROM shipyard_delivery_effects")
+            ? [row]
+            : [],
+      }),
+    );
+    const storage = new PostgresCoordinatorStorage({
+      client: { query: query as unknown as PostgresQueryClient["query"] },
+    });
+    const input = {
+      id: "effect-1",
+      key: { repository: "snappedly/shipyard", itemId: "100" },
+      kind: "github-spec-pull-request",
+      marker: "spec:100:pull-request",
+      payload: { title: "Spec" },
+      status: "claimed" as const,
+      workerId: "worker-a",
+      fencingToken: 3,
+      claimedAt: 10,
+      claimExpiresAt: 20,
+      createdAt: "2026-09-23T10:00:00.000Z",
+      updatedAt: "2026-09-23T10:00:00.000Z",
+    };
+
+    await storage.transaction(async (transaction) => {
+      const inserted = await transaction.insertDeliveryEffectIfAbsent(input);
+      expect(inserted.inserted).toBe(true);
+      expect(inserted.effect.key).toEqual(input.key);
+      const existing = await transaction.findDeliveryEffect(
+        input.key,
+        input.kind,
+        input.marker,
+      );
+      expect(existing?.externalRef).toEqual({ number: 14 });
+    });
+
+    expect(query.mock.calls[1]?.[0]).toContain(
+      "ON CONFLICT (repository, item_id, kind, marker) DO NOTHING",
+    );
+    expect(query.mock.calls[1]?.[1]).toEqual([
+      "effect-1",
+      "snappedly/shipyard",
+      "100",
+      "github-spec-pull-request",
+      "spec:100:pull-request",
+      JSON.stringify({ title: "Spec" }),
+      "claimed",
+      null,
+      "worker-a",
+      3,
+      10,
+      20,
+      null,
+      "2026-09-23T10:00:00.000Z",
+      "2026-09-23T10:00:00.000Z",
+    ]);
+  });
   it("wraps coordinator operations in a transaction and releases pooled clients", async () => {
     const query = vi.fn(
       async (_text: string, _values?: readonly unknown[]) => ({

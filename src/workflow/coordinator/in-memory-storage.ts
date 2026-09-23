@@ -6,6 +6,7 @@ import type {
   DeliveryKey,
   DeliveryLease,
   DeliveryRecord,
+  DeliveryEffectIntent,
   DispatchIntent,
   EffectIntent,
   RepositoryControl,
@@ -20,6 +21,7 @@ interface MemoryState {
   readonly jobs: Map<string, WorkflowJob>;
   readonly dispatches: Map<string, DispatchIntent>;
   readonly effects: Map<string, EffectIntent>;
+  readonly deliveryEffects: Map<string, DeliveryEffectIntent>;
   readonly leases: Map<string, BranchLease>;
   readonly deliveryLeases: Map<string, DeliveryLease>;
   readonly repositoryControls: Map<string, RepositoryControl>;
@@ -42,6 +44,12 @@ const cloneState = (state: MemoryState): MemoryState => ({
   ),
   effects: new Map(
     [...state.effects.entries()].map(([key, value]) => [key, clone(value)]),
+  ),
+  deliveryEffects: new Map(
+    [...state.deliveryEffects.entries()].map(([key, value]) => [
+      key,
+      clone(value),
+    ]),
   ),
   leases: new Map(
     [...state.leases.entries()].map(([key, value]) => [key, clone(value)]),
@@ -74,6 +82,12 @@ const sameIdentity = (left: WorkIdentity, right: WorkIdentity): boolean =>
 
 const effectKey = (jobId: string, kind: string, marker: string): string =>
   `${jobId}\u0000${kind}\u0000${marker}`;
+
+const deliveryEffectKey = (
+  key: DeliveryKey,
+  kind: string,
+  marker: string,
+): string => `${deliveryKey(key)}\u0000${kind}\u0000${marker}`;
 
 const resourceKey = (repository: string, branch: string): string =>
   `${repository}\u0000${branch}`;
@@ -274,6 +288,34 @@ class MemoryTransaction implements CoordinatorStorageTransaction {
     );
   }
 
+  async findDeliveryEffect(
+    key: DeliveryKey,
+    kind: string,
+    marker: string,
+  ): Promise<DeliveryEffectIntent | undefined> {
+    const effect = this.state.deliveryEffects.get(
+      deliveryEffectKey(key, kind, marker),
+    );
+    return effect === undefined ? undefined : clone(effect);
+  }
+
+  async insertDeliveryEffectIfAbsent(effect: DeliveryEffectIntent) {
+    const key = deliveryEffectKey(effect.key, effect.kind, effect.marker);
+    const existing = this.state.deliveryEffects.get(key);
+    if (existing !== undefined) {
+      return { effect: clone(existing), inserted: false };
+    }
+    this.state.deliveryEffects.set(key, clone(effect));
+    return { effect: clone(effect), inserted: true };
+  }
+
+  async saveDeliveryEffect(effect: DeliveryEffectIntent): Promise<void> {
+    this.state.deliveryEffects.set(
+      deliveryEffectKey(effect.key, effect.kind, effect.marker),
+      clone(effect),
+    );
+  }
+
   async getLease(
     repository: string,
     branch: string,
@@ -340,6 +382,7 @@ export class InMemoryCoordinatorStorage implements CoordinatorStorage {
     jobs: new Map(),
     dispatches: new Map(),
     effects: new Map(),
+    deliveryEffects: new Map(),
     leases: new Map(),
     deliveryLeases: new Map(),
     repositoryControls: new Map(),

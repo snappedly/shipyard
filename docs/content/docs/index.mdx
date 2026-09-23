@@ -18,6 +18,11 @@ and evidence; a maintainer reviews and merges the exact candidate. Local-only
 orphan branches are ignored, and re-adding `shipyard` explicitly retries a
 blocked delivery.
 
+The `parallel-planner` template routes standalone groups through the standalone
+delivery lifecycle and planning specs through durable spec delivery. Unrelated
+groups can run together; dependency-ready spec workers may run concurrently,
+then their commits integrate serially on the shared branch.
+
 ## Quick start
 
 You need Node.js 20.18.1 or newer and npm, Git, a running Docker engine, and

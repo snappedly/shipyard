@@ -422,12 +422,19 @@ export const parseDeliveryRecord = (value: unknown): DeliveryRecord => {
           const candidateRecord = rawCandidate as Record<string, unknown>;
           if (
             typeof candidateRecord.deliveryId !== "string" ||
-            typeof candidateRecord.briefHash !== "string"
+            typeof candidateRecord.briefHash !== "string" ||
+            (candidateRecord.briefRevision !== undefined &&
+              (typeof candidateRecord.briefRevision !== "number" ||
+                !Number.isInteger(candidateRecord.briefRevision) ||
+                candidateRecord.briefRevision < 1))
           ) {
             throw new Error(`${path}.candidate identity is invalid`);
           }
           candidate = {
             deliveryId: candidateRecord.deliveryId,
+            ...(candidateRecord.briefRevision === undefined
+              ? {}
+              : { briefRevision: candidateRecord.briefRevision }),
             briefHash: candidateRecord.briefHash,
             base: revision(candidateRecord.base, `${path}.candidate.base`),
             head: revision(candidateRecord.head, `${path}.candidate.head`),

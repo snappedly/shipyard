@@ -22,9 +22,12 @@ describe("bundled PostgreSQL coordinator", () => {
     expect(createPool).toHaveBeenCalledWith(
       "postgres://shipyard:test@localhost/shipyard",
     );
-    expect(query).toHaveBeenCalledOnce();
+    expect(query).toHaveBeenCalledTimes(2);
     expect(query.mock.calls[0]?.[0]).toContain(
       "CREATE TABLE IF NOT EXISTS shipyard_jobs",
+    );
+    expect(query.mock.calls[1]?.[0]).toContain(
+      "CREATE TABLE IF NOT EXISTS shipyard_delivery_effects",
     );
     expect(runtime.coordinator).toBeDefined();
     await runtime.close();

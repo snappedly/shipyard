@@ -120,6 +120,8 @@ export const GITHUB_PUBLICATION_METADATA_VERSION = 1 as const;
 
 export interface GitHubPublicationMetadata {
   readonly version: typeof GITHUB_PUBLICATION_METADATA_VERSION;
+  /** Current delivery graph version for planning-spec pull requests. */
+  readonly deliveryVersion?: number;
   readonly repository: string;
   readonly itemId: string;
   readonly kind: WorkItemKind;

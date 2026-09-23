@@ -924,6 +924,126 @@ describe("spec delivery orchestration", () => {
     expect(calls.worker).toBe(1);
   });
 
+  it("refreshes retracted PR metadata after a scope change before resuming children", async () => {
+    const owner = coordinator();
+    const original = deliveryFor(["101"]);
+    const resolved = await owner.resolveDelivery(original);
+    const initialLease = await owner.acquireDeliveryLease({
+      repository,
+      key: resolved.key,
+      workerId: "coordinator-before-scope-change",
+      ttlMs: 10_000,
+    });
+    const integratedHead: RevisionReference = {
+      branch: "shipyard/spec-100",
+      sha: "b".repeat(40),
+    };
+    const completedCandidate = {
+      deliveryId: resolved.id,
+      briefRevision: brief.revision,
+      briefHash: brief.hash,
+      base,
+      head: integratedHead,
+      pullRequest: {
+        id: "pr-100",
+        baseBranch: base.branch,
+        headBranch: integratedHead.branch,
+        draft: false,
+      },
+    };
+    await owner.saveSpecDeliveryCheckpoint(resolved.key, initialLease, {
+      pullRequest: completedCandidate.pullRequest,
+      currentHead: integratedHead,
+      children: [
+        {
+          child: identity("101"),
+          status: "closed",
+          workerBase: base,
+          sourceCommit: { branch: "shipyard/child-101", sha: "c".repeat(40) },
+          candidate: completedCandidate,
+          verification: {
+            checks: [],
+            cleanup: { status: "passed", summary: "Clean." },
+            evidence: ["Child verified."],
+          },
+          closedAt: "2026-09-23T10:00:00.000Z",
+        },
+      ],
+    });
+    const expanded = await owner.expandDeliveryScope({
+      key: resolved.key,
+      addedChildren: [identity("102")],
+      completedChildIds: ["101"],
+    });
+    const delivery = deliveryFor(["101", "102"]);
+    const calls = { ensure: 0, worker: 0, integrate: 0, publish: 0 };
+    const integration: SpecIntegrationAdapter = {
+      reconcileDelivery: async () => ({
+        pullRequest: {
+          ...completedCandidate.pullRequest,
+          draft: true,
+        },
+        scopeVersionChanged: true,
+        scopeChangeRetracted: true,
+        head: integratedHead,
+      }),
+      ensureDraftPullRequest: async (request) => {
+        calls.ensure += 1;
+        expect(request.delivery.version).toBe(
+          (await owner.getDelivery(resolved.key))?.version,
+        );
+        expect(request.briefRevision).toBe(brief.revision);
+        expect(request.candidate).toEqual(integratedHead);
+        return {
+          ...completedCandidate.pullRequest,
+          draft: true,
+        };
+      },
+      integrateChild: async () => {
+        calls.integrate += 1;
+        return integratedHead;
+      },
+      publishCandidate: async (request) => {
+        calls.publish += 1;
+        return {
+          pullRequestId: request.candidate.pullRequest.id,
+          head: request.candidate.head,
+        };
+      },
+    };
+    const result = await deliverSpec({
+      coordinator: owner,
+      delivery,
+      brief,
+      policy,
+      workerId: "coordinator-before-scope-change",
+      base,
+      integrationBranch: integratedHead.branch,
+      childWorker: {
+        implement: async () => {
+          calls.worker += 1;
+          throw new Error("stop after current PR metadata is refreshed");
+        },
+      },
+      integration,
+      verification: verification(),
+      childLifecycle: {
+        reconcileChild: async ({ child }) =>
+          child.itemId === "101" ? "closed" : "open",
+        closeChild: async () => undefined,
+      },
+      review: review(),
+      readCurrent: async () => currentFor(delivery.id, integratedHead),
+    });
+
+    expect(result.outcome).toBe("blocked");
+    expect(result.reason).toContain("stop after current PR metadata");
+    expect(calls).toEqual({ ensure: 1, worker: 1, integrate: 0, publish: 0 });
+    expect(
+      (await owner.getDelivery(resolved.key))?.specCheckpoint?.pullRequest,
+    ).toMatchObject({ id: "pr-100", draft: true });
+  });
+
   it("recovers a child integration published remotely before its checkpoint", async () => {
     const owner = coordinator();
     const delivery = deliveryFor(["101"]);

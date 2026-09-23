@@ -4,6 +4,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import ts from "typescript";
 import {
   scaffold,
   getNextStepsLines,
@@ -688,7 +689,7 @@ describe("InitService scaffold", () => {
     expect(envExample).not.toContain("OPENAI_API_KEY=");
   });
 
-  it("keeps centralized Codex model references in multi-phase templates", async () => {
+  it("keeps centralized Codex worker factories and records the configured model", async () => {
     const dir = await makeDir();
     await runScaffold(dir, {
       agent: codexAgent,
@@ -699,7 +700,7 @@ describe("InitService scaffold", () => {
     const mainTs = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
     expect(mainTs).toContain("shipyard.CODEX_MODELS.routine");
     expect(mainTs).toContain("shipyard.CODEX_MODELS.strong");
-    expect(mainTs).not.toMatch(/gpt-5\.6/);
+    expect(mainTs).toContain(`model: "${CODEX_MODELS.routine.model}"`);
   });
 
   it.each([
@@ -854,6 +855,35 @@ describe("InitService scaffold", () => {
   });
 
   describe("parallel-planner template", () => {
+    const generatedRouter = async () => {
+      const dir = await makeDir();
+      await runScaffold(dir, { templateName: "parallel-planner" });
+      const routerPath = join(dir, ".shipyard", "deliver-groups.ts");
+      const source = await readFile(routerPath, "utf-8");
+      const javascript = ts.transpileModule(source, {
+        compilerOptions: {
+          module: ts.ModuleKind.ESNext,
+          target: ts.ScriptTarget.ES2022,
+        },
+      }).outputText;
+      const imported = (await import(
+        /* @vite-ignore */
+        `data:text/javascript,${encodeURIComponent(javascript)}`
+      )) as {
+        deliverPlannedGroups: (input: {
+          groups: readonly unknown[];
+          hydrate: (group: never) => Promise<never>;
+          resolve: (group: never) => never;
+          deliverStandalone: (input: never) => Promise<unknown>;
+          deliverSpec: (input: never) => Promise<unknown>;
+        }) => Promise<{
+          outcome: string;
+          groups: readonly unknown[];
+        }>;
+      };
+      return imported.deliverPlannedGroups;
+    };
+
     it("produces worker and planner files without a direct merge prompt", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "parallel-planner" });
@@ -937,6 +967,141 @@ describe("InitService scaffold", () => {
       expect(mainTs).not.toContain("merge-prompt.md");
     });
 
+    it("routes standalone groups through the generated canonical callback", async () => {
+      const route = await generatedRouter();
+      const calls: string[] = [];
+      const result = await route({
+        groups: [{ id: "standalone-7", mode: "standalone" }],
+        hydrate: async (group) => group as never,
+        resolve: (group) => group as never,
+        deliverStandalone: async ({ delivery }) => {
+          calls.push((delivery as { id: string }).id);
+          return { outcome: "ready-for-human" };
+        },
+        deliverSpec: async () => {
+          throw new Error("spec callback must not run");
+        },
+      });
+
+      expect(result.outcome).toBe("delivered");
+      expect(calls).toEqual(["standalone-7"]);
+    });
+
+    it("routes a dependency graph intact to one spec delivery", async () => {
+      const route = await generatedRouter();
+      const graph = {
+        id: "spec-8",
+        mode: "planning-spec",
+        graph: {
+          children: ["11", "12", "13"],
+          dependencies: [
+            { itemId: "11", dependsOn: [] },
+            { itemId: "12", dependsOn: [] },
+            { itemId: "13", dependsOn: ["11", "12"] },
+          ],
+        },
+      };
+      let received: unknown;
+      const result = await route({
+        groups: [graph],
+        hydrate: async (group) => group as never,
+        resolve: (group) => group as never,
+        deliverStandalone: async () => {
+          throw new Error("standalone callback must not run");
+        },
+        deliverSpec: async ({ delivery }) => {
+          received = delivery;
+          return { outcome: "ready-for-human" };
+        },
+      });
+
+      expect(result.outcome).toBe("delivered");
+      expect(received).toEqual(graph);
+    });
+
+    it("runs mixed unrelated groups concurrently through their canonical callbacks", async () => {
+      const route = await generatedRouter();
+      const started: string[] = [];
+      let resolveGate!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        resolveGate = resolve;
+      });
+      const run =
+        (name: string) =>
+        async ({ delivery }: { delivery: unknown }) => {
+          const id = (delivery as { id: string }).id;
+          started.push(`${name}:${id}`);
+          if (started.length === 2) resolveGate();
+          await gate;
+          return { outcome: "ready-for-human" };
+        };
+      const result = await route({
+        groups: [
+          { id: "issue-1", mode: "standalone" },
+          { id: "spec-2", mode: "planning-spec" },
+        ],
+        hydrate: async (group) => group as never,
+        resolve: (group) => group as never,
+        deliverStandalone: run("standalone"),
+        deliverSpec: run("spec"),
+      });
+
+      expect(result.outcome).toBe("delivered");
+      expect(started).toEqual(["standalone:issue-1", "spec:spec-2"]);
+    });
+
+    it("replays a delivery through its canonical callback without duplicating its effect", async () => {
+      const route = await generatedRouter();
+      const effects = new Map<string, string>();
+      let publishes = 0;
+      const deliverStandalone = async ({ delivery }: { delivery: unknown }) => {
+        const id = (delivery as { id: string }).id;
+        const existing = effects.get(id);
+        if (existing !== undefined)
+          return { outcome: "ready-for-human", pr: existing };
+        publishes += 1;
+        effects.set(id, "pr-9");
+        return { outcome: "ready-for-human", pr: "pr-9" };
+      };
+      const input = {
+        groups: [{ id: "issue-9", mode: "standalone" }],
+        hydrate: async (group: never) => group,
+        resolve: (group: never) => group,
+        deliverStandalone,
+        deliverSpec: async () => ({ outcome: "blocked" }),
+      };
+
+      const first = await route(input);
+      const replay = await route(input);
+
+      expect(first.outcome).toBe("delivered");
+      expect(replay.outcome).toBe("delivered");
+      expect(effects.get("issue-9")).toBe("pr-9");
+      expect(publishes).toBe(1);
+    });
+
+    it("reports blocked groups and no-work plans without claiming success", async () => {
+      const route = await generatedRouter();
+      const noWork = await route({
+        groups: [],
+        hydrate: async (group: never) => group,
+        resolve: (group: never) => group,
+        deliverStandalone: async () => ({ outcome: "ready-for-human" }),
+        deliverSpec: async () => ({ outcome: "ready-for-human" }),
+      });
+      const blocked = await route({
+        groups: [{ id: "spec-10", mode: "planning-spec" }],
+        hydrate: async (group) => group as never,
+        resolve: (group) => group as never,
+        deliverStandalone: async () => ({ outcome: "blocked" }),
+        deliverSpec: async () => ({ outcome: "blocked", reason: "lease busy" }),
+      });
+
+      expect(noWork).toEqual({ outcome: "no-work", groups: [] });
+      expect(blocked.outcome).toBe("blocked");
+      expect(blocked.groups).toHaveLength(1);
+    });
+
     it("main.mts does not contain a merge agent", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "parallel-planner" });
@@ -949,7 +1114,7 @@ describe("InitService scaffold", () => {
       expect(mainTs).not.toContain('name: "merger"');
     });
 
-    it("main.mts runs dependency-safe groups and stops on no progress", async () => {
+    it("main.mts delegates dependency scheduling and delivery to canonical workflows", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "parallel-planner" });
 
@@ -957,17 +1122,19 @@ describe("InitService scaffold", () => {
         join(dir, ".shipyard", "main.mts"),
         "utf-8",
       );
-      expect(mainTs).toContain("Promise.allSettled");
-      expect(mainTs).toContain("dependsOn.every");
-      expect(mainTs).toContain("No delivery group made progress");
-
-      const noProgressIndex = mainTs.indexOf("if (completed.length === 0)");
-      const noProgressSection = mainTs.slice(
-        noProgressIndex,
-        noProgressIndex + 350,
+      const router = await readFile(
+        join(dir, ".shipyard", "deliver-groups.ts"),
+        "utf-8",
       );
-      expect(noProgressSection).toContain("break");
-      expect(noProgressSection).not.toContain("continue");
+      expect(mainTs).toContain("deliverPlannedGroups({");
+      expect(mainTs).toContain("deliverStandalone: deliverStandaloneGroup");
+      expect(mainTs).toContain("deliverSpec: deliverSpecGroup");
+      expect(mainTs).toContain("await shipyard.deliverStandalone({");
+      expect(mainTs).toContain("await shipyard.deliverSpec({");
+      expect(router).toContain("Promise.allSettled");
+      expect(mainTs).not.toContain("publishTemplateDelivery");
+      expect(mainTs).not.toContain("closeIssue(");
+      expect(mainTs).not.toContain('name: "merger"');
     });
 
     it("common files are still generated with parallel-planner template", async () => {
@@ -1424,8 +1591,7 @@ describe("InitService scaffold", () => {
 
       const main = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
       expect(main).toContain("deliveryGroups");
-      expect(main).toContain("TASK_ID: child.id");
-      expect(main).not.toContain("number: number");
+      expect(main).toContain("TASK_ID: request.child.itemId");
       expect(main).not.toContain("ISSUE_NUMBER");
       expect(main).not.toContain("`  #${");
     });

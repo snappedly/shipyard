@@ -13,6 +13,7 @@ import type {
   CoordinatorStorage,
   CoordinatorStorageTransaction,
   DeliveryGroup,
+  DeliveryEffectIntent,
   DeliveryKey,
   DeliveryLease,
   DeliveryRecord,
@@ -463,6 +464,46 @@ const effectFromRow = (value: Record<string, unknown>): EffectIntent => ({
   updatedAt: timestamp(value.updated_at, "effect.updated_at"),
 });
 
+const deliveryEffectFromRow = (
+  value: Record<string, unknown>,
+): DeliveryEffectIntent => ({
+  id: requiredString(value.id, "delivery effect.id"),
+  key: {
+    repository: requiredString(value.repository, "delivery effect.repository"),
+    itemId: requiredString(value.item_id, "delivery effect.item_id"),
+  },
+  kind: requiredString(value.kind, "delivery effect.kind"),
+  marker: requiredString(value.marker, "delivery effect.marker"),
+  payload: jsonValue(value.payload),
+  status: requiredString(
+    value.status,
+    "delivery effect.status",
+  ) as DeliveryEffectIntent["status"],
+  externalRef: jsonValue(value.external_ref),
+  workerId:
+    value.worker_id === null || value.worker_id === undefined
+      ? undefined
+      : requiredString(value.worker_id, "delivery effect.worker_id"),
+  fencingToken:
+    value.fencing_token === null || value.fencing_token === undefined
+      ? undefined
+      : numberValue(value.fencing_token, "delivery effect.fencing_token"),
+  claimedAt:
+    value.claimed_at === null || value.claimed_at === undefined
+      ? undefined
+      : numberValue(value.claimed_at, "delivery effect.claimed_at"),
+  claimExpiresAt:
+    value.claim_expires_at === null || value.claim_expires_at === undefined
+      ? undefined
+      : numberValue(value.claim_expires_at, "delivery effect.claim_expires_at"),
+  error:
+    value.error === null || value.error === undefined
+      ? undefined
+      : requiredString(value.error, "delivery effect.error"),
+  createdAt: timestamp(value.created_at, "delivery effect.created_at"),
+  updatedAt: timestamp(value.updated_at, "delivery effect.updated_at"),
+});
+
 const leaseFromRow = (value: Record<string, unknown>): BranchLease => ({
   leaseId: requiredString(value.lease_id, "lease.lease_id"),
   resourceKey: requiredString(value.resource_key, "lease.resource_key"),
@@ -877,6 +918,59 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
     );
   }
 
+  async findDeliveryEffect(
+    key: DeliveryKey,
+    kind: string,
+    marker: string,
+  ): Promise<DeliveryEffectIntent | undefined> {
+    const result = await this.client.query<Record<string, unknown>>(
+      `SELECT * FROM shipyard_delivery_effects
+       WHERE repository = $1 AND item_id = $2 AND kind = $3 AND marker = $4
+       FOR UPDATE`,
+      [key.repository, key.itemId, kind, marker],
+    );
+    const value = optionalRow(result);
+    return value === undefined ? undefined : deliveryEffectFromRow(value);
+  }
+
+  async insertDeliveryEffectIfAbsent(effect: DeliveryEffectIntent) {
+    const result = await this.client.query<Record<string, unknown>>(
+      `INSERT INTO shipyard_delivery_effects (
+         id, repository, item_id, kind, marker, payload, status, external_ref,
+         worker_id, fencing_token, claimed_at, claim_expires_at, error,
+         created_at, updated_at
+       ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb, $9, $10,
+                 $11, $12, $13, $14, $15)
+       ON CONFLICT (repository, item_id, kind, marker) DO NOTHING
+       RETURNING *`,
+      deliveryEffectValues(effect),
+    );
+    if (result.rows.length > 0) {
+      return { effect: deliveryEffectFromRow(result.rows[0]!), inserted: true };
+    }
+    const existing = await this.one<Record<string, unknown>>(
+      `SELECT * FROM shipyard_delivery_effects
+       WHERE repository = $1 AND item_id = $2 AND kind = $3 AND marker = $4
+       FOR UPDATE`,
+      [effect.key.repository, effect.key.itemId, effect.kind, effect.marker],
+      "delivery effect",
+    );
+    return { effect: deliveryEffectFromRow(existing), inserted: false };
+  }
+
+  async saveDeliveryEffect(effect: DeliveryEffectIntent): Promise<void> {
+    await this.client.query(
+      `UPDATE shipyard_delivery_effects SET
+         repository = $2, item_id = $3, kind = $4, marker = $5,
+         payload = $6::jsonb, status = $7, external_ref = $8::jsonb,
+         worker_id = $9, fencing_token = $10, claimed_at = $11,
+         claim_expires_at = $12, error = $13, created_at = $14,
+         updated_at = $15
+       WHERE id = $1`,
+      deliveryEffectValues(effect),
+    );
+  }
+
   async getLease(repository: string, branch: string) {
     const result = await this.client.query<Record<string, unknown>>(
       "SELECT * FROM shipyard_branch_leases WHERE repository = $1 AND branch = $2 FOR UPDATE",
@@ -1054,6 +1148,26 @@ const dispatchValues = (dispatch: DispatchIntent): readonly unknown[] => [
 const effectValues = (effect: EffectIntent): readonly unknown[] => [
   effect.id,
   effect.jobId,
+  effect.kind,
+  effect.marker,
+  effect.payload === undefined ? null : json(effect.payload),
+  effect.status,
+  effect.externalRef === undefined ? null : json(effect.externalRef),
+  effect.workerId ?? null,
+  effect.fencingToken ?? null,
+  effect.claimedAt ?? null,
+  effect.claimExpiresAt ?? null,
+  effect.error ?? null,
+  effect.createdAt,
+  effect.updatedAt,
+];
+
+const deliveryEffectValues = (
+  effect: DeliveryEffectIntent,
+): readonly unknown[] => [
+  effect.id,
+  effect.key.repository,
+  effect.key.itemId,
   effect.kind,
   effect.marker,
   effect.payload === undefined ? null : json(effect.payload),

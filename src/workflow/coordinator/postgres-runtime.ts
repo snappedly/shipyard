@@ -22,13 +22,10 @@ export interface PostgresCoordinatorRuntime {
 const defaultPool = (databaseUrl: string): CoordinatorPool =>
   new pg.Pool({ connectionString: databaseUrl });
 
-const migrationSql = async (): Promise<string> => {
+const migrationSql = async (name: string): Promise<string> => {
   const locations = [
-    new URL(
-      "./workflow/coordinator/migrations/001_initial.sql",
-      import.meta.url,
-    ),
-    new URL("./migrations/001_initial.sql", import.meta.url),
+    new URL(`./workflow/coordinator/migrations/${name}`, import.meta.url),
+    new URL(`./migrations/${name}`, import.meta.url),
   ];
   for (const location of locations) {
     try {
@@ -37,7 +34,9 @@ const migrationSql = async (): Promise<string> => {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
   }
-  throw new Error("Shipyard coordinator migration is missing from the package");
+  throw new Error(
+    `Shipyard coordinator migration ${name} is missing from the package`,
+  );
 };
 
 /** Open the durable coordinator required by bundled GitHub workflows. */
@@ -50,7 +49,9 @@ export const openPostgresCoordinator = async (
   }
   const pool = (options.createPool ?? defaultPool)(databaseUrl);
   try {
-    await pool.query(await migrationSql());
+    for (const migration of ["001_initial.sql", "002_delivery_effects.sql"]) {
+      await pool.query(await migrationSql(migration));
+    }
   } catch (error) {
     await pool.end();
     throw error;

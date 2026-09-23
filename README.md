@@ -67,7 +67,7 @@ the [agent guide](docs/content/docs/agents.mdx) for authentication details.
 | `blank`                        | One custom task       | One agent run                                             |
 | `simple-loop`                  | A small issue backlog | Standalone delivery → checks/review → human handoff       |
 | `sequential-reviewer`          | Safer issue delivery  | Implement → checks/review → human handoff                 |
-| `parallel-planner`             | Independent issues    | Group dependencies → integrate → draft PR → human handoff |
+| `parallel-planner`             | Mixed issue backlogs  | Standalone and spec groups → canonical delivery → handoff |
 | `parallel-planner-with-review` | Maximum autonomy      | Group → review/repair → draft PR → human handoff          |
 
 All templates are generated TypeScript. Adjust prompts, models, iteration
@@ -75,11 +75,17 @@ limits, branch strategy, hooks, and checks in `.shipyard/main.ts` or
 `.shipyard/main.mts`.
 
 The bundled GitHub workflows select or plan issues on the host and publish one
-draft PR per delivery. `simple-loop` and `sequential-reviewer` verify the
-published candidate, checks, review, and cleanup before marking the PR ready
-for human merge and closing its source issue with commit and PR evidence. The
-other templates leave source issues open. The host `gh` login needs Contents
-and Pull requests write access. Set
+draft PR per delivery. `parallel-planner` sends standalone groups through
+`deliverStandalone` and planning-spec groups through durable `deliverSpec`;
+unrelated groups run concurrently while the spec coordinator schedules
+dependency-safe workers and integrates their commits serially. The host owns
+GitHub effects, checks, closure, review, and handoff. `simple-loop` and
+`sequential-reviewer` verify the published candidate, checks, review, and
+cleanup before marking the PR ready for human merge and closing its source
+issue with commit and PR evidence. Spec child issues close
+after their integration and verification; the parent remains open until merge.
+The host `gh` login needs Contents, Pull requests, Checks, and Issues write
+access. Set
 `SHIPYARD_BASE_BRANCH` if the integration branch is not `staging`. Required
 checks and review findings must be resolved before a draft PR is marked ready
 for merge.
