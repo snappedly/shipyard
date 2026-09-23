@@ -58,6 +58,7 @@ for (let iteration = 0; iteration < 3; iteration++) {
     sandbox: docker(),
     hooks,
   });
+  let evidence: string;
   try {
     const result = await sandbox.run({
       name: "implementer",
@@ -72,10 +73,22 @@ for (let iteration = 0; iteration < 3; iteration++) {
         SKILL: issue.kind === "spec" ? "/implement-spec" : "/implement",
       },
     });
-    const evidence = handoffEvidence(result.stdout);
-    if (!result.completionSignal || !evidence)
+    const packet = handoffEvidence(result.stdout);
+    if (!result.completionSignal || !packet)
       throw new Error(`Issue #${issue.id} has no verified completion evidence`);
-    const handoff = await sandbox.exec(
+    evidence = packet;
+  } finally {
+    await sandbox.close();
+  }
+
+  // Sync-out rewrites sandbox commits on the host. Publish from the synced
+  // branch so a later invocation can fast-forward the same PR.
+  const publication = await shipyard.createSandbox({
+    branch: issue.branch,
+    sandbox: docker(),
+  });
+  try {
+    const handoff = await publication.exec(
       `bash .shipyard/handoff.sh ${issue.id} ${issue.branch} ${targetBranch} ${repository} ${[issue.id, ...(issue.tickets ?? []).map((ticket) => ticket.id)].join(",")}`,
       { stdin: evidence },
     );
@@ -85,6 +98,6 @@ for (let iteration = 0; iteration < 3; iteration++) {
       );
     console.log(handoff.stdout.trim());
   } finally {
-    await sandbox.close();
+    await publication.close();
   }
 }

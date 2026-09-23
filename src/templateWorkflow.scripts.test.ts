@@ -400,4 +400,64 @@ else process.exit(2);
     expect(specCommands).not.toContain("gh issue close");
     expect(specCommands).not.toContain("gh pr merge");
   });
+
+  it("hands off a bundle clone whose target exists only as a remote ref", async () => {
+    const { dir, bin } = await fixture();
+    const source = join(dir, "source");
+    const clone = join(dir, "clone");
+    const bundle = join(dir, "source.bundle");
+    const realGit = run("which", ["git"], dir, bin).stdout.trim();
+    const git = (...args: string[]) => {
+      const result = spawnSync(realGit, args, { encoding: "utf8" });
+      expect(result.status, result.stderr).toBe(0);
+    };
+    git("init", "-b", "staging", source);
+    git("-C", source, "config", "user.name", "Test");
+    git("-C", source, "config", "user.email", "test@example.com");
+    await writeFile(join(source, "base.txt"), "base");
+    git("-C", source, "add", ".");
+    git("-C", source, "commit", "-m", "base");
+    git("-C", source, "checkout", "-b", "shipyard/issue-1");
+    await writeFile(join(source, "change.txt"), "change");
+    git("-C", source, "add", ".");
+    git("-C", source, "commit", "-m", "change");
+    git("-C", source, "bundle", "create", bundle, "--all");
+    git("clone", bundle, clone);
+    git("-C", clone, "checkout", "shipyard/issue-1");
+    const localBase = spawnSync(realGit, ["-C", clone, "rev-parse", "staging"]);
+    expect(localBase.status).not.toBe(0);
+    await executable(
+      join(bin, "git"),
+      `
+const {spawnSync} = require("node:child_process");
+const args = process.argv.slice(2);
+if (args.includes("push") || (args[0] === "remote" && args[1] === "set-url")) process.exit(0);
+const result = spawnSync(process.env.REAL_GIT, args, {stdio:"inherit"});
+process.exit(result.status ?? 1);
+`,
+    );
+    await executable(
+      join(bin, "gh"),
+      `
+const args = process.argv.slice(2);
+if (args[0] === "issue" && args[1] === "view") {
+  if (!args.includes("--repo")) process.exit(2);
+  console.log(args.includes("labels") ? "shipyard" : "Fix bug");
+} else if (args[0] === "pr" && args[1] === "list") console.log("7");
+else if (args[0] === "pr" && args[1] === "view") console.log(args.includes("isDraft") ? "false" : "https://example.test/pr/7");
+else if (args[0] === "pr" || args[0] === "label" || args[0] === "issue") {}
+else process.exit(2);
+`,
+    );
+    const result = run(
+      "bash",
+      [script("handoff.sh"), "1", "shipyard/issue-1", "staging", "owner/repo"],
+      clone,
+      bin,
+      { REAL_GIT: realGit },
+      "Checks: passed; Review: approved",
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("https://example.test/pr/7");
+  });
 });

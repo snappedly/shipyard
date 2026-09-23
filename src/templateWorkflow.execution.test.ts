@@ -25,6 +25,9 @@ const calls = vi.hoisted(() => ({
   reviewApproved: true,
   implementationComplete: true,
   handoffSucceeds: true,
+  finalChanges: false,
+  finalReviewApproved: true,
+  reviewCount: 0,
 }));
 
 vi.mock("node:child_process", () => ({
@@ -113,14 +116,25 @@ vi.mock("@snappedly-tools/shipyard", () => {
           return calls.implementationComplete
             ? packet("tests passed")
             : { stdout: "blocked", commits: [] };
-        if (name === "reviewer")
-          return calls.reviewApproved
+        if (name === "reviewer") {
+          calls.reviewCount++;
+          return (
+            calls.reviewCount > 1 && calls.finalChanges
+              ? calls.finalReviewApproved
+              : calls.reviewApproved
+          )
             ? {
                 ...packet("review approved"),
                 stdout:
                   "<handoff>review approved</handoff><review>APPROVED</review>",
               }
             : { ...packet("finding"), stdout: "<handoff>finding</handoff>" };
+        }
+        if (name === "merger")
+          return {
+            ...packet("integration passed"),
+            commits: calls.finalChanges ? [{ sha: "new" }] : [],
+          };
         return packet("integration passed");
       },
       exec: async (command: string) => {
@@ -199,6 +213,9 @@ beforeEach(() => {
   calls.reviewApproved = true;
   calls.implementationComplete = true;
   calls.handoffSucceeds = true;
+  calls.finalChanges = false;
+  calls.finalReviewApproved = true;
+  calls.reviewCount = 0;
 });
 
 afterEach(() => {
@@ -212,6 +229,7 @@ describe("generated issue workflows", () => {
     expect(calls.events).toEqual([
       "select",
       "implementer",
+      "close",
       "handoff",
       "close",
       "select",
@@ -224,6 +242,7 @@ describe("generated issue workflows", () => {
       "select",
       "implementer",
       "reviewer",
+      "close",
       "handoff",
       "close",
       "select",
@@ -237,6 +256,7 @@ describe("generated issue workflows", () => {
       "planner",
       "implementer",
       "merger",
+      "close",
       "handoff",
       "close",
       "select",
@@ -251,9 +271,56 @@ describe("generated issue workflows", () => {
       "implementer",
       "reviewer",
       "merger",
+      "close",
       "handoff",
       "close",
       "select",
+    ]);
+  });
+
+  it("re-reviews the final standalone commit before handoff", async () => {
+    calls.finalChanges = true;
+    await import("./templates/parallel-planner-with-review/main.mts" as string);
+    expect(calls.events.filter((event) => event === "reviewer")).toHaveLength(
+      2,
+    );
+    expect(calls.events.indexOf("handoff")).toBeGreaterThan(
+      calls.events.lastIndexOf("reviewer"),
+    );
+  });
+
+  it("blocks handoff when review of final corrections has findings", async () => {
+    calls.finalChanges = true;
+    calls.finalReviewApproved = false;
+    await expect(
+      import("./templates/parallel-planner-with-review/main.mts" as string),
+    ).rejects.toThrow("unresolved review findings");
+    expect(calls.events).not.toContain("handoff");
+  });
+
+  it("uses non-reserved prompt arguments for target branches", async () => {
+    await import("./templates/parallel-planner-with-review/main.mts" as string);
+    for (const invocation of calls.invocations)
+      expect(invocation.args).not.toHaveProperty("TARGET_BRANCH");
+    expect(
+      calls.invocations.find((call) => call.name === "reviewer")?.args
+        .BASE_BRANCH,
+    ).toBe("staging");
+  });
+
+  it("publishes only after closing the implementation sandbox and reopening the synced branch", async () => {
+    await import("./templates/simple-loop/main.mts" as string);
+    expect(calls.events).toEqual([
+      "select",
+      "implementer",
+      "close",
+      "handoff",
+      "close",
+      "select",
+    ]);
+    expect(calls.creates.map((item) => item.branch)).toEqual([
+      "shipyard/issue-42",
+      "shipyard/issue-42",
     ]);
   });
 
@@ -284,6 +351,7 @@ describe("generated issue workflows", () => {
     expect(calls.events).toEqual([
       "select",
       "implementer",
+      "close",
       "handoff",
       "close",
       "select",
@@ -314,6 +382,7 @@ describe("generated issue workflows", () => {
       "spec-integrator",
       "close",
       "merger",
+      "close",
       "handoff",
       "close",
       "select",
@@ -409,6 +478,7 @@ describe("generated issue workflows", () => {
       "close",
       "reviewer",
       "merger",
+      "close",
       "handoff",
       "close",
       "select",
@@ -434,6 +504,12 @@ describe("generated issue workflows", () => {
     await expect(
       import("./templates/simple-loop/main.mts" as string),
     ).rejects.toThrow("push failed");
-    expect(calls.events).toEqual(["select", "implementer", "handoff", "close"]);
+    expect(calls.events).toEqual([
+      "select",
+      "implementer",
+      "close",
+      "handoff",
+      "close",
+    ]);
   });
 });

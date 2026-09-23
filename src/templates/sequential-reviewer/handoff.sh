@@ -21,15 +21,18 @@ grep -Eiq '(^|[[:space:]])Review:' <<< "$evidence" || { echo "Missing review evi
 [[ -z $(git status --porcelain) ]] || {
   echo "Uncommitted changes prevent PR handoff" >&2; exit 1;
 }
-git merge-base --is-ancestor "$base" HEAD || {
+base_ref=$(git rev-parse --verify "refs/remotes/origin/$base^{commit}") || {
+  echo "Target branch is unavailable in the sandbox" >&2; exit 1;
+}
+git merge-base --is-ancestor "$base_ref" HEAD || {
   echo "PR branch is not based on the target branch" >&2; exit 1;
 }
-[[ -n $(git log "$base"..HEAD --format=%H) ]] || {
+[[ -n $(git log "$base_ref"..HEAD --format=%H) ]] || {
   echo "No verified commit to publish" >&2; exit 1;
 }
 
 [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "Invalid GitHub repository" >&2; exit 1; }
-title=$(gh issue view "$issue" --json title --jq .title)
+title=$(gh issue view "$issue" --repo "$repo" --json title --jq .title)
 body=$(mktemp)
 trap 'rm -f "$body"' EXIT
 links=""

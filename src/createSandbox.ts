@@ -885,7 +885,13 @@ export const createSandboxFromWorktree = async (
         yield* Effect.all(allEffects, {
           concurrency: "unbounded",
         });
-      }),
+      }).pipe(
+        Effect.onError(() =>
+          providerHandle
+            ? Effect.promise(() => providerHandle!.close().catch(() => {}))
+            : Effect.void,
+        ),
+      ),
     );
   }
 

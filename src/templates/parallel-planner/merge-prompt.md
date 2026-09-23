@@ -1,6 +1,6 @@
 # Final integration for scope #{{TASK_ID}}: {{ISSUE_TITLE}}
 
-On branch `{{BRANCH}}`, inspect its complete diff from `{{TARGET_BRANCH}}` and the source issue. This is the planner's final integration stage and ends in one PR for this scope. Follow `/code-cleanup` and local `/code-review` appropriate to the issue, using the worker's existing valid check evidence. Run required integrated checks and reinstall candidate dependencies with `bash .shipyard/setup.sh` after manifest changes. Resolve findings, commit corrections and inspect the final branch.
+On branch `{{BRANCH}}`, inspect its complete diff from `{{BASE_BRANCH}}` and the source issue. This is the planner's final integration stage and ends in one PR for this scope. Follow `/code-cleanup` and local `/code-review` appropriate to the issue, using the worker's existing valid check evidence. Run required integrated checks and reinstall candidate dependencies with `bash .shipyard/setup.sh` after manifest changes. Resolve findings, commit corrections and inspect the final branch.
 
 Do not close the issue, merge into the target, or publish the PR. If checks or review remain unresolved, explain why without completion. After a verified final commit, report `Checks: <commands and results>`, `Review: APPROVED`, and limitations:
 

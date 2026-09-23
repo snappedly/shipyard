@@ -94,7 +94,7 @@ const runWorker = async (scope: Scope, ticket: Ticket) => {
       promptArgs: {
         TASK_ID: ticket.id,
         BRANCH: branch,
-        TARGET_BRANCH: scope.branch,
+        BASE_BRANCH: scope.branch,
         SCOPE: JSON.stringify(scope),
       },
     });
@@ -229,6 +229,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
         sandbox: docker(),
         hooks,
       });
+      let handoffEvidence: string;
       try {
         if (scope.kind === "standalone") {
           const standalone = await integration.run({
@@ -253,7 +254,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
           promptArgs: {
             TASK_ID: id,
             BRANCH: scope.branch,
-            TARGET_BRANCH: targetBranch,
+            BASE_BRANCH: targetBranch,
             SCOPE: JSON.stringify(scope),
           },
         });
@@ -267,18 +268,42 @@ for (let iteration = 0; iteration < 10; iteration++) {
             TASK_ID: id,
             ISSUE_TITLE: scope.title,
             BRANCH: scope.branch,
-            TARGET_BRANCH: targetBranch,
+            BASE_BRANCH: targetBranch,
             SCOPE: JSON.stringify(scope),
           },
         });
         const finalEvidence = complete(final, `Final integration of #${id}`);
+        handoffEvidence = `${workerEvidence}\n\n${finalEvidence}`;
+        if (final.commits.length) {
+          const finalReview = await integration.run({
+            name: "reviewer",
+            maxIterations: 1,
+            agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
+            promptFile: "./.shipyard/review-prompt.md",
+            promptArgs: {
+              TASK_ID: id,
+              BRANCH: scope.branch,
+              BASE_BRANCH: targetBranch,
+              SCOPE: JSON.stringify(scope),
+            },
+          });
+          handoffEvidence += `\n\n${approved(finalReview, `Final review of #${id}`)}`;
+        }
+      } finally {
+        await integration.close();
+      }
+      const publication = await shipyard.createSandbox({
+        branch: scope.branch,
+        sandbox: docker(),
+      });
+      try {
         const scopeIds = [
           id,
           ...(scope.tickets ?? []).map((ticket) => ticket.id),
         ].join(",");
-        const handoff = await integration.exec(
+        const handoff = await publication.exec(
           `bash .shipyard/handoff.sh ${id} ${scope.branch} ${targetBranch} ${repository} ${scopeIds}`,
-          { stdin: `${workerEvidence}\n\n${finalEvidence}` },
+          { stdin: handoffEvidence },
         );
         if (handoff.exitCode !== 0)
           throw new Error(
@@ -286,7 +311,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
           );
         console.log(handoff.stdout.trim());
       } finally {
-        await integration.close();
+        await publication.close();
       }
     }),
   );

@@ -59,6 +59,7 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
     sandbox: docker(),
     hooks,
   });
+  let evidence: string;
   try {
     const implement = await sandbox.run({
       name: "implementer",
@@ -99,9 +100,19 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
     ) {
       throw new Error(`Issue #${issue.id} has unresolved review findings`);
     }
-    const handoff = await sandbox.exec(
+    evidence = `${implementationEvidence}\n\n${reviewEvidence}`;
+  } finally {
+    await sandbox.close();
+  }
+
+  const publication = await shipyard.createSandbox({
+    branch: issue.branch,
+    sandbox: docker(),
+  });
+  try {
+    const handoff = await publication.exec(
       `bash .shipyard/handoff.sh ${issue.id} ${issue.branch} ${targetBranch} ${repository} ${[issue.id, ...(issue.tickets ?? []).map((ticket) => ticket.id)].join(",")}`,
-      { stdin: `${implementationEvidence}\n\n${reviewEvidence}` },
+      { stdin: evidence },
     );
     if (handoff.exitCode !== 0)
       throw new Error(
@@ -109,6 +120,6 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
       );
     console.log(handoff.stdout.trim());
   } finally {
-    await sandbox.close();
+    await publication.close();
   }
 }
