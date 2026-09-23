@@ -75,7 +75,7 @@ export interface CurrentCandidate {
 export interface IndependentReviewOptions {
   readonly candidate: ReviewCandidate;
   readonly provider: ReviewProvider;
-  readonly readCurrent?: () => Promise<CurrentCandidate>;
+  readonly readCurrent: () => Promise<CurrentCandidate>;
   readonly signal?: AbortSignal;
 }
 
@@ -278,43 +278,54 @@ export const runIndependentReview = async (
     });
   }
 
-  if (options.readCurrent) {
-    try {
-      const current = await options.readCurrent();
-      if (candidateIsStale(candidate, current)) {
-        return result({
-          candidate,
-          outcome: "blocked",
-          axes: [],
-          failure: {
-            kind: "stale-candidate",
-            message: "Review candidate changed before the reviewer started",
-          },
-        });
-      }
-    } catch (error) {
+  if (options.readCurrent === undefined) {
+    return result({
+      candidate,
+      outcome: "blocked",
+      axes: [],
+      failure: {
+        kind: "stale-candidate",
+        message: "A provider current-state reader is required for review",
+      },
+    });
+  }
+
+  try {
+    const current = await options.readCurrent();
+    if (candidateIsStale(candidate, current)) {
       return result({
         candidate,
         outcome: "blocked",
         axes: [],
         failure: {
           kind: "stale-candidate",
-          message: `Could not validate the current candidate: ${errorMessage(error)}`,
+          message: "Review candidate changed before the reviewer started",
         },
       });
     }
+  } catch (error) {
+    return result({
+      candidate,
+      outcome: "blocked",
+      axes: [],
+      failure: {
+        kind: "stale-candidate",
+        message: `Could not validate the current candidate: ${errorMessage(error)}`,
+      },
+    });
   }
 
   let response: ReviewResponse;
   try {
+    const checkout = Object.freeze({
+      base: candidate.base,
+      candidate: candidate.head,
+      immutable: true as const,
+    });
     response = await options.provider.review(
-      deepFreeze({
+      Object.freeze({
         candidate,
-        checkout: {
-          base: candidate.base,
-          candidate: candidate.head,
-          immutable: true,
-        },
+        checkout,
         signal: options.signal ?? new AbortController().signal,
       }),
     );
@@ -449,36 +460,30 @@ export const runIndependentReview = async (
     });
   }
 
-  if (options.readCurrent) {
-    let current: CurrentCandidate;
-    try {
-      current = await options.readCurrent();
-    } catch (error) {
-      return result({
-        candidate,
-        outcome: "blocked",
-        axes,
-        findings,
-        evidence: responseEvidence,
-        failure: {
-          kind: "stale-candidate",
-          message: `Could not validate the current candidate: ${errorMessage(error)}`,
-        },
-      });
-    }
-    if (candidateIsStale(candidate, current)) {
-      return result({
-        candidate,
-        outcome: "blocked",
-        axes,
-        findings,
-        evidence: responseEvidence,
-        failure: {
-          kind: "stale-candidate",
-          message: "Review candidate changed while the reviewer was running",
-        },
-      });
-    }
+  let current: CurrentCandidate;
+  try {
+    current = await options.readCurrent();
+  } catch (error) {
+    return result({
+      candidate,
+      outcome: "blocked",
+      axes: [],
+      failure: {
+        kind: "stale-candidate",
+        message: `Could not validate the current candidate: ${errorMessage(error)}`,
+      },
+    });
+  }
+  if (candidateIsStale(candidate, current)) {
+    return result({
+      candidate,
+      outcome: "blocked",
+      axes: [],
+      failure: {
+        kind: "stale-candidate",
+        message: "Review candidate changed while the reviewer was running",
+      },
+    });
   }
 
   const hasBlockingFindings = findings.some(blockingFinding);

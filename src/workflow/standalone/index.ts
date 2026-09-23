@@ -197,6 +197,7 @@ export const deliverStandalone = async (
     baseBranch: options.policy.baseBranch,
     headSha: candidate.head.sha,
     briefHash: candidate.briefHash,
+    readCurrent: options.readCurrent,
   });
   if (handoff.remote === undefined || handoff.remote.draft) {
     return blocked(

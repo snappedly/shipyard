@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DeliveryFailureEvidence } from "../../workflow/coordinator/index.js";
 import { formatPlanningSpecCompletionComment } from "../../workflow/handoff/index.js";
+import { sameRevision } from "../../workflow/shared.js";
 import { GITHUB_PUBLICATION_METADATA_VERSION } from "./types.js";
 import type {
   GitHubBranchPublicationInput,
@@ -422,17 +423,144 @@ export class GitHubPublication {
   async publishPullRequestHandoff(
     input: GitHubPullRequestHandoffPublicationInput,
   ): Promise<GitHubPublicationResult<GitHubPullRequestSnapshot>> {
+    const job = await this.options.coordinator.getJob(input.jobId);
+    if (job === undefined) {
+      throw new Error(`Workflow job ${input.jobId} does not exist`);
+    }
     const marker = `pull-request-ready:${markerPart(input.lease.repository)}:${markerPart(input.pullRequestNumber)}:${markerPart(input.headSha)}`;
+    const matchesCandidateIdentity = (
+      pullRequest: GitHubPullRequestSnapshot,
+    ): boolean => {
+      const metadata = parseGitHubPublicationMetadata(pullRequest.body);
+      return (
+        pullRequest.number === input.pullRequestNumber &&
+        pullRequest.branch === input.branch &&
+        pullRequest.baseBranch === input.baseBranch &&
+        pullRequest.headSha === input.headSha &&
+        metadata !== undefined &&
+        metadata.repository === input.lease.repository &&
+        metadata.itemId === job.brief.identity.itemId &&
+        metadata.kind === job.brief.identity.kind &&
+        metadata.briefRevision === job.brief.revision &&
+        metadata.briefHash === input.briefHash &&
+        metadata.baseBranch === input.baseBranch &&
+        metadata.baseSha === job.brief.base.sha &&
+        metadata.branch === input.branch &&
+        metadata.headSha === input.headSha
+      );
+    };
     const matchesCandidate = (
       pullRequest: GitHubPullRequestSnapshot,
     ): boolean =>
       pullRequest.state === "open" &&
       !pullRequest.draft &&
-      pullRequest.branch === input.branch &&
-      pullRequest.baseBranch === input.baseBranch &&
-      pullRequest.headSha === input.headSha &&
+      matchesCandidateIdentity(pullRequest) &&
       (pullRequest.labels ?? []).includes("ready-for-human") &&
       !(pullRequest.labels ?? []).includes("shipyard-blocked");
+    const isCurrentCandidate = async (): Promise<boolean> => {
+      if (typeof input.readCurrent !== "function") return false;
+      try {
+        const current = await input.readCurrent();
+        return (
+          sameRevision(current.base, job.brief.base) &&
+          sameRevision(current.head, {
+            branch: input.branch,
+            sha: input.headSha,
+          }) &&
+          current.briefHash === input.briefHash
+        );
+      } catch {
+        return false;
+      }
+    };
+    const withdrawStaleReadiness = async (
+      pullRequest: GitHubPullRequestSnapshot,
+    ): Promise<void> => {
+      if (
+        pullRequest.state !== "open" ||
+        (pullRequest.draft &&
+          !(pullRequest.labels ?? []).includes("ready-for-human"))
+      ) {
+        return;
+      }
+      const withdrawalMarker = `${marker}:stale-candidate:${markerPart(pullRequest.headSha)}:${markerPart(pullRequest.updatedAt)}`;
+      const withdrawn = (current: GitHubPullRequestSnapshot): boolean =>
+        current.state === "open" &&
+        current.draft &&
+        !(current.labels ?? []).includes("ready-for-human");
+      const execution = await this.options.coordinator.publishEffect({
+        jobId: input.jobId,
+        lease: input.lease,
+        branch: input.branch,
+        headSha: input.headSha,
+        kind: "github-pull-request-stale-handoff",
+        marker: withdrawalMarker,
+        payload: {
+          repository: input.lease.repository,
+          pullRequestNumber: input.pullRequestNumber,
+          headSha: input.headSha,
+        },
+        reconcile: async () => {
+          const current = await this.options.transport.fetchPullRequest({
+            repository: input.lease.repository,
+            pullRequestNumber: input.pullRequestNumber,
+          });
+          return current !== undefined && withdrawn(current)
+            ? current
+            : undefined;
+        },
+        publish: async () => {
+          const current = await this.options.transport.fetchPullRequest({
+            repository: input.lease.repository,
+            pullRequestNumber: input.pullRequestNumber,
+          });
+          if (current === undefined || current.state !== "open") {
+            throw new Error("Tracked pull request is no longer open");
+          }
+          if (withdrawn(current)) return current;
+          if (this.options.transport.updatePullRequest === undefined) {
+            throw new Error(
+              "GitHub transport cannot withdraw stale pull-request readiness",
+            );
+          }
+          const labels = new Set(current.labels ?? []);
+          labels.delete("ready-for-human");
+          return this.options.transport.updatePullRequest({
+            repository: input.lease.repository,
+            pullRequestNumber: input.pullRequestNumber,
+            draft: true,
+            labels: [...labels],
+            marker: markerText(withdrawalMarker),
+          });
+        },
+      });
+      if (
+        execution.externalRef === undefined ||
+        !withdrawn(execution.externalRef)
+      ) {
+        throw new Error("Could not withdraw stale pull-request readiness");
+      }
+    };
+    const preflightPullRequest = await this.options.transport.fetchPullRequest({
+      repository: input.lease.repository,
+      pullRequestNumber: input.pullRequestNumber,
+    });
+    if (preflightPullRequest === undefined) {
+      throw new Error("Tracked pull request is not published");
+    }
+    const preflightCandidateMatches = await isCurrentCandidate();
+    if (
+      preflightPullRequest.state !== "open" ||
+      !matchesCandidateIdentity(preflightPullRequest) ||
+      !preflightCandidateMatches
+    ) {
+      await withdrawStaleReadiness(preflightPullRequest);
+      throw new Error(
+        typeof input.readCurrent !== "function"
+          ? "A provider current-state reader is required before human handoff"
+          : "Pull request candidate changed before human handoff",
+      );
+    }
     const execution = await this.options.coordinator.publishEffect({
       jobId: input.jobId,
       lease: input.lease,
@@ -451,7 +579,9 @@ export class GitHubPublication {
           repository: input.lease.repository,
           pullRequestNumber: input.pullRequestNumber,
         });
-        return pullRequest !== undefined && matchesCandidate(pullRequest)
+        return pullRequest !== undefined &&
+          matchesCandidate(pullRequest) &&
+          (await isCurrentCandidate())
           ? pullRequest
           : undefined;
       },
@@ -463,14 +593,17 @@ export class GitHubPublication {
         if (pullRequest === undefined) {
           throw new Error("Tracked pull request is not published");
         }
+        const currentCandidateMatches = await isCurrentCandidate();
         if (
           pullRequest.state !== "open" ||
-          pullRequest.branch !== input.branch ||
-          pullRequest.baseBranch !== input.baseBranch ||
-          pullRequest.headSha !== input.headSha
+          !matchesCandidateIdentity(pullRequest) ||
+          !currentCandidateMatches
         ) {
+          await withdrawStaleReadiness(pullRequest);
           throw new Error(
-            "Pull request candidate changed before human handoff",
+            typeof input.readCurrent !== "function"
+              ? "A provider current-state reader is required before human handoff"
+              : "Pull request candidate changed before human handoff",
           );
         }
         if (this.options.transport.updatePullRequest === undefined) {

@@ -830,7 +830,7 @@ describe("GitHub webhook intake", () => {
     );
   });
 
-  it("freezes a planning delivery on a merge webhook before child intake", async () => {
+  it("requires current provider merge state before freezing a planning delivery", async () => {
     const { integration, coordinator, store } = createIntegration(
       new InMemoryGitHubStore(),
       undefined,
@@ -917,7 +917,7 @@ describe("GitHub webhook intake", () => {
       policy: policy(),
       createdAt: "2026-09-17T12:00:00.000Z",
     });
-    await integration.receiveWebhook(
+    const mergedEvent = await integration.receiveWebhook(
       webhook("pull_request", "spec-merged", {
         action: "closed",
         pull_request: {
@@ -935,11 +935,23 @@ describe("GitHub webhook intake", () => {
         sender: { login: "maintainer", type: "User" },
       }),
     );
+    expect(mergedEvent.planningSpecCompletion?.outcome).toBe("open");
+    expect(mergedEvent.planningSpecCompletion?.reason).toContain(
+      "Current GitHub state is required",
+    );
     await expect(
       integration.receiveWebhook(
         webhook("issues", "new-child-after-merge", issuePayload()),
       ),
-    ).rejects.toThrow("Merged delivery graph is immutable");
+    ).rejects.toThrow("Current pull request state is required");
+    expect(
+      (
+        await coordinator.getDeliveryWorkflowState({
+          repository,
+          itemId: "100",
+        })
+      )?.delivery.mergedAt,
+    ).toBeUndefined();
     expect(
       (
         await coordinator.getDeliveryWorkflowState({
@@ -1118,8 +1130,8 @@ describe("GitHub webhook intake", () => {
     };
     let parentIssue = {
       number: 100,
-      title: "Planning spec",
-      body: "source",
+      title: "Deliver the planning spec.",
+      body: "Deliver the planning spec.",
       state: "open" as "open" | "closed",
       updatedAt: "2026-09-17T12:00:02.000Z",
       labels: ["planning-spec"] as string[],
@@ -1159,12 +1171,15 @@ describe("GitHub webhook intake", () => {
       parentIssue = { ...parentIssue, state: "closed" };
       return parentIssue;
     });
+    const fetchIssue = vi.fn(async (input: { readonly issueNumber: number }) =>
+      input.issueNumber === 100 ? parentIssue : children.get(input.issueNumber),
+    );
+    const fetchPullRequest = vi.fn(async () => currentPullRequest);
+    let blockerActive = false;
+    let scopeReads = 0;
     const transport = {
-      fetchIssue: async (input: { readonly issueNumber: number }) =>
-        input.issueNumber === 100
-          ? parentIssue
-          : children.get(input.issueNumber),
-      fetchPullRequest: async () => currentPullRequest,
+      fetchIssue,
+      fetchPullRequest,
       findCommentByMarker: async () => undefined,
       findBranchByName: async () => undefined,
       findPullRequestByMarker: async () => undefined,
@@ -1204,6 +1219,7 @@ describe("GitHub webhook intake", () => {
       publication,
       scope: {
         read: async ({ transport: current }) => {
+          scopeReads += 1;
           const child = await current.fetchIssue({
             repository,
             issueNumber: 101,
@@ -1229,6 +1245,13 @@ describe("GitHub webhook intake", () => {
                 htmlUrl: repair?.htmlUrl,
               },
             ],
+            blockers: [
+              {
+                id: "provider:active-blocker",
+                active: blockerActive,
+                reason: "A scoped dependency is blocked.",
+              },
+            ],
           };
         },
       },
@@ -1244,6 +1267,7 @@ describe("GitHub webhook intake", () => {
       },
       deliveryStore: store,
       trackingStore: store,
+      readTransport: transport,
       planningSpecCompletion: handler,
       webhookSecret: secret,
     });
@@ -1273,10 +1297,58 @@ describe("GitHub webhook intake", () => {
       merged: true,
       mergedSha,
     };
-    const merged = await integration.reconcile(reconciliation);
+    const mergePayload = () => ({
+      action: "closed",
+      pull_request: {
+        number: currentPullRequest.number,
+        title: currentPullRequest.title,
+        body: currentPullRequest.body,
+        state: currentPullRequest.state,
+        merged: currentPullRequest.merged,
+        merge_commit_sha: currentPullRequest.mergedSha,
+        updated_at: "2026-09-17T12:00:04.000Z",
+        head: {
+          ref: currentPullRequest.branch,
+          sha: currentPullRequest.headSha,
+        },
+        base: { ref: currentPullRequest.baseBranch },
+      },
+      repository: { full_name: repository },
+      sender: { login: "maintainer", type: "User" },
+    });
+    parentIssue = { ...parentIssue, body: "Changed parent scope." };
+    const staleSpec = await integration.receiveWebhook(
+      webhook("pull_request", "spec-merge-stale-spec", mergePayload()),
+    );
+    expect(staleSpec.planningSpecCompletion?.outcome).toBe("open");
+    expect(staleSpec.planningSpecCompletion?.reason).toContain(
+      "does not match its tracked brief",
+    );
+    expect(parentIssue.state).toBe("open");
+
+    parentIssue = { ...parentIssue, body: "Deliver the planning spec." };
+    blockerActive = true;
+    const blockedMerge = await integration.receiveWebhook(
+      webhook("pull_request", "spec-merge-blocked", mergePayload()),
+    );
+    expect(blockedMerge.planningSpecCompletion?.outcome).toBe("open");
+    expect(blockedMerge.planningSpecCompletion?.reason).toContain("active");
+    expect(parentIssue.state).toBe("open");
+
+    blockerActive = false;
+    const merged = await integration.receiveWebhook(
+      webhook("pull_request", "spec-merged", mergePayload()),
+    );
+    const duplicateEvent = await integration.receiveWebhook(
+      webhook("pull_request", "spec-merged", mergePayload()),
+    );
     const replay = await integration.reconcile(reconciliation);
     expect(merged.planningSpecCompletion?.outcome).toBe("completed");
     expect(replay.planningSpecCompletion?.outcome).toBe("completed");
+    expect(duplicateEvent.status).toBe("duplicate");
+    expect(fetchPullRequest).toHaveBeenCalled();
+    expect(fetchIssue).toHaveBeenCalledWith({ repository, issueNumber: 100 });
+    expect(scopeReads).toBeGreaterThanOrEqual(4);
     expect(createComment).toHaveBeenCalledOnce();
     expect(closeIssue).toHaveBeenCalledOnce();
     expect(parentIssue.state).toBe("closed");

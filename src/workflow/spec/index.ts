@@ -400,6 +400,17 @@ export interface SpecCurrentCandidate {
   readonly base: RevisionReference;
   readonly head: RevisionReference;
   readonly briefHash: string;
+  readonly pullRequest: {
+    readonly id: string;
+    readonly state: "open" | "closed";
+    readonly draft: boolean;
+    readonly baseBranch: string;
+    readonly headBranch: string;
+    readonly baseSha: string;
+    readonly headSha: string;
+    readonly briefHash: string;
+    readonly deliveryId: string;
+  };
 }
 
 export interface SpecFixRequest {
@@ -439,7 +450,8 @@ export interface SpecDeliveryOptions {
   readonly maxConcurrency?: number;
   readonly leaseTtlMs?: number;
   readonly signal?: AbortSignal;
-  readonly readCurrent?: () => Promise<SpecCurrentCandidate>;
+  /** Re-reads the live brief, PR metadata, base, and remote integration head. */
+  readonly readCurrent: () => Promise<SpecCurrentCandidate>;
 }
 
 export interface SpecChildRecord {
@@ -577,6 +589,52 @@ const samePullRequest = (
   left.headBranch === right.headBranch &&
   left.draft === right.draft;
 
+const currentCandidateMismatch = (
+  candidate: SpecCandidate,
+  current: SpecCurrentCandidate,
+): string | undefined => {
+  if (!sameRevision(current.base, candidate.base)) {
+    return "Current provider base does not match the reviewed candidate";
+  }
+  if (!sameRevision(current.head, candidate.head)) {
+    return "Current remote head does not match the reviewed candidate";
+  }
+  if (current.briefHash !== candidate.briefHash) {
+    return "Current provider brief does not match the reviewed candidate";
+  }
+  const pullRequest = current.pullRequest;
+  if (pullRequest.id !== candidate.pullRequest.id) {
+    return "Current pull request identity does not match the reviewed candidate";
+  }
+  if (pullRequest.state !== "open") {
+    return "Current pull request is closed or abandoned";
+  }
+  if (!pullRequest.draft) {
+    return "Current pull request is no longer a draft";
+  }
+  if (
+    pullRequest.baseBranch !== candidate.pullRequest.baseBranch ||
+    pullRequest.headBranch !== candidate.pullRequest.headBranch ||
+    pullRequest.baseSha !== candidate.base.sha ||
+    pullRequest.headSha !== candidate.head.sha ||
+    pullRequest.briefHash !== candidate.briefHash ||
+    pullRequest.deliveryId !== candidate.deliveryId
+  ) {
+    return "Current pull request metadata does not match the reviewed candidate";
+  }
+  return undefined;
+};
+
+const readCurrentCandidate = async (
+  candidate: SpecCandidate,
+  readCurrent: () => Promise<SpecCurrentCandidate>,
+): Promise<SpecCurrentCandidate> => {
+  const current = await readCurrent();
+  const mismatch = currentCandidateMismatch(candidate, current);
+  if (mismatch !== undefined) throw new Error(mismatch);
+  return current;
+};
+
 const resultFor = (input: {
   readonly outcome: SpecDeliveryResult["outcome"];
   readonly delivery: DeliveryGroup;
@@ -613,6 +671,9 @@ const validateOptions = (options: SpecDeliveryOptions): string | undefined => {
     options.brief.identity.itemId !== options.delivery.key.itemId
   ) {
     return "Spec brief identity does not match the delivery root";
+  }
+  if (options.readCurrent === undefined) {
+    return "Current provider state is required before spec review and handoff";
   }
   if (options.policy.repository !== options.delivery.key.repository) {
     return "Spec policy repository does not match the delivery";
@@ -1485,7 +1546,17 @@ export const deliverSpec = async (
               signal: request.signal,
             }),
         },
-        readCurrent: options.readCurrent,
+        readCurrent: async () => {
+          const current = await readCurrentCandidate(
+            candidate,
+            options.readCurrent,
+          );
+          return {
+            base: current.base,
+            head: current.head,
+            briefHash: current.briefHash,
+          };
+        },
         signal: controller.signal,
       });
       const round = freezeClone({
@@ -1513,6 +1584,12 @@ export const deliverSpec = async (
       }
       repairBatches = 1;
       await refreshLease();
+      try {
+        await readCurrentCandidate(candidateBeforeReview, options.readCurrent);
+      } catch (error) {
+        reviews.splice(0);
+        throw error;
+      }
       const fixed = await options.fixer.fix({
         delivery,
         candidate: candidateBeforeReview,
@@ -1566,6 +1643,15 @@ export const deliverSpec = async (
     if (JSON.stringify(delivery.graph) !== reviewedGraph) {
       throw new Error(
         "Spec scope changed during review; resume delivery for the updated graph",
+      );
+    }
+
+    try {
+      await readCurrentCandidate(finalCandidate, options.readCurrent);
+    } catch (error) {
+      reviews.splice(0);
+      throw new Error(
+        `Current provider state changed before human handoff: ${errorMessage(error)}`,
       );
     }
 

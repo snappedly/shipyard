@@ -306,6 +306,53 @@ describe("handoff gates", () => {
     ]);
   });
 
+  it("fails closed and invalidates evidence when handoff has no current-state reader", async () => {
+    const currentJob = await job();
+    const requestReview = vi.fn(async () => undefined);
+    const result = await prepareHumanHandoff({
+      job: currentJob,
+      sourceIssueNumber: 42,
+      pullRequestNumber: 100,
+      candidate: { base, head, briefHash: brief.hash },
+      checks: [check],
+      review,
+      publisher: { requestReview },
+    } as unknown as Parameters<typeof prepareHumanHandoff>[0]);
+
+    expect(result.outcome).toBe("blocked");
+    expect(result.reasons.join(" ")).toContain("current-state reader");
+    expect(result.packet.checks[0]?.status).toBe("unknown");
+    expect(result.packet.reviewAxes).toEqual([]);
+    expect(result.packet.findings).toEqual([]);
+    expect(requestReview).not.toHaveBeenCalled();
+  });
+
+  it("invalidates checks and review evidence when the candidate changed after review", async () => {
+    const currentJob = await job();
+    const requestReview = vi.fn(async () => undefined);
+    const result = await prepareHumanHandoff({
+      job: currentJob,
+      sourceIssueNumber: 42,
+      pullRequestNumber: 100,
+      candidate: { base, head, briefHash: brief.hash },
+      checks: [check],
+      review,
+      publisher: { requestReview },
+      readCurrent: async () => ({
+        base,
+        head: { ...head, sha: "c".repeat(40) },
+        briefHash: brief.hash,
+      }),
+    });
+
+    expect(result.outcome).toBe("blocked");
+    expect(result.reasons).toContain("Candidate changed before human handoff");
+    expect(result.packet.checks[0]?.status).toBe("unknown");
+    expect(result.packet.reviewAxes).toEqual([]);
+    expect(result.packet.findings).toEqual([]);
+    expect(requestReview).not.toHaveBeenCalled();
+  });
+
   it("returns a changes-requested decision to repair on the same PR", async () => {
     const currentJob = await job();
     const requestRepair = vi.fn(async () => undefined);

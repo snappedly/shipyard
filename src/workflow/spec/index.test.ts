@@ -19,6 +19,7 @@ import {
   type SpecChildWorker,
   type SpecDeliveryOptions,
   type SpecIntegrationAdapter,
+  type SpecCurrentCandidate,
   type SpecReviewProvider,
   type SpecVerificationAdapter,
 } from "./index.js";
@@ -136,6 +137,27 @@ const deliveryFor = (
     children: children.map((itemId) => identity(itemId)),
     dependencies,
   });
+
+const currentFor = (
+  deliveryId: string,
+  head: RevisionReference,
+  options: { readonly pullRequestId?: string; readonly draft?: boolean } = {},
+): SpecCurrentCandidate => ({
+  base,
+  head,
+  briefHash: brief.hash,
+  pullRequest: {
+    id: options.pullRequestId ?? "pr-100",
+    state: "open",
+    draft: options.draft ?? true,
+    baseBranch: base.branch,
+    headBranch: "shipyard/spec-100",
+    baseSha: base.sha,
+    headSha: head.sha,
+    briefHash: brief.hash,
+    deliveryId,
+  },
+});
 
 describe("spec delivery planning", () => {
   it("plans the current child graph into dependency-safe waves", () => {
@@ -277,6 +299,201 @@ describe("spec delivery planning", () => {
 });
 
 describe("spec delivery orchestration", () => {
+  it("fails closed before review when current provider state cannot be read", async () => {
+    const reviewer = vi.fn(review().review);
+    const integration: SpecIntegrationAdapter = {
+      reconcileDelivery: async () => ({}),
+      ensureDraftPullRequest: async (request) => ({
+        id: "pr-100",
+        baseBranch: base.branch,
+        headBranch: request.integrationBranch,
+        draft: true,
+      }),
+      integrateChild: async (request) => ({
+        branch: request.integrationBranch,
+        sha: "integrated-101",
+      }),
+      publishCandidate: async (request) => ({
+        pullRequestId: request.candidate.pullRequest.id,
+        head: request.candidate.head,
+      }),
+    };
+    const result = await deliverSpec({
+      coordinator: coordinator(),
+      delivery: deliveryFor(["101"]),
+      brief,
+      policy,
+      workerId: "coordinator-1",
+      base,
+      integrationBranch: "shipyard/spec-100",
+      childWorker: {
+        implement: async () => ({
+          commit: { branch: "shipyard/child-101", sha: "child-101" },
+        }),
+      },
+      integration,
+      verification: verification(),
+      childLifecycle: {
+        reconcileChild: async () => "open",
+        closeChild: async () => undefined,
+      },
+      review: { review: reviewer },
+    } as unknown as SpecDeliveryOptions);
+
+    expect(result.outcome).toBe("blocked");
+    expect(result.reason?.toLowerCase()).toContain("current provider state");
+    expect(reviewer).not.toHaveBeenCalled();
+  });
+
+  it("invalidates review evidence when the provider candidate changes before handoff", async () => {
+    const delivery = deliveryFor(["101"]);
+    const candidateHead: RevisionReference = {
+      branch: "shipyard/spec-100",
+      sha: "integrated-101",
+    };
+    let publishedHead: RevisionReference = base;
+    let currentReads = 0;
+    const reviewer = vi.fn(review().review);
+    const result = await deliverSpec({
+      coordinator: coordinator(),
+      delivery,
+      brief,
+      policy,
+      workerId: "coordinator-1",
+      base,
+      integrationBranch: "shipyard/spec-100",
+      childWorker: {
+        implement: async () => ({
+          commit: { branch: "shipyard/child-101", sha: "child-101" },
+        }),
+      },
+      integration: {
+        reconcileDelivery: async () => ({}),
+        ensureDraftPullRequest: async (request) => ({
+          id: "pr-100",
+          baseBranch: base.branch,
+          headBranch: request.integrationBranch,
+          draft: true,
+        }),
+        integrateChild: async (request) => ({
+          branch: request.integrationBranch,
+          sha: "integrated-101",
+        }),
+        publishCandidate: async (request) => {
+          publishedHead = request.candidate.head;
+          return {
+            pullRequestId: request.candidate.pullRequest.id,
+            head: request.candidate.head,
+          };
+        },
+      },
+      verification: verification(),
+      childLifecycle: {
+        reconcileChild: async () => "open",
+        closeChild: async () => undefined,
+      },
+      review: { review: reviewer },
+      readCurrent: async () => {
+        currentReads += 1;
+        return currentReads <= 2
+          ? currentFor(delivery.id, publishedHead)
+          : currentFor(delivery.id, {
+              ...candidateHead,
+              sha: "c".repeat(40),
+            });
+      },
+    });
+
+    expect(reviewer).toHaveBeenCalledOnce();
+    expect(currentReads).toBe(3);
+    expect(result.outcome).toBe("blocked");
+    expect(result.reason).toContain("before human handoff");
+    expect(result.reviews).toEqual([]);
+  });
+
+  it("invalidates review evidence before refusing a repair on a stale candidate", async () => {
+    const delivery = deliveryFor(["101"]);
+    const publishedHead: RevisionReference = {
+      branch: "shipyard/spec-100",
+      sha: "integrated-101",
+    };
+    let currentReads = 0;
+    const fixer = vi.fn(async () => ({
+      head: { branch: "shipyard/spec-100", sha: "fixed-head" },
+      commits: ["fix-commit"],
+      evidence: ["The consolidated fix was applied."],
+    }));
+    const result = await deliverSpec({
+      coordinator: coordinator(),
+      delivery,
+      brief,
+      policy,
+      workerId: "coordinator-1",
+      base,
+      integrationBranch: "shipyard/spec-100",
+      childWorker: {
+        implement: async () => ({
+          commit: { branch: "shipyard/child-101", sha: "child-101" },
+        }),
+      },
+      integration: {
+        reconcileDelivery: async () => ({}),
+        ensureDraftPullRequest: async (request) => ({
+          id: "pr-100",
+          baseBranch: base.branch,
+          headBranch: request.integrationBranch,
+          draft: true,
+        }),
+        integrateChild: async (request) => ({
+          branch: request.integrationBranch,
+          sha: "integrated-101",
+        }),
+        publishCandidate: async (request) => ({
+          pullRequestId: request.candidate.pullRequest.id,
+          head: request.candidate.head,
+        }),
+      },
+      verification: verification(),
+      childLifecycle: {
+        reconcileChild: async () => "open",
+        closeChild: async () => undefined,
+      },
+      review: {
+        review: async (request) => ({
+          outcome: "actionable-findings",
+          axes: request.requiredAxes,
+          findings: [
+            {
+              id: "needs-fix",
+              severity: "high",
+              axis: "spec",
+              title: "The candidate needs a repair",
+              evidence: "A required behavior is missing.",
+            },
+          ],
+          evidence: ["Reviewed the candidate before it changed."],
+          headSha: request.candidate.head.sha,
+          baseSha: request.candidate.base.sha,
+          briefHash: request.candidate.briefHash,
+        }),
+      },
+      readCurrent: async () => {
+        currentReads += 1;
+        const head =
+          currentReads < 3
+            ? publishedHead
+            : { ...publishedHead, sha: "stale-head" };
+        return currentFor(delivery.id, head);
+      },
+      fixer: { fix: fixer },
+    });
+
+    expect(currentReads).toBe(3);
+    expect(fixer).not.toHaveBeenCalled();
+    expect(result.outcome).toBe("blocked");
+    expect(result.reviews).toEqual([]);
+  });
+
   it("runs dependency-safe workers concurrently, integrates serially, and closes only published children", async () => {
     const delivery = deliveryFor(
       ["101", "102", "103"],
@@ -287,6 +504,7 @@ describe("spec delivery orchestration", () => {
     let maximumWorkers = 0;
     let integrating = false;
     let pullRequestCalls = 0;
+    let publishedHead: RevisionReference = base;
     const worker: SpecChildWorker = {
       implement: async (request) => {
         expect(Object.keys(request).sort()).toEqual([
@@ -335,6 +553,7 @@ describe("spec delivery orchestration", () => {
       },
       publishCandidate: async (request) => {
         events.push(`publish:${request.candidate.head.sha}`);
+        publishedHead = request.candidate.head;
         return {
           pullRequestId: request.candidate.pullRequest.id,
           head: request.candidate.head,
@@ -368,6 +587,7 @@ describe("spec delivery orchestration", () => {
       verification: checks,
       childLifecycle: lifecycle,
       review: review(),
+      readCurrent: async () => currentFor(delivery.id, publishedHead),
       maxConcurrency: 2,
     });
 
@@ -446,6 +666,7 @@ describe("spec delivery orchestration", () => {
       },
     };
     let fixCalls = 0;
+    let publishedHead: RevisionReference = base;
     const fixer = {
       fix: async (
         request: Parameters<
@@ -475,10 +696,13 @@ describe("spec delivery orchestration", () => {
         branch: request.integrationBranch,
         sha: "integrated-101",
       }),
-      publishCandidate: async (request) => ({
-        pullRequestId: request.candidate.pullRequest.id,
-        head: request.candidate.head,
-      }),
+      publishCandidate: async (request) => {
+        publishedHead = request.candidate.head;
+        return {
+          pullRequestId: request.candidate.pullRequest.id,
+          head: request.candidate.head,
+        };
+      },
     };
 
     const result = await deliverSpec({
@@ -501,6 +725,7 @@ describe("spec delivery orchestration", () => {
         closeChild: async () => undefined,
       },
       review: reviewProvider,
+      readCurrent: async () => currentFor(delivery.id, publishedHead),
       fixer,
     });
 
@@ -629,6 +854,11 @@ describe("spec delivery orchestration", () => {
         verification: checks,
         childLifecycle,
         review: review(),
+        readCurrent: async () =>
+          currentFor(delivery.id, remote.head ?? base, {
+            pullRequestId: remote.pullRequest?.id,
+            draft: remote.pullRequest?.draft,
+          }),
       });
 
     const interrupted = await run();
@@ -791,6 +1021,7 @@ describe("spec delivery orchestration", () => {
           closeChild: async () => undefined,
         },
         review: review(),
+        readCurrent: async () => currentFor(delivery.id, remote.head ?? base),
       });
 
     const interrupted = await run();
@@ -864,6 +1095,11 @@ describe("spec delivery orchestration", () => {
         closeChild: async () => undefined,
       },
       review: review(),
+      readCurrent: async () =>
+        currentFor(delivery.id, {
+          branch: "shipyard/spec-100",
+          sha: "integrated-101",
+        }),
     });
 
     await workerStarted;
@@ -948,6 +1184,12 @@ describe("spec delivery orchestration", () => {
         closeChild: async () => undefined,
       },
       review: review(),
+      readCurrent: async () =>
+        currentFor(
+          delivery.id,
+          { branch: "shipyard/spec-100", sha: "integrated-lost" },
+          { pullRequestId: "pr-lost" },
+        ),
     });
     await lostWorkerStarted;
     loseNextHeartbeat = true;

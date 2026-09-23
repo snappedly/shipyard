@@ -585,9 +585,14 @@ export interface GitHubPullRequestHandoffPublicationInput {
   readonly baseBranch: string;
   readonly headSha: string;
   readonly briefHash: string;
+  /** Re-reads the base, source brief, and remote candidate before readiness changes. */
+  readonly readCurrent: () => Promise<HandoffCandidate>;
 }
 
-export interface GitHubPullRequestDraftPublicationInput extends GitHubPullRequestHandoffPublicationInput {
+export interface GitHubPullRequestDraftPublicationInput extends Omit<
+  GitHubPullRequestHandoffPublicationInput,
+  "readCurrent"
+> {
   readonly reason?: string;
 }
 

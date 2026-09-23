@@ -91,7 +91,78 @@ const providerFor = (response: ReviewResponse): ReviewProvider => ({
   review: vi.fn(async () => response),
 });
 
+const readCurrent = async () => ({
+  base,
+  head,
+  briefHash: brief.hash,
+});
+
 describe("independent review", () => {
+  it("fails closed before review when no current-state reader is configured", async () => {
+    const provider = providerFor(passingResponse());
+    const result = await runIndependentReview({
+      candidate,
+      provider,
+    } as unknown as Parameters<typeof runIndependentReview>[0]);
+
+    expect(result.outcome).toBe("blocked");
+    expect(result.failure?.message).toContain("current-state reader");
+    expect(provider.review).not.toHaveBeenCalled();
+  });
+
+  it("does not freeze the caller's cancellation signal", async () => {
+    const controller = new AbortController();
+    await runIndependentReview({
+      candidate,
+      provider: providerFor(passingResponse()),
+      readCurrent: async () => ({
+        base,
+        head,
+        briefHash: brief.hash,
+      }),
+      signal: controller.signal,
+    });
+
+    expect(() => controller.abort("cancel review")).not.toThrow();
+    expect(controller.signal.aborted).toBe(true);
+  });
+
+  it("keeps nested candidate identity immutable for the reviewer", async () => {
+    const controller = new AbortController();
+    let headMutation = true;
+    let briefMutation = true;
+    let seenSignal: AbortSignal | undefined;
+    const result = await runIndependentReview({
+      candidate,
+      provider: {
+        review: async (request) => {
+          headMutation = Reflect.set(
+            request.candidate.head as object,
+            "sha",
+            "reviewer-changed-head",
+          );
+          briefMutation = Reflect.set(
+            request.candidate.brief as object,
+            "hash",
+            "reviewer-changed-brief",
+          );
+          seenSignal = request.signal;
+          return passingResponse();
+        },
+      },
+      readCurrent,
+      signal: controller.signal,
+    });
+
+    expect(result.outcome).toBe("passed");
+    expect(headMutation).toBe(false);
+    expect(briefMutation).toBe(false);
+    expect(Object.isFrozen(seenSignal)).toBe(false);
+    expect(() => controller.abort("cancel review")).not.toThrow();
+    expect(result.candidate.head).toEqual(head);
+    expect(result.candidate.brief.hash).toBe(brief.hash);
+  });
+
   it("passes explicit Standards and Spec axes without allowing reviewer changes", async () => {
     let seen: Parameters<ReviewProvider["review"]>[0] | undefined;
     const provider: ReviewProvider = {
@@ -101,7 +172,11 @@ describe("independent review", () => {
       }),
     };
 
-    const result = await runIndependentReview({ candidate, provider });
+    const result = await runIndependentReview({
+      candidate,
+      provider,
+      readCurrent,
+    });
 
     expect(result.outcome).toBe("passed");
     expect(result.reviewAxes).toEqual(["standards", "spec"]);
@@ -130,6 +205,7 @@ describe("independent review", () => {
           findings: [finding, { ...finding, id: "same-finding-again" }],
         }),
       ),
+      readCurrent,
     });
 
     expect(result.outcome).toBe("actionable-findings");
@@ -154,6 +230,7 @@ describe("independent review", () => {
           ] as never,
         }),
       ),
+      readCurrent,
     });
     expect(attemptedDisposition.outcome).toBe("actionable-findings");
     expect(attemptedDisposition.findings[0]?.disposition).toBe("open");
@@ -163,6 +240,7 @@ describe("independent review", () => {
     const missing = await runIndependentReview({
       candidate,
       provider: providerFor(passingResponse({ axes: ["standards"] })),
+      readCurrent,
     });
     expect(missing.outcome).toBe("incomplete");
     expect(missing.failure?.message).toContain("spec");
@@ -182,6 +260,10 @@ describe("independent review", () => {
     });
     expect(stale.outcome).toBe("blocked");
     expect(stale.failure?.kind).toBe("stale-candidate");
+    expect(stale.reviewAxes).toEqual([]);
+    expect(stale.findings).toEqual([]);
+    expect(stale.evidence).toEqual([]);
+    expect(reads).toBe(2);
   });
 
   it("rejects malformed output, provider failure, and reviewer mutations", async () => {
@@ -192,6 +274,7 @@ describe("independent review", () => {
           headSha: "wrong",
         }),
       ),
+      readCurrent,
     });
     expect(malformed.outcome).toBe("failed");
     expect(malformed.failure?.kind).toBe("malformed");
@@ -203,12 +286,14 @@ describe("independent review", () => {
           throw new Error("review worker exited");
         },
       },
+      readCurrent,
     });
     expect(providerFailure.failure?.kind).toBe("provider");
 
     const mutation = await runIndependentReview({
       candidate,
       provider: providerFor(passingResponse({ commits: ["c".repeat(40)] })),
+      readCurrent,
     });
     expect(mutation.outcome).toBe("failed");
     expect(mutation.failure?.kind).toBe("mutation");

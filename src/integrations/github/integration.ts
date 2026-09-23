@@ -465,9 +465,10 @@ const coordinatorBlockers = (
 const missingPlanningSpecPullRequest = (
   expected: PlanningSpecCandidateMetadata,
   pullRequestNumber: number,
+  reason = "Integration pull request is not currently published",
 ): PlanningSpecCompletionResult => ({
   outcome: "open",
-  reason: "Integration pull request is not currently published",
+  reason,
   candidate: {
     metadata: { ...expected, headSha: "missing" },
     pullRequestNumber,
@@ -506,6 +507,18 @@ export const createGitHubPlanningSpecCompletionHandler = (
       parsedMetadata?.kind === "planning-spec"
         ? { ...parsedMetadata, kind: "planning-spec" as const }
         : undefined;
+    const candidate = {
+      metadata: metadata ?? { ...expected, headSha: "metadata-missing" },
+      pullRequestNumber: pullRequest.number,
+      pullRequestUrl: pullRequest.htmlUrl,
+      state: pullRequest.state,
+      draft: pullRequest.draft,
+      merged: pullRequest.merged === true,
+      mergedSha: pullRequest.mergedSha,
+      branch: pullRequest.branch,
+      baseBranch: pullRequest.baseBranch,
+      headSha: pullRequest.headSha,
+    } as const;
     const delivery = await options.coordinator.getDeliveryWorkflowState({
       repository,
       itemId: trackedPullRequest.brief.identity.itemId,
@@ -514,18 +527,35 @@ export const createGitHubPlanningSpecCompletionHandler = (
       return {
         outcome: "open",
         reason: "Planning-spec delivery record is missing",
-        candidate: {
-          metadata: metadata ?? { ...expected, headSha: "metadata-missing" },
-          pullRequestNumber: pullRequest.number,
-          pullRequestUrl: pullRequest.htmlUrl,
-          state: pullRequest.state,
-          draft: pullRequest.draft,
-          merged: pullRequest.merged === true,
-          mergedSha: pullRequest.mergedSha,
-          branch: pullRequest.branch,
-          baseBranch: pullRequest.baseBranch,
-          headSha: pullRequest.headSha,
-        },
+        candidate,
+        originalChildren: [],
+        repairChildren: [],
+        blockers: [],
+      };
+    }
+    const parentIssueNumber = Number(trackedPullRequest.brief.identity.itemId);
+    const parentIssue = await transport.fetchIssue({
+      repository,
+      issueNumber: parentIssueNumber,
+    });
+    if (parentIssue === undefined) {
+      return {
+        outcome: "open",
+        reason: "Current planning-spec issue is missing",
+        candidate,
+        originalChildren: [],
+        repairChildren: [],
+        blockers: [],
+      };
+    }
+    if (
+      githubIssueKind(parentIssue) !== "planning-spec" ||
+      !sameIssueContent(trackedPullRequest.brief, parentIssue)
+    ) {
+      return {
+        outcome: "open",
+        reason: "Current planning-spec issue does not match its tracked brief",
+        candidate,
         originalChildren: [],
         repairChildren: [],
         blockers: [],
@@ -548,7 +578,7 @@ export const createGitHubPlanningSpecCompletionHandler = (
     }
     const scope = await options.scope.read({
       repository,
-      parentIssueNumber: Number(trackedPullRequest.brief.identity.itemId),
+      parentIssueNumber,
       trackedPullRequest,
       delivery,
       transport,
@@ -579,21 +609,9 @@ export const createGitHubPlanningSpecCompletionHandler = (
             }),
             expected,
           );
-    const candidate = {
-      metadata: metadata ?? { ...expected, headSha: "metadata-missing" },
-      pullRequestNumber: pullRequest.number,
-      pullRequestUrl: pullRequest.htmlUrl,
-      state: pullRequest.state,
-      draft: pullRequest.draft,
-      merged: pullRequest.merged === true,
-      mergedSha: pullRequest.mergedSha,
-      branch: pullRequest.branch,
-      baseBranch: pullRequest.baseBranch,
-      headSha: pullRequest.headSha,
-    } as const;
     const completionInput: PlanningSpecCompletionInput = {
       policy: trackedPullRequest.policy,
-      parentIssueNumber: Number(trackedPullRequest.brief.identity.itemId),
+      parentIssueNumber,
       expected,
       candidate,
       checks: providerChecks,
@@ -1233,7 +1251,10 @@ export class GitHubIntegration {
       };
     }
     const trackedPlanningSpec = normalized.event.trackedPullRequest;
-    if (trackedPlanningSpec !== undefined) {
+    if (
+      trackedPlanningSpec !== undefined &&
+      trackedPlanningSpec.brief.identity.kind !== "planning-spec"
+    ) {
       const pullRequest = record(
         record(effectiveEnvelope.payload)?.pull_request,
       );
@@ -1256,19 +1277,61 @@ export class GitHubIntegration {
       trackedPlanningSpec !== undefined &&
       trackedPlanningSpec.brief.identity.kind === "planning-spec"
     ) {
-      // A planning-spec PR event is provider evidence for the aggregate
-      // record, not a new executable phase. Feeding it back through intake
-      // would supersede or close the parent based on the PR's own state.
+      const pullRequest = record(
+        record(effectiveEnvelope.payload)?.pull_request,
+      );
+      const mergedWebhook =
+        normalized.event.eventName === "pull_request" &&
+        normalized.event.action === "closed" &&
+        pullRequest?.merged === true;
+      let planningSpecCompletion: PlanningSpecCompletionResult | undefined;
+      if (mergedWebhook) {
+        const expected = expectedPlanningSpecMetadata(trackedPlanningSpec);
+        if (readTransport === undefined) {
+          planningSpecCompletion = missingPlanningSpecPullRequest(
+            expected,
+            trackedPlanningSpec.pullRequestNumber,
+            "Current GitHub state is required to reconcile a merged planning-spec pull request",
+          );
+        } else if (this.options.planningSpecCompletion === undefined) {
+          planningSpecCompletion = missingPlanningSpecPullRequest(
+            expected,
+            trackedPlanningSpec.pullRequestNumber,
+            "Planning-spec completion handler is not configured",
+          );
+        } else {
+          try {
+            planningSpecCompletion =
+              await this.options.planningSpecCompletion.reconcile({
+                repository: trackedPlanningSpec.repository,
+                pullRequestNumber: trackedPlanningSpec.pullRequestNumber,
+                trackedPullRequest: trackedPlanningSpec,
+                transport: readTransport,
+              });
+          } catch (error) {
+            planningSpecCompletion = missingPlanningSpecPullRequest(
+              expected,
+              trackedPlanningSpec.pullRequestNumber,
+              `Planning-spec reconciliation failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        }
+      }
+      // A planning-spec PR event is reconciled from current provider state;
+      // it is never ingested as a new executable phase.
       await this.options.deliveryStore.updateDelivery({
         ...effectiveDelivery,
         status: "accepted",
         eventKind: normalized.event.kind,
         jobId: trackedPlanningSpec.jobId,
+        reason: planningSpecCompletion?.reason,
       });
       return {
         status: "accepted",
         deliveryId: envelope.deliveryId,
         event: normalized.event,
+        planningSpecCompletion,
+        reason: planningSpecCompletion?.reason,
       };
     }
     const resumeProjection =

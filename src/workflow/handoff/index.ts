@@ -117,7 +117,7 @@ export interface PrepareHandoffOptions extends HandoffReadinessInput {
   readonly sourceIssueNumber: number;
   readonly pullRequestNumber: number;
   readonly publisher?: HumanHandoffPublisher;
-  readonly readCurrent?: () => Promise<HandoffCandidate>;
+  readonly readCurrent: () => Promise<HandoffCandidate>;
 }
 
 export interface HumanReviewDecisionInput {
@@ -793,46 +793,52 @@ export const invalidateCandidateEvidence = (
 export const prepareHumanHandoff = async (
   input: PrepareHandoffOptions,
 ): Promise<HandoffReadinessResult> => {
-  if (input.readCurrent !== undefined) {
-    let current: HandoffCandidate;
-    try {
-      current = await input.readCurrent();
-    } catch (error) {
-      const brief = parseWorkBrief(input.job.brief);
-      return {
-        outcome: "blocked",
-        readyForReview: false,
-        reviewRequested: false,
-        readyForHuman: false,
-        mergeReady: false,
-        reasons: [
-          `Could not validate the current candidate: ${error instanceof Error ? error.message : String(error)}`,
-        ],
-        packet: {
-          ...packetFor(input, brief),
-          pullRequest: `#${input.pullRequestNumber}`,
-        },
-      };
-    }
-    if (
-      !sameRevision(current.base, input.candidate.base) ||
-      !sameRevision(current.head, input.candidate.head) ||
-      current.briefHash !== input.candidate.briefHash
-    ) {
-      const brief = parseWorkBrief(input.job.brief);
-      return {
-        outcome: "blocked",
-        readyForReview: false,
-        reviewRequested: false,
-        readyForHuman: false,
-        mergeReady: false,
-        reasons: ["Candidate changed before human handoff"],
-        packet: {
-          ...packetFor(input, brief),
-          pullRequest: `#${input.pullRequestNumber}`,
-        },
-      };
-    }
+  const brief = parseWorkBrief(input.job.brief);
+  const blockedForCurrentState = (reason: string): HandoffReadinessResult => {
+    const invalidated = invalidateCandidateEvidence({
+      candidate: input.candidate,
+      checks: input.checks,
+      review: input.review,
+      reason,
+    });
+    const packet = packetFor({ ...input, checks: invalidated.checks }, brief);
+    return {
+      outcome: "blocked",
+      readyForReview: false,
+      reviewRequested: false,
+      readyForHuman: false,
+      mergeReady: false,
+      reasons: [reason],
+      packet: {
+        ...packet,
+        pullRequest: `#${input.pullRequestNumber}`,
+        reviewAxes: [],
+        findings: [],
+        limitations: [...packet.limitations, reason],
+      },
+    };
+  };
+
+  if (input.readCurrent === undefined) {
+    return blockedForCurrentState(
+      "A provider current-state reader is required before human handoff",
+    );
+  }
+
+  let current: HandoffCandidate;
+  try {
+    current = await input.readCurrent();
+  } catch (error) {
+    return blockedForCurrentState(
+      `Could not validate the current candidate: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (
+    !sameRevision(current.base, input.candidate.base) ||
+    !sameRevision(current.head, input.candidate.head) ||
+    current.briefHash !== input.candidate.briefHash
+  ) {
+    return blockedForCurrentState("Candidate changed before human handoff");
   }
   const readiness = evaluateHandoffReadiness(input);
   const packet = {
