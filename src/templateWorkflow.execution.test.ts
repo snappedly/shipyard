@@ -4,6 +4,7 @@ const initialRepository = process.env.GH_REPO;
 
 const calls = vi.hoisted(() => ({
   events: [] as string[],
+  pendingEdits: [] as string[],
   selected: 0,
   plans: 0,
   spec: false,
@@ -51,6 +52,11 @@ vi.mock("node:child_process", () => ({
   ) => {
     if (command === "git") return "staging\n";
     if (command === "gh" && args[0] === "repo") return "owner/repo\n";
+    if (command === "gh" && args[0] === "label") return "";
+    if (command === "gh" && args[0] === "issue" && args[1] === "edit") {
+      calls.pendingEdits.push(args[2]!);
+      return "";
+    }
     if (command === "bash" && args[0] === ".shipyard/block-scope.sh") {
       calls.events.push("blocked");
       calls.blocked.push({
@@ -286,6 +292,7 @@ vi.mock("@snappedly-tools/shipyard", () => {
 beforeEach(() => {
   vi.resetModules();
   calls.events.length = 0;
+  calls.pendingEdits.length = 0;
   calls.selected = 0;
   calls.plans = 0;
   calls.spec = false;
@@ -328,6 +335,7 @@ describe("generated issue workflows", () => {
       "close",
       "select",
     ]);
+    expect(calls.pendingEdits).toEqual(["42"]);
   });
 
   it("marks a failed standalone issue blocked and continues without handoff", async () => {
@@ -533,6 +541,7 @@ describe("generated issue workflows", () => {
       ),
     ).toContain("42,43,44");
     expect(calls.specContent).toEqual(["43", "44"]);
+    expect(calls.pendingEdits).toEqual(["43", "44"]);
     expect(
       calls.creates
         .filter((item) => item.baseBranch)

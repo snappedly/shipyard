@@ -664,6 +664,7 @@ const initCommand = Command.make(
         for (const [name, description, color] of [
           [ACTIVATION_LABEL, `Issues for ${PRODUCT_NAME} to work on`, "F9A825"],
           ["shipyard:blocked", "Shipyard work needs intervention", "B60205"],
+          ["shipyard:pending", "Shipyard is working on this ticket", "1D76DB"],
           [
             "shipyard:complete",
             "Shipyard work ready for human review",

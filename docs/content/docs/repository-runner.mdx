@@ -64,25 +64,29 @@ through scoped `/implement` workers, resolve cherry-pick conflicts during
 integration, and merge each dependency wave into one spec branch. The complete
 scope gets one open, non-draft PR per spec. Later selected tickets update the
 same PR. The workflow never merges into the target branch or closes issues.
-Successful handoff marks the PR `ready-for-human`, adds `shipyard:complete` to
-selected tickets, then removes `shipyard` from activated issues so later
-wake-ups do not repeat work. When all linked tickets are complete, the parent
-spec and PR get `shipyard:complete`. If unlabelled tickets remain, the parent
-and PR get `shipyard:outstanding-tasks`. These labels mean Shipyard's PR is ready for human review;
+An open verified spec PR's `Source issues:` line can also link a newly labelled
+ticket to that spec.
+Selected tickets get `shipyard:pending` while Shipyard works. Successful handoff
+replaces it with `shipyard:complete` and removes `shipyard` from activated issues
+so later wake-ups do not repeat work. The parent spec and existing PR show
+`shipyard:blocked` if an unfinished child is blocked, `shipyard:outstanding-tasks`
+if other children remain, or `shipyard:complete` when all linked tickets are
+complete. Spec labels only report child state; they do not gate ticket selection.
+The non-draft PR is ready for human review;
 the issues remain open until the target repository's closure policy closes them. A
-failed attempted scope gets an issue comment describing the failure and a
-`shipyard:blocked` label; Shipyard removes `shipyard` from the scope so it does
-not retry automatically. If a child ticket fails, the ticket and parent spec
-are marked blocked. An existing spec PR also gets `shipyard:blocked`; failed
-work does not create a new PR, and the blocked PR loses `ready-for-human` until a
-successful retry. Resolve the problem, remove `shipyard:blocked`, and add
-`shipyard` to retry. Relationship resolution failures before a scope is selected
+failed attempted scope gets an issue comment describing the failure. Its selected
+tickets become `shipyard:blocked` and lose `shipyard:pending` and `shipyard`, so
+they do not retry automatically. The parent spec and existing PR reflect the block; failed
+work does not create a new PR. Resolve the problem, remove `shipyard:blocked`
+from the ticket, and add `shipyard` to retry; the spec label is recalculated.
+Relationship resolution failures before a scope is selected
 remain in the runner logs and stop the invocation. If GitHub cannot confirm PR
 readiness, Shipyard leaves activation in place so the next invocation can
 reconcile the PR.
-If a blocked comment or PR label fails, Shipyard retains activation and a local
-pending record under Git metadata. The next invocation retries the failure
-handoff before selecting new work; blocked tickets are not implemented again.
+If a failure comment cannot be written, Shipyard retains a local pending report
+under Git metadata. A fresh `shipyard` activation on an unblocked ticket
+supersedes that report. Spec and PR status label errors are logged without
+stopping ticket work; a later activation recalculates their labels.
 
 Start always preflights the current backlog, recovering labels added while the
 Mac was off. If work exists, it invokes exactly `npx shipyard run`. After a

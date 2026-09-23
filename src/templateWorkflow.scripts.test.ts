@@ -51,6 +51,15 @@ describe("issue workflow scripts", () => {
       `
 const fs = require("node:fs");
 const args = process.argv.slice(2); const path = args[1] || "";
+const statusState = process.env.STATUS_STATE ? JSON.parse(fs.readFileSync(process.env.STATUS_STATE, "utf8")) : null;
+const updateStatus = (target) => {
+  if (!statusState) return;
+  const added = args.indexOf("--add-label");
+  const removed = args.indexOf("--remove-label");
+  if (added >= 0 && !statusState[target].includes(args[added + 1])) statusState[target].push(args[added + 1]);
+  if (removed >= 0) statusState[target] = statusState[target].filter((label) => label !== args[removed + 1]);
+  fs.writeFileSync(process.env.STATUS_STATE, JSON.stringify(statusState));
+};
 fs.appendFileSync(process.env.GH_LOG, args.join(" ") + "\\n");
 if (args[0] === "repo") console.log("owner/repo");
 else if (args[0] === "issue" && args[1] === "list" && args.includes("open")) {
@@ -61,27 +70,37 @@ else if (args[0] === "issue" && args[1] === "list" && args.includes("open")) {
     {number:4,title:"Sibling",body:""},
     {number:6,title:"Already ready",body:""}
   ];
-  const ids = process.env.PARTIAL_PR ? [2,3] : process.env.NO_LABELLED || process.env.BLOCKED_ROOT ? [2] : process.env.LATER_BATCH ? [4] : process.env.ACTIVATION === "parent" ? [2] : process.env.ACTIVATION === "siblings" ? [3,4] : process.env.UNLABELLED_SIBLING ? [1,2,3,6] : [1,2,3,4,6];
-  console.log(JSON.stringify(pool.filter((item) => ids.includes(item.number)).map((item) => item.number === 2 && process.env.BLOCKED_ROOT ? {...item,labels:[{name:"shipyard"},{name:"shipyard:blocked"}]} : item)));
+  const ids = process.env.STATUS_STATE ? [2,3] : process.env.COMPLETED_STANDALONE ? [1] : process.env.PR_ONLY ? [4] : process.env.RETRY_CHILD ? [3] : process.env.PARTIAL_PR ? [2,3] : process.env.NO_LABELLED || process.env.BLOCKED_ROOT ? [2] : process.env.LATER_BATCH ? [4] : process.env.ACTIVATION === "parent" ? [2] : process.env.ACTIVATION === "siblings" ? [3,4] : process.env.UNLABELLED_SIBLING ? [1,2,3,6] : [1,2,3,4,6];
+  console.log(JSON.stringify(pool.filter((item) => ids.includes(item.number)).map((item) => ({
+    ...item,
+    labels: item.number === 1 && process.env.COMPLETED_STANDALONE
+      ? [{name:"shipyard"},{name:"shipyard:complete"}]
+      : item.number === 2 && statusState
+        ? [{name:"shipyard"}, ...statusState.root.map((name) => ({name}))]
+      : item.number === 2 && process.env.BLOCKED_ROOT
+        ? [{name:"shipyard"},{name:"shipyard:blocked"}]
+        : [{name:"shipyard"}]
+  }))));
 }
 else if (args[0] === "issue" && args[1] === "list" && args.includes("all")) console.log(JSON.stringify([
-  {number:3,title:"Child",body:"**Work item type:** executable\\n\\n## Parent\\n#2",state:process.env.CLOSED_CHILD ? "CLOSED" : "OPEN",labels:process.env.NO_LABELLED ? [] : process.env.PARTIAL_PR ? [{name:"shipyard"},{name:"shipyard:complete"},{name:"shipyard:blocked"}] : process.env.LATER_BATCH ? [{name:"shipyard:complete"}] : [{name:"shipyard"}]},
-  {number:4,title:"Sibling",body:"**Work item type:** executable",state:"OPEN",labels:process.env.NO_LABELLED || process.env.UNLABELLED_SIBLING || process.env.PARTIAL_PR ? [] : [{name:"shipyard"}]}
+  {number:3,title:"Child",body:"**Work item type:** executable\\n\\n## Parent\\n#2",state:process.env.CLOSED_CHILD ? "CLOSED" : "OPEN",labels:process.env.NO_LABELLED ? [] : process.env.PARTIAL_PR ? [{name:"shipyard"},{name:"shipyard:complete"},{name:"shipyard:blocked"}] : process.env.LATER_BATCH || process.env.PR_ONLY ? [{name:"shipyard:complete"}] : [{name:"shipyard"}]},
+  {number:4,title:"Sibling",body:"**Work item type:** executable",state:"OPEN",labels:statusState ? [{name:"shipyard:complete"}] : process.env.RETRY_CHILD ? [{name:"shipyard:blocked"}] : process.env.NO_LABELLED || process.env.UNLABELLED_SIBLING || process.env.PARTIAL_PR ? [] : [{name:"shipyard"}]}
 ]));
-else if (args[0] === "issue" && args[1] === "view") console.log(JSON.stringify({number:2,title:"Spec",body:"**Work item type:** planning spec",state:"OPEN"}));
+else if (args[0] === "issue" && args[1] === "view") console.log(JSON.stringify({number:2,title:"Spec",body:"**Work item type:** planning spec",state:"OPEN",labels:statusState ? statusState.root.map((name) => ({name})) : process.env.RETRY_CHILD ? [{name:"shipyard:blocked"}] : []}));
 else if (args[0] === "api" && path.endsWith("/parent")) {
-  if (!process.env.TEXT_ONLY && (path.includes("/3/") || path.includes("/4/"))) console.log(JSON.stringify({number:2}));
+  if (!process.env.TEXT_ONLY && (path.includes("/3/") || (path.includes("/4/") && !process.env.PR_ONLY))) console.log(JSON.stringify({number:2}));
   else { console.error("gh: Not Found (HTTP 404)"); process.exit(1); }
 }
 else if (args[0] === "api" && path.includes("/sub_issues?")) console.log(JSON.stringify(process.env.TEXT_ONLY ? [] : path.includes("/2/") ? [
-  {number:3,title:"Child",body:"**Work item type:** executable\\n\\n## Parent\\n#2",state:process.env.CLOSED_CHILD ? "CLOSED" : "OPEN",labels:process.env.NO_LABELLED ? [] : process.env.PARTIAL_PR ? [{name:"shipyard"},{name:"shipyard:complete"},{name:"shipyard:blocked"}] : process.env.LATER_BATCH ? [{name:"shipyard:complete"}] : [{name:"shipyard"}]},
-  {number:4,title:"Sibling",body:"**Work item type:** executable",state:"OPEN",labels:process.env.NO_LABELLED || process.env.UNLABELLED_SIBLING || process.env.PARTIAL_PR ? [] : [{name:"shipyard"}]}
-] : []));
+  {number:3,title:"Child",body:"**Work item type:** executable\\n\\n## Parent\\n#2",state:process.env.CLOSED_CHILD ? "CLOSED" : "OPEN",labels:process.env.NO_LABELLED ? [] : process.env.PARTIAL_PR ? [{name:"shipyard"},{name:"shipyard:complete"},{name:"shipyard:blocked"}] : process.env.LATER_BATCH || process.env.PR_ONLY ? [{name:"shipyard:complete"}] : [{name:"shipyard"}]},
+  {number:4,title:"Sibling",body:"**Work item type:** executable",state:"OPEN",labels:statusState ? [{name:"shipyard:complete"}] : process.env.RETRY_CHILD ? [{name:"shipyard:blocked"}] : process.env.NO_LABELLED || process.env.UNLABELLED_SIBLING || process.env.PARTIAL_PR ? [] : [{name:"shipyard"}]}
+] .filter((item) => !process.env.PR_ONLY || item.number !== 4) : []));
 else if (args[0] === "api" && path.includes("/dependencies/blocked_by?")) console.log(JSON.stringify(path.includes("/4/") ? [{number:3,title:"Child",state:"OPEN"}] : []));
-else if (args[0] === "pr" && args[1] === "list") console.log(args.includes("shipyard/issue-6") || ((process.env.READY_SPEC || process.env.PARTIAL_PR || process.env.LATER_BATCH) && args.includes("shipyard/spec-2")) ? JSON.stringify([{number:9,isDraft:false,labels:process.env.UNLABELED_PR ? [] : [{name:"ready-for-human"},...(process.env.BLOCKED_PR ? [{name:"shipyard:blocked"}] : [])],body:process.env.UNVERIFIED_PR ? "Incomplete manual PR" : args.includes("shipyard/spec-2") ? "Source issues: #2 #3" + (process.env.STALE_PR_SCOPE ? "" : " #4") + (process.env.PARTIAL_PR || process.env.LATER_BATCH ? "\\nImplemented tickets: #3" : "") + "\\n<!-- shipyard:verified-handoff -->" : "Source issues: #6\\n<!-- shipyard:verified-handoff -->"}]) : "[]");
-else if (args[0] === "pr" && args[1] === "edit") {}
+else if (args[0] === "pr" && args[1] === "list") console.log(statusState ? JSON.stringify([{number:9,headRefName:"shipyard/spec-2",isDraft:false,labels:statusState.pr.map((name) => ({name})),body:"Source issues: #2 #3 #4\\nImplemented tickets: #3 #4\\n<!-- shipyard:verified-handoff -->"}]) : process.env.PR_ONLY ? JSON.stringify([{number:9,headRefName:"shipyard/spec-2",isDraft:false,labels:[],body:"Source issues: #2 #4\\nImplemented tickets: #3\\n<!-- shipyard:verified-handoff -->"}]) : args.includes("shipyard/issue-6") || ((process.env.READY_SPEC || process.env.PARTIAL_PR || process.env.LATER_BATCH) && args.includes("shipyard/spec-2")) ? JSON.stringify([{number:9,isDraft:false,labels:process.env.BLOCKED_PR ? [{name:"shipyard:blocked"}] : [],body:process.env.UNVERIFIED_PR ? "Incomplete manual PR" : args.includes("shipyard/spec-2") ? "Source issues: #2 #3" + (process.env.STALE_PR_SCOPE ? "" : " #4") + (process.env.PARTIAL_PR || process.env.LATER_BATCH ? "\\nImplemented tickets: #3" : "") + "\\n<!-- shipyard:verified-handoff -->" : "Source issues: #6\\n<!-- shipyard:verified-handoff -->"}]) : "[]");
+else if (args[0] === "pr" && args[1] === "view") console.log(JSON.stringify({labels:statusState ? statusState.pr.map((name) => ({name})) : []}));
+else if (args[0] === "pr" && args[1] === "edit") { updateStatus("pr"); }
 else if (args[0] === "label") {}
-else if (args[0] === "issue" && args[1] === "edit") {}
+else if (args[0] === "issue" && args[1] === "edit") { if (process.env.FAIL_COSMETIC && args[2] === "2" && args.includes("shipyard:outstanding-tasks")) process.exit(1); if (args[2] === "2") updateStatus("root"); }
 else process.exit(2);
 `,
     );
@@ -133,6 +152,18 @@ else process.exit(2);
         },
       ]);
     }
+    const completedStandalone = run(
+      "node",
+      [script("select-issues.mjs")],
+      dir,
+      bin,
+      {
+        GH_LOG: log,
+        COMPLETED_STANDALONE: "1",
+      },
+    );
+    expect(completedStandalone.status, completedStandalone.stderr).toBe(0);
+    expect(JSON.parse(completedStandalone.stdout)).toEqual([]);
     const partial = run("node", [script("select-issues.mjs")], dir, bin, {
       GH_LOG: log,
       UNLABELLED_SIBLING: "1",
@@ -154,16 +185,82 @@ else process.exit(2);
     expect(await readFile(log, "utf8")).toContain(
       "issue edit 2 --repo owner/repo --add-label shipyard:outstanding-tasks",
     );
-    const beforeBlockedRoot = (await readFile(log, "utf8")).length;
+    const beforeCosmeticRetry = (await readFile(log, "utf8")).length;
+    const cosmeticRetry = run("node", [script("select-issues.mjs")], dir, bin, {
+      GH_LOG: log,
+      NO_LABELLED: "1",
+      FAIL_COSMETIC: "1",
+    });
+    expect(cosmeticRetry.status, cosmeticRetry.stderr).toBe(0);
+    expect(
+      (await readFile(log, "utf8")).slice(beforeCosmeticRetry),
+    ).not.toContain("issue edit 2 --repo owner/repo --remove-label shipyard\n");
     const blockedRoot = run("node", [script("select-issues.mjs")], dir, bin, {
       GH_LOG: log,
       BLOCKED_ROOT: "1",
     });
     expect(blockedRoot.status, blockedRoot.stderr).toBe(0);
-    expect(JSON.parse(blockedRoot.stdout)).toEqual([]);
     expect(
-      (await readFile(log, "utf8")).slice(beforeBlockedRoot),
-    ).not.toContain("issue edit 2 --repo owner/repo --remove-label shipyard");
+      JSON.parse(blockedRoot.stdout).map((scope: { id: string }) => scope.id),
+    ).toEqual(["2"]);
+    const retry = run("node", [script("select-issues.mjs")], dir, bin, {
+      GH_LOG: log,
+      RETRY_CHILD: "1",
+    });
+    expect(retry.status, retry.stderr).toBe(0);
+    expect(
+      JSON.parse(retry.stdout)[0].tickets.map(
+        (ticket: { id: string }) => ticket.id,
+      ),
+    ).toEqual(["3"]);
+    expect(JSON.parse(retry.stdout)[0].outstandingTicketIds).toEqual(["4"]);
+    const prOnly = run("node", [script("select-issues.mjs")], dir, bin, {
+      GH_LOG: log,
+      PR_ONLY: "1",
+    });
+    expect(prOnly.status, prOnly.stderr).toBe(0);
+    expect(JSON.parse(prOnly.stdout)[0].id).toBe("2");
+    expect(
+      JSON.parse(prOnly.stdout)[0].tickets.map(
+        (ticket: { id: string }) => ticket.id,
+      ),
+    ).toEqual(["4"]);
+    const cosmeticFailure = run(
+      "node",
+      [script("select-issues.mjs")],
+      dir,
+      bin,
+      {
+        GH_LOG: log,
+        FAIL_COSMETIC: "1",
+      },
+    );
+    expect(cosmeticFailure.status, cosmeticFailure.stderr).toBe(0);
+    expect(
+      JSON.parse(cosmeticFailure.stdout).some(
+        (scope: { id: string }) => scope.id === "2",
+      ),
+    ).toBe(true);
+    const statusPath = join(dir, "status.json");
+    await writeFile(
+      statusPath,
+      JSON.stringify({ root: ["shipyard:blocked"], pr: ["shipyard:blocked"] }),
+    );
+    const reconciledStatus = run(
+      "node",
+      [script("select-issues.mjs")],
+      dir,
+      bin,
+      {
+        GH_LOG: log,
+        STATUS_STATE: statusPath,
+      },
+    );
+    expect(reconciledStatus.status, reconciledStatus.stderr).toBe(0);
+    expect(JSON.parse(await readFile(statusPath, "utf8"))).toEqual({
+      root: ["shipyard:complete"],
+      pr: ["shipyard:complete"],
+    });
     const partialReady = run("node", [script("select-issues.mjs")], dir, bin, {
       GH_LOG: log,
       PARTIAL_PR: "1",
@@ -184,7 +281,7 @@ else process.exit(2);
     });
     expect(blockedReady.status, blockedReady.stderr).toBe(0);
     expect(JSON.parse(blockedReady.stdout)).toEqual([]);
-    expect((await readFile(log, "utf8")).slice(beforeBlocked)).not.toContain(
+    expect((await readFile(log, "utf8")).slice(beforeBlocked)).toContain(
       "--add-label shipyard:outstanding-tasks",
     );
     const laterBatch = run("node", [script("select-issues.mjs")], dir, bin, {
@@ -254,6 +351,9 @@ else process.exit(2);
     });
     expect(changedScope.status, changedScope.stderr).toBe(0);
     expect(JSON.parse(changedScope.stdout)[0].tickets).toHaveLength(2);
+    expect(await readFile(log, "utf8")).toContain(
+      "pr edit 9 --repo owner/repo --add-label shipyard:outstanding-tasks",
+    );
     for (const template of [
       "simple-loop",
       "sequential-reviewer",
@@ -289,18 +389,7 @@ else process.exit(2);
       expect(reconciled).toContain(
         `issue edit ${id} --repo owner/repo --add-label shipyard:complete`,
       );
-    expect(
-      reconciled.lastIndexOf(
-        "issue edit 2 --repo owner/repo --add-label shipyard:complete",
-      ),
-    ).toBeGreaterThan(
-      reconciled.lastIndexOf(
-        "issue edit 4 --repo owner/repo --add-label shipyard:complete",
-      ),
-    );
-    expect(reconciled).toContain(
-      "pr edit 9 --repo owner/repo --add-label ready-for-human",
-    );
+    expect(reconciled).not.toContain("--add-label ready-for-human");
     for (const id of [3, 4])
       expect(reconciled).toContain(
         `issue edit ${id} --repo owner/repo --remove-label shipyard`,
@@ -316,6 +405,7 @@ const args = process.argv.slice(2);
 if (args[0] === "repo") console.log("owner/repo");
 else if (args[0] === "issue" && args[1] === "list") console.log(JSON.stringify([{number:3,title:"Child",body:"## Parent\\n#9"}]));
 else if (args[0] === "api" && args[1].endsWith("/parent")) console.log(JSON.stringify({number:2}));
+else if (args[0] === "pr" && args[1] === "list") console.log("[]");
 else process.exit(2);
 `,
     );
@@ -333,6 +423,7 @@ const args = process.argv.slice(2); const path = args[1] || "";
 if (args[0] === "repo") console.log("owner/repo");
 else if (args[0] === "issue" && args[1] === "list" && args.includes("open")) console.log(JSON.stringify([{number:2,title:"Spec",body:"**Work item type:** planning spec"}]));
 else if (args[0] === "issue" && args[1] === "list" && args.includes("all")) console.log("[]");
+else if (args[0] === "pr" && args[1] === "list") console.log("[]");
 else if (args[0] === "api" && path.endsWith("/parent")) { console.error("Not Found (HTTP 404)"); process.exit(1); }
 else if (args[0] === "api" && path.includes("/sub_issues?")) console.log(JSON.stringify(process.env.CASE === "missing" ? [] : [{number:3,title:"Planning child",body:"**Work item type:** planning spec",state:"open",labels:[{name:"shipyard"}]}]));
 else if (args[0] === "api" && path.includes("/dependencies/blocked_by?")) console.log("[]");
@@ -441,7 +532,7 @@ const args = process.argv.slice(2);
 let state = JSON.parse(fs.readFileSync(process.env.PR_STATE, "utf8"));
 fs.appendFileSync(process.env.HANDOFF_LOG, "gh " + args.join(" ") + "\\n");
 if (args[0] === "repo") console.log("owner/repo");
-else if (args[0] === "issue" && args[1] === "view") console.log(args.includes("labels") ? "shipyard" : "Fix bug");
+else if (args[0] === "issue" && args[1] === "view") console.log(args.includes("labels") ? process.env.BLOCKED_OUTSTANDING && args[2] === "4" ? "shipyard:blocked" : "shipyard" : "Fix bug");
 else if (args[0] === "pr" && args[1] === "list") console.log(state.number || "");
 else if (args[0] === "pr" && args[1] === "create") { state.number = 7; fs.writeFileSync(process.env.PR_STATE, JSON.stringify(state)); fs.appendFileSync(process.env.HANDOFF_LOG, "BODY " + fs.readFileSync(args[args.indexOf("--body-file") + 1], "utf8") + "\\n"); }
 else if (args[0] === "pr" && args[1] === "ready") { state.readyAttempted = true; if (!process.env.FAIL_PR_READY) state.isDraft = false; if (process.env.CLOSE_PR_AFTER_READY) state.status = "CLOSED"; fs.writeFileSync(process.env.PR_STATE, JSON.stringify(state)); if (process.env.FAIL_PR_READY || process.env.FAIL_PR_READY_AFTER_UPDATE) process.exit(1); }
@@ -517,6 +608,9 @@ else process.exit(2);
     expect(commands).toContain(
       "gh issue edit 1 --repo owner/repo --add-label shipyard:complete",
     );
+    expect(commands).toContain(
+      "gh issue edit 1 --repo owner/repo --remove-label shipyard:pending",
+    );
     expect(commands.indexOf("gh pr ready 7 --repo owner/repo")).toBeLessThan(
       commands.indexOf(
         "gh issue edit 1 --repo owner/repo --add-label shipyard:complete",
@@ -554,9 +648,7 @@ else process.exit(2);
     expect((await readFile(log, "utf8")).slice(beforeUnready)).not.toContain(
       "--add-label shipyard:complete",
     );
-    expect(await readFile(log, "utf8")).toContain(
-      "gh pr edit 7 --repo owner/repo --remove-label ready-for-human",
-    );
+    expect(await readFile(log, "utf8")).not.toContain("ready-for-human");
 
     result = run(
       "bash",
@@ -690,6 +782,27 @@ else process.exit(2);
     expect(partialCommands).not.toContain(
       "gh issue edit 4 --repo owner/repo --add-label shipyard:complete",
     );
+    const beforeBlockedOutstanding = (await readFile(log, "utf8")).length;
+    result = run(
+      "bash",
+      [
+        script("handoff.sh"),
+        "2",
+        "shipyard/spec-2",
+        "staging",
+        "owner/repo",
+        "2,3",
+        "4",
+      ],
+      dir,
+      bin,
+      { ...env, BLOCKED_OUTSTANDING: "1" },
+      "Checks: pass; Review: approved",
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(
+      (await readFile(log, "utf8")).slice(beforeBlockedOutstanding),
+    ).toContain("gh pr edit 7 --repo owner/repo --add-label shipyard:blocked");
 
     const beforeLater = (await readFile(log, "utf8")).length;
     result = run(
@@ -738,11 +851,12 @@ else process.exit(2);
       { ...env, FAIL_STALE_CLEANUP: "1" },
       "Checks: pass; Review: approved",
     );
-    expect(result.status).toBe(75);
+    expect(result.status, result.stderr).toBe(0);
     const staleFailureCommands = (await readFile(log, "utf8")).slice(
       beforeStaleFailure,
     );
     expect(staleFailureCommands).not.toContain("--remove-label shipyard\n");
+    expect(result.stderr).toContain("retaining ticket activation");
   }, 15_000);
 
   it("hands off a bundle clone whose target exists only as a remote ref", async () => {
@@ -819,9 +933,10 @@ else process.exit(2);
 const fs = require("node:fs");
 const args = process.argv.slice(2);
 fs.appendFileSync(process.env.BLOCKED_LOG, args.join(" ") + "\\n");
-if (args[0] === "issue" && args[1] === "view") console.log("shipyard");
+if (args[0] === "issue" && args[1] === "view") console.log(process.env.REPLAY_BLOCKED ? "shipyard\\nshipyard:blocked" : "shipyard");
 else if (args[0] === "issue" && args[1] === "list") console.log("[]");
 else if (args[0] === "issue" && args[1] === "comment" && process.env.FAIL_COMMENT) process.exit(1);
+else if (args[0] === "issue" && args[1] === "edit" && args.includes("--add-label") && args.includes("shipyard:blocked") && args[2] === process.env.FAIL_BLOCK_LABEL) process.exit(1);
 else if (args[0] === "repo") console.log("owner/repo");
 else if (args[0] === "pr" && args[1] === "list" && process.env.FAIL_PR_LOOKUP) process.exit(1);
 else if (args[0] === "pr" && args[1] === "list" && process.env.EXISTING_PR) console.log("9");
@@ -883,8 +998,12 @@ else if (args[0] === "pr" && args[1] === "list" && process.env.EXISTING_PR) cons
     expect(existingCommands).toContain(
       "pr edit 9 --repo owner/repo --add-label shipyard:blocked",
     );
+    expect(existingCommands).not.toContain("ready-for-human");
     expect(existingCommands).toContain(
-      "pr edit 9 --repo owner/repo --remove-label ready-for-human",
+      "issue edit 4 --repo owner/repo --add-label shipyard:blocked",
+    );
+    expect(existingCommands).toContain(
+      "issue edit 4 --repo owner/repo --remove-label shipyard:pending",
     );
 
     await writeFile(log, "");
@@ -903,7 +1022,7 @@ else if (args[0] === "pr" && args[1] === "list" && process.env.EXISTING_PR) cons
       { BLOCKED_LOG: log, FAIL_PR_LOOKUP: "1" },
       "PR lookup failed",
     );
-    expect(lookupFailure.status).not.toBe(0);
+    expect(lookupFailure.status, lookupFailure.stderr).toBe(0);
     const lookupCommands = await readFile(log, "utf8");
     expect(lookupCommands).toContain(
       "issue edit 3 --repo owner/repo --add-label shipyard:blocked",
@@ -943,9 +1062,37 @@ else if (args[0] === "pr" && args[1] === "list" && process.env.EXISTING_PR) cons
     );
 
     await writeFile(log, "");
+    const superseded = run("node", [script("select-issues.mjs")], dir, bin, {
+      BLOCKED_LOG: log,
+      EXISTING_PR: "1",
+    });
+    expect(superseded.status, superseded.stderr).toBe(0);
+    expect(await readFile(pendingPath, "utf8").catch(() => null)).toBeNull();
+    expect(await readFile(log, "utf8")).not.toContain(
+      "--add-label shipyard:blocked",
+    );
+
+    run(
+      "bash",
+      [
+        script("block-scope.sh"),
+        "2",
+        "3",
+        "owner/repo",
+        "2,3,4",
+        "shipyard/spec-2",
+      ],
+      dir,
+      bin,
+      { BLOCKED_LOG: log, FAIL_COMMENT: "1" },
+      "Comment was unavailable",
+    );
+
+    await writeFile(log, "");
     const reconciled = run("node", [script("select-issues.mjs")], dir, bin, {
       BLOCKED_LOG: log,
       EXISTING_PR: "1",
+      REPLAY_BLOCKED: "1",
     });
     expect(reconciled.status, reconciled.stderr).toBe(0);
     expect(JSON.parse(reconciled.stdout)).toEqual([]);
@@ -957,6 +1104,39 @@ else if (args[0] === "pr" && args[1] === "list" && process.env.EXISTING_PR) cons
     expect(reconcileCommands).toContain(
       "issue edit 3 --repo owner/repo --remove-label shipyard\n",
     );
+
+    const firstBlockFailure = run(
+      "bash",
+      [
+        script("block-scope.sh"),
+        "2",
+        "3",
+        "owner/repo",
+        "2,3,4",
+        "shipyard/spec-2",
+      ],
+      dir,
+      bin,
+      { BLOCKED_LOG: log, FAIL_BLOCK_LABEL: "3" },
+      "First block write failed",
+    );
+    expect(firstBlockFailure.status).not.toBe(0);
+    expect(await readFile(pendingPath, "utf8")).toContain(
+      "shipyard/spec-2\t\nFirst block write failed",
+    );
+    await writeFile(log, "");
+    const replayFirstBlock = run(
+      "node",
+      [script("select-issues.mjs")],
+      dir,
+      bin,
+      { BLOCKED_LOG: log },
+    );
+    expect(replayFirstBlock.status, replayFirstBlock.stderr).toBe(0);
+    expect(await readFile(log, "utf8")).toContain(
+      "issue edit 3 --repo owner/repo --add-label shipyard:blocked",
+    );
+    expect(await readFile(pendingPath, "utf8").catch(() => null)).toBeNull();
 
     await writeFile(log, "");
     const standalone = run(
@@ -971,5 +1151,5 @@ else if (args[0] === "pr" && args[1] === "list" && process.env.EXISTING_PR) cons
     const standaloneCommands = await readFile(log, "utf8");
     expect(standaloneCommands.match(/issue comment 1 /g)).toHaveLength(1);
     expect(standaloneCommands).toContain("Tests failed");
-  });
+  }, 15_000);
 });

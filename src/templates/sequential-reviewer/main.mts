@@ -88,6 +88,30 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
   let handedOff = false;
   let publicationUncertain = false;
   try {
+    execFileSync("gh", [
+      "label",
+      "create",
+      "shipyard:pending",
+      "--repo",
+      repository,
+      "--color",
+      "1D76DB",
+      "--description",
+      "Shipyard is working on this ticket",
+      "--force",
+    ]);
+    for (const ticketId of issue.kind === "spec"
+      ? (issue.tickets ?? []).map((ticket) => ticket.id)
+      : [issue.id])
+      execFileSync("gh", [
+        "issue",
+        "edit",
+        ticketId,
+        "--repo",
+        repository,
+        "--add-label",
+        "shipyard:pending",
+      ]);
     const sandbox = await shipyard.createSandbox({
       branch: issue.branch,
       sandbox: docker(),

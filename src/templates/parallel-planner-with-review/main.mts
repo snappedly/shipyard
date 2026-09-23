@@ -171,6 +171,30 @@ for (let iteration = 0; iteration < 10; iteration++) {
       let handedOff = false;
       let publicationUncertain = false;
       try {
+        execFileSync("gh", [
+          "label",
+          "create",
+          "shipyard:pending",
+          "--repo",
+          repository,
+          "--color",
+          "1D76DB",
+          "--description",
+          "Shipyard is working on this ticket",
+          "--force",
+        ]);
+        for (const ticketId of scope.kind === "spec"
+          ? (scope.tickets ?? []).map((ticket) => ticket.id)
+          : [scope.id])
+          execFileSync("gh", [
+            "issue",
+            "edit",
+            ticketId,
+            "--repo",
+            repository,
+            "--add-label",
+            "shipyard:pending",
+          ]);
         if (
           scope.branch !==
           (scope.kind === "spec"

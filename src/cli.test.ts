@@ -532,7 +532,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     }
   });
 
-  it("init creates the four Shipyard issue labels", async () => {
+  it("init creates the five Shipyard issue labels", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
     await initRepo(hostDir);
     await commitFile(hostDir, "hello.txt", "hello", "initial commit");
@@ -559,6 +559,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     for (const label of [
       "shipyard",
       "shipyard:blocked",
+      "shipyard:pending",
       "shipyard:complete",
       "shipyard:outstanding-tasks",
     ])
