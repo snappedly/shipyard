@@ -6,13 +6,6 @@ const gh = (...args) =>
     stdio: ["ignore", "pipe", "pipe"],
   }).trim();
 const json = (...args) => JSON.parse(gh(...args));
-const bestEffort = (...args) => {
-  try {
-    gh(...args);
-  } catch {
-    /* label already absent */
-  }
-};
 const repository =
   process.env.GH_REPO ||
   gh("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner");
@@ -104,6 +97,7 @@ const activated = json(
 if (activated.length === 100)
   throw new Error("Could not resolve complete activated issue set");
 const scopes = new Map();
+const processedBranches = new Set();
 const activeIds = new Set(activated.map((item) => number(item.number)));
 for (const candidate of activated) {
   const id = number(candidate.number);
@@ -136,7 +130,8 @@ for (const candidate of activated) {
       `Planning spec #${rootId} has no linked executable tickets`,
     );
   const branch = isSpec ? `shipyard/spec-${rootId}` : `shipyard/issue-${id}`;
-  if (scopes.has(branch)) continue;
+  if (processedBranches.has(branch)) continue;
+  processedBranches.add(branch);
   const linkedTickets = isSpec
     ? linked.map((child) => ({
         id: number(child.number),
@@ -150,7 +145,9 @@ for (const candidate of activated) {
     .filter(
       (ticket) =>
         ticket.labels.some((label) => label.name === "shipyard") &&
-        !ticket.labels.some((label) => label.name === "shipyard:complete"),
+        !ticket.labels.some((label) =>
+          ["shipyard:complete", "shipyard:blocked"].includes(label.name),
+        ),
     )
     .map(({ labels: _labels, ...ticket }) => ({
       ...ticket,
@@ -168,6 +165,22 @@ for (const candidate of activated) {
         !selectedIds.has(ticket.id) && !completedTicketIds.includes(ticket.id),
     )
     .map((ticket) => ticket.id);
+  if (root.labels?.some((label) => label.name === "shipyard:blocked")) {
+    for (const activeId of [
+      rootId,
+      ...linkedTickets.map((ticket) => ticket.id),
+    ].filter((item) => activeIds.has(item)))
+      gh(
+        "issue",
+        "edit",
+        activeId,
+        "--repo",
+        repository,
+        "--remove-label",
+        "shipyard",
+      );
+    continue;
+  }
   if (isSpec) {
     if (parentId && !linkedTickets.some((ticket) => ticket.id === id))
       throw new Error(
@@ -285,15 +298,35 @@ for (const candidate of activated) {
           "--add-label",
           "shipyard:complete",
         );
-        bestEffort(
-          "issue",
-          "edit",
-          ticket.id,
-          "--repo",
-          repository,
-          "--remove-label",
-          "shipyard:blocked",
-        );
+        if (
+          linkedTickets
+            .find((item) => item.id === ticket.id)
+            ?.labels.some((label) => label.name === "shipyard:blocked")
+        )
+          gh(
+            "issue",
+            "edit",
+            ticket.id,
+            "--repo",
+            repository,
+            "--remove-label",
+            "shipyard:blocked",
+          );
+      }
+      for (const ticket of linkedTickets) {
+        if (
+          ticket.labels.some((label) => label.name === "shipyard:complete") &&
+          ticket.labels.some((label) => label.name === "shipyard:blocked")
+        )
+          gh(
+            "issue",
+            "edit",
+            ticket.id,
+            "--repo",
+            repository,
+            "--remove-label",
+            "shipyard:blocked",
+          );
       }
       gh(
         "issue",
@@ -319,15 +352,16 @@ for (const candidate of activated) {
         "shipyard:blocked",
       ]) {
         if (label === parentStatus) continue;
-        bestEffort(
-          "issue",
-          "edit",
-          rootId,
-          "--repo",
-          repository,
-          "--remove-label",
-          label,
-        );
+        if (root.labels?.some((item) => item.name === label))
+          gh(
+            "issue",
+            "edit",
+            rootId,
+            "--repo",
+            repository,
+            "--remove-label",
+            label,
+          );
         if (ready.labels.some((item) => item.name === label))
           gh(
             "pr",
@@ -342,6 +376,7 @@ for (const candidate of activated) {
       const activatedIds = [
         rootId,
         ...tickets.map((ticket) => ticket.id),
+        ...completedTicketIds,
       ].filter((item) => activeIds.has(item));
       for (const activeId of activatedIds)
         gh(
@@ -392,6 +427,39 @@ for (const candidate of activated) {
     }
   }
   if (isSpec && tickets.length === 0) {
+    if (outstandingTicketIds.length) {
+      gh(
+        "label",
+        "create",
+        "shipyard:outstanding-tasks",
+        "--repo",
+        repository,
+        "--color",
+        "FBCA04",
+        "--description",
+        "Spec has uncompleted tickets",
+        "--force",
+      );
+      gh(
+        "issue",
+        "edit",
+        rootId,
+        "--repo",
+        repository,
+        "--add-label",
+        "shipyard:outstanding-tasks",
+      );
+      if (root.labels?.some((label) => label.name === "shipyard:complete"))
+        gh(
+          "issue",
+          "edit",
+          rootId,
+          "--repo",
+          repository,
+          "--remove-label",
+          "shipyard:complete",
+        );
+    }
     for (const activeId of [rootId, ...completedTicketIds].filter((item) =>
       activeIds.has(item),
     ))

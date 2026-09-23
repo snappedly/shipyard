@@ -82,6 +82,7 @@ wake-ups, and stops when it makes no progress. Restarting it recovers work
 labelled while the host was offline.
 GitHub-backed `shipyard init` provisions `shipyard`, `shipyard:blocked`,
 `shipyard:complete`, and `shipyard:outstanding-tasks` in the repository.
+For a connected repository, init reports an error if any label cannot be created.
 
 The bundled issue workflows install Snappedly skills and the candidate's
 dependencies in Docker. A standalone issue runs through `/implement`. Activating
@@ -96,10 +97,13 @@ selected tickets and adds `shipyard:complete`. If every linked ticket is complet
 the parent spec and PR receive `shipyard:complete`. If unlabeled tickets remain,
 the parent and PR receive `shipyard:outstanding-tasks` until a later run completes
 them. The issues remain open under the target repository's closure policy.
+With no labelled tickets yet, Shipyard marks the parent outstanding and waits
+to create the PR until a ticket is selected.
 If an attempted issue cannot be completed, Shipyard comments with the reason,
 marks it `shipyard:blocked`, and removes `shipyard` from the scope. For a failed
 spec ticket it also marks the parent spec blocked and labels an existing PR
-`shipyard:blocked`. It does not publish a new PR for failed work. Resolve the problem, remove
+`shipyard:blocked`, removing `ready-for-human` until a successful retry. It does
+not publish a new PR for failed work. Resolve the problem, remove
 `shipyard:blocked`, then add `shipyard` to retry. Missing or ambiguous
 relationships stop dispatch for inspection. If GitHub cannot confirm whether a
 PR became ready, Shipyard leaves the issue active for reconciliation. The GitHub token

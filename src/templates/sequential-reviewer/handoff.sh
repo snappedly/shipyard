@@ -39,6 +39,24 @@ fi
 }
 
 [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "Invalid GitHub repository" >&2; exit 1; }
+remove_issue_label() {
+  local labels
+  if gh issue edit "$1" --repo "$repo" --remove-label "$2"; then return 0; fi
+  labels=$(gh issue view "$1" --repo "$repo" --json labels --jq '.labels[].name') || return 75
+  if grep -Fxq "$2" <<< "$labels"; then
+    echo "Could not remove $2 from issue #$1; retry handoff when GitHub is available" >&2
+    return 75
+  fi
+}
+remove_pr_label() {
+  local labels
+  if gh pr edit "$1" --repo "$repo" --remove-label "$2"; then return 0; fi
+  labels=$(gh pr view "$1" --repo "$repo" --json labels --jq '.labels[].name') || return 75
+  if grep -Fxq "$2" <<< "$labels"; then
+    echo "Could not remove $2 from PR #$1; retry handoff when GitHub is available" >&2
+    return 75
+  fi
+}
 title=$(gh issue view "$issue" --repo "$repo" --json title --jq .title)
 body=$(mktemp)
 trap 'rm -f "$body"' EXIT
@@ -105,7 +123,7 @@ for ((i=1; i<${#scope_ids[@]}; i++)); do
     echo "Could not mark ticket #${scope_ids[i]} complete; retry issue completion when GitHub is available" >&2
     exit 75
   fi
-  gh issue edit "${scope_ids[i]}" --repo "$repo" --remove-label shipyard:blocked || true
+  remove_issue_label "${scope_ids[i]}" shipyard:blocked
 done
 if ! gh issue edit "$issue" --repo "$repo" --add-label "$status_label"; then
   echo "Could not mark issue #$issue $status_label; retry issue completion when GitHub is available" >&2
@@ -113,7 +131,7 @@ if ! gh issue edit "$issue" --repo "$repo" --add-label "$status_label"; then
 fi
 for stale_label in shipyard:complete shipyard:outstanding-tasks shipyard:blocked; do
   if [[ "$stale_label" != "$status_label" ]]; then
-    gh issue edit "$issue" --repo "$repo" --remove-label "$stale_label" || true
+    remove_issue_label "$issue" "$stale_label"
   fi
 done
 if ! gh pr edit "$number" --repo "$repo" --add-label "$status_label"; then
@@ -122,7 +140,7 @@ if ! gh pr edit "$number" --repo "$repo" --add-label "$status_label"; then
 fi
 for stale_label in shipyard:complete shipyard:outstanding-tasks shipyard:blocked; do
   if [[ "$stale_label" != "$status_label" ]]; then
-    gh pr edit "$number" --repo "$repo" --remove-label "$stale_label" || true
+    remove_pr_label "$number" "$stale_label"
   fi
 done
 for scope_id in "${scope_ids[@]}"; do

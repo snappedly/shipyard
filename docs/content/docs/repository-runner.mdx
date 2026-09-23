@@ -74,7 +74,8 @@ failed attempted scope gets an issue comment describing the failure and a
 `shipyard:blocked` label; Shipyard removes `shipyard` from the scope so it does
 not retry automatically. If a child ticket fails, the ticket and parent spec
 are marked blocked. An existing spec PR also gets `shipyard:blocked`; failed
-work does not create a new PR. Resolve the problem, remove `shipyard:blocked`, and add
+work does not create a new PR, and the blocked PR loses `ready-for-human` until a
+successful retry. Resolve the problem, remove `shipyard:blocked`, and add
 `shipyard` to retry. Relationship resolution failures before a scope is selected
 remain in the runner logs and stop the invocation. If GitHub cannot confirm PR
 readiness, Shipyard leaves activation in place so the next invocation can

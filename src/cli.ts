@@ -660,6 +660,7 @@ const initCommand = Command.make(
 
       // These labels are part of the GitHub Issues workflow contract.
       if (selectedIssueTracker.name === "github-issues") {
+        const failedLabels: string[] = [];
         for (const [name, description, color] of [
           [ACTIVATION_LABEL, `Issues for ${PRODUCT_NAME} to work on`, "F9A825"],
           ["shipyard:blocked", "Shipyard work needs intervention", "B60205"],
@@ -673,15 +674,27 @@ const initCommand = Command.make(
             "Spec has uncompleted tickets",
             "FBCA04",
           ],
-        ]) {
-          yield* Effect.try({
-            try: () =>
-              execSync(
-                `gh label create "${name}" --description "${description}" --color "${color}" --force`,
-                { cwd, stdio: "ignore" },
-              ),
-            catch: () => undefined,
-          }).pipe(Effect.ignore);
+        ] as const) {
+          try {
+            execSync(
+              `gh label create "${name}" --description "${description}" --color "${color}" --force`,
+              { cwd, stdio: "ignore" },
+            );
+          } catch {
+            failedLabels.push(name);
+          }
+        }
+        if (failedLabels.length) {
+          let connected = Boolean(process.env.GH_REPO);
+          try {
+            execSync("git remote get-url origin", { cwd, stdio: "ignore" });
+            connected = true;
+          } catch {
+            // A local repository can be scaffolded before its GitHub remote exists.
+          }
+          const message = `Could not create GitHub labels: ${failedLabels.join(", ")}. Check GitHub access and rerun init.`;
+          if (connected) yield* Effect.fail(new InitError({ message }));
+          console.warn(message);
         }
       }
 

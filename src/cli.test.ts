@@ -582,4 +582,29 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     );
     expect(stdout).toContain("Init complete");
   });
+
+  it("init reports label provisioning failure for a connected repository", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
+    await initRepo(hostDir);
+    await commitFile(hostDir, "hello.txt", "hello", "initial commit");
+    await execAsync("git remote add origin https://github.com/owner/repo.git", {
+      cwd: hostDir,
+    });
+    const binDir = join(hostDir, "bin");
+    await mkdir(binDir);
+    await writeFile(join(binDir, "gh"), "#!/bin/sh\nexit 1\n", {
+      mode: 0o755,
+    });
+
+    const failure = await runCli(
+      "init --agent claude-code --template blank --sandbox docker --issue-tracker github-issues --build-image false",
+      hostDir,
+      { PATH: `${binDir}:${process.env.PATH ?? ""}` },
+    ).catch((error: Error & { stdout: string; stderr: string }) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure.stdout + failure.stderr).toContain(
+      "Could not create GitHub labels",
+    );
+    expect(failure.stdout).not.toContain("Init complete");
+  });
 });
