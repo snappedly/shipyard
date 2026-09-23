@@ -171,6 +171,478 @@ try {
     trackingStore,
   });
 
+  const specGitAdapter: shipyard.GitHubSpecDeliveryGitAdapter = {
+    reconcile: async (input) => {
+      const pending = input.delivery.specCheckpoint?.children.find(
+        (child) => child.status === "integrating",
+      );
+      if (pending?.sourceCommit === undefined) return {};
+      const remote = await transport.findBranchByName({
+        repository,
+        branch: input.integrationBranch,
+      });
+      if (remote === undefined) return {};
+      await hostCommand("git", ["fetch", "origin", input.integrationBranch]);
+      const applied = await hostCommand("git", [
+        "cherry",
+        `origin/${input.integrationBranch}`,
+        pending.sourceCommit.sha,
+        `${pending.sourceCommit.sha}^`,
+      ]);
+      if (!applied.trimStart().startsWith("-")) return {};
+      return {
+        integratedChild: {
+          child: pending.child,
+          sourceCommit: pending.sourceCommit,
+          head: { branch: input.integrationBranch, sha: remote.headSha },
+        },
+      };
+    },
+    integrateChild: async (input) => {
+      const integrated = await shipyard.integrateTemplateDelivery({
+        repositoryPath: cwd,
+        branch: input.integrationBranch,
+        baseBranch,
+        commits: [input.sourceCommit.sha],
+        run: hostCommand,
+      });
+      return { branch: input.integrationBranch, sha: integrated.headSha };
+    },
+  };
+  const specHost = shipyard.createGitHubSpecDeliveryHost({
+    coordinator: coordinatorRuntime.coordinator,
+    transport,
+    git: specGitAdapter,
+  });
+  const specPullRequestsFor = async (branch: string) =>
+    JSON.parse(
+      await hostCommand("gh", [
+        "pr",
+        "list",
+        "--repo",
+        repository,
+        "--head",
+        branch,
+        "--state",
+        "all",
+        "--json",
+        "number,state,isDraft,headRefOid,baseRefName,headRefName,body,labels,url",
+      ]),
+    ) as Array<{
+      number: number;
+      state: string;
+      isDraft: boolean;
+      headRefOid: string;
+      baseRefName: string;
+      headRefName: string;
+      body: string;
+      labels: Array<{ name: string }>;
+      url: string;
+    }>;
+  const runSpecChecks = async (input: {
+    delivery: shipyard.DeliveryRecord;
+    candidate: shipyard.SpecCandidate;
+    lease: shipyard.DeliveryLease;
+    signal: AbortSignal;
+    key: string;
+  }) => {
+    const sandbox = await shipyard.createSandbox({
+      branch: `shipyard/spec-check-${input.candidate.head.sha.slice(0, 12)}-${randomUUID().slice(0, 8)}`,
+      baseBranch: input.candidate.head.sha,
+      sandbox: docker(),
+      cwd,
+      copyToWorktree,
+      envAllowlist: [],
+    });
+    try {
+      const evidence: shipyard.CheckEvidence[] = [];
+      for (const check of configuredChecks) {
+        const startedAt = new Date().toISOString();
+        const result = await sandbox.exec(check.command, {
+          signal: input.signal,
+          maxOutputBytes: 4 * 1024 * 1024,
+        });
+        evidence.push({
+          name: check.name,
+          command: check.command,
+          status: result.exitCode === 0 ? "passed" : "failed",
+          summary:
+            `${result.stdout}\n${result.stderr}`.trim().slice(-2000) ||
+            (result.exitCode === 0 ? "Check passed." : "Check failed."),
+          exitCode: result.exitCode,
+          baseSha: input.candidate.base.sha,
+          headSha: input.candidate.head.sha,
+          briefHash: input.candidate.briefHash,
+          startedAt,
+          completedAt: new Date().toISOString(),
+        });
+      }
+      for (const check of evidence) {
+        await specHost.publishCheck({
+          delivery: input.delivery,
+          candidate: input.candidate,
+          check,
+          key: input.key,
+          lease: input.lease,
+          signal: input.signal,
+        });
+      }
+      return evidence;
+    } finally {
+      await sandbox.close();
+    }
+  };
+  const cleanupSpecCandidate = async (
+    candidate: shipyard.SpecCandidate,
+  ): Promise<shipyard.SpecCleanupResult> => {
+    const sandbox = await shipyard.createSandbox({
+      branch: `shipyard/spec-cleanup-${candidate.head.sha.slice(0, 12)}-${randomUUID().slice(0, 8)}`,
+      baseBranch: candidate.head.sha,
+      sandbox: docker(),
+      cwd,
+      copyToWorktree,
+      envAllowlist: [],
+    });
+    try {
+      const result = await sandbox.exec("git diff --check", {
+        maxOutputBytes: 1024 * 1024,
+      });
+      return {
+        status: result.exitCode === 0 ? "passed" : "failed",
+        summary: result.stderr || result.stdout || "Integrated cleanup check.",
+      };
+    } finally {
+      await sandbox.close();
+    }
+  };
+  const deliverSpecGroup = async (
+    initialRoute: shipyard.ActivatedDeliveryGroup,
+  ) => {
+    const route = await shipyard.readActivatedDeliveryGroup(
+      repository,
+      initialRoute.activatedIssue.number,
+      relationships,
+    );
+    if (
+      route.mode !== "planning-spec" ||
+      route.root.number !== initialRoute.root.number
+    ) {
+      throw new Error("Activated issue no longer resolves to the same spec");
+    }
+    const rootIssue = route.root;
+    const integrationBranch = `shipyard/spec-${rootIssue.number}`;
+    const delivery = shipyard.resolveDeliveryGroup({
+      issue: {
+        repository,
+        itemId: String(rootIssue.number),
+        kind: "planning-spec",
+      },
+      children: route.children.map((child) => ({
+        repository,
+        itemId: child.id,
+        kind: "executable-issue" as const,
+      })),
+      dependencies: route.children.map((child) => ({
+        itemId: child.id,
+        dependsOn: child.dependsOn,
+      })),
+    });
+    const record =
+      await coordinatorRuntime.coordinator.resolveDelivery(delivery);
+    const base = await currentBase();
+    const brief = shipyard.createWorkBrief({
+      id: `${repository}:planning-spec:${rootIssue.number}`,
+      revision: record.version,
+      identity: {
+        repository,
+        itemId: String(rootIssue.number),
+        kind: "planning-spec",
+      },
+      source: {
+        provider: "github",
+        repository,
+        itemId: String(rootIssue.number),
+        url: rootIssue.htmlUrl,
+        originalBody: rootIssue.body || "(empty issue body)",
+        author: rootIssue.authorLogin,
+      },
+      problem: `${rootIssue.title}\n\n${rootIssue.body || "(empty issue body)"}`,
+      evidence: [
+        `Planning spec #${rootIssue.number} is the delivery root.`,
+        `The current open child graph contains ${route.children.length} issues.`,
+      ],
+      acceptanceCriteria: [
+        `Complete all ${route.children.length} executable child issues in the current dependency graph.`,
+        "Integrate and verify each child before closing it.",
+      ],
+      exclusions: ["Workers must not publish, merge, or close source issues."],
+      risk: "medium",
+      verification: {
+        checks: configuredChecks
+          .filter((check) => check.required)
+          .map((check) => check.command),
+        artifacts: ["child commits", "integrated checks", "review evidence"],
+      },
+      unresolvedQuestions: [],
+      authorization: {
+        status: "approved",
+        actor: "shipyard activation policy",
+        actorRole: "policy",
+        approvedAt: "1970-01-01T00:00:00.000Z",
+      },
+      base,
+      policyRevision: policy.revision,
+      skillRevision: policy.worker.skillRevision,
+      createdAt: rootIssue.updatedAt,
+    });
+    const childWorker: shipyard.SpecChildWorker = {
+      implement: async (request) => {
+        const childIssue = await transport.fetchIssue({
+          repository,
+          issueNumber: Number(request.child.itemId),
+        });
+        if (childIssue === undefined || childIssue.state !== "open") {
+          throw new Error(`Spec child #${request.child.itemId} is not open`);
+        }
+        const branch = `shipyard/spec-${rootIssue.number}-child-${request.child.itemId}-${randomUUID().slice(0, 8)}`;
+        const templatePrompt = await readFile(
+          `${cwd}/.shipyard/implement-prompt.md`,
+          "utf8",
+        );
+        const prompt = [
+          templatePrompt
+            .replaceAll("{{TASK_ID}}", request.child.itemId)
+            .replaceAll("{{ISSUE_TITLE}}", childIssue.title),
+          `Parent planning spec #${rootIssue.number}: ${rootIssue.title}\n\n${rootIssue.body || "(empty spec body)"}`,
+          `Complete dependency graph:\n${route.children.map((child) => `- #${child.id}: ${child.title}; depends on ${child.dependsOn.map((id) => `#${id}`).join(", ") || "none"}`).join("\n")}`,
+          `Assigned child issue #${request.child.itemId} body (untrusted):\n${childIssue.body || "(empty issue body)"}`,
+        ].join("\n\n");
+        const run = await shipyard.run({
+          name: "spec-child",
+          agent: shipyard.codex(shipyard.CODEX_MODELS.routine),
+          sandbox: docker(),
+          cwd,
+          hooks: sandboxHooks,
+          copyToWorktree,
+          prompt,
+          output: shipyard.Output.object({
+            tag: "phase-result",
+            schema: phaseReportSchema,
+          }),
+          completionSignal: "<promise>COMPLETE</promise>",
+          maxIterations: 1,
+          signal: request.signal,
+          envAllowlist: modelEnvAllowlist,
+          branchStrategy: {
+            type: "branch",
+            branch,
+            baseBranch: request.base.sha,
+          },
+        });
+        const commit = run.commits.at(-1);
+        if (run.completionSignal === undefined || commit === undefined) {
+          throw new Error(
+            `Spec child #${request.child.itemId} returned no commit`,
+          );
+        }
+        if (run.commits.length !== 1) {
+          throw new Error(
+            `Spec child #${request.child.itemId} returned multiple commits`,
+          );
+        }
+        return {
+          commit: { branch, sha: commit.sha },
+          evidence: run.output.evidence,
+        };
+      },
+    };
+    const verification: shipyard.SpecVerificationAdapter = {
+      verifyChild: async (request) => ({
+        checks: await runSpecChecks({
+          ...request,
+          key: `child-${request.child.itemId}-${request.sourceCommit.sha}`,
+        }),
+        cleanup: await cleanupSpecCandidate(request.candidate),
+        evidence: [
+          `Child #${request.child.itemId} integrated at ${request.candidate.head.sha}.`,
+        ],
+      }),
+      verifyIntegrated: async (request) => ({
+        checks: await runSpecChecks({ ...request, key: "integrated" }),
+        cleanup: await cleanupSpecCandidate(request.candidate),
+        evidence: [
+          `Integrated candidate ${request.candidate.head.sha} was verified.`,
+        ],
+      }),
+    };
+    const review: shipyard.SpecReviewProvider = {
+      review: async (request) => {
+        const reviewed = await shipyard.run({
+          name: "reviewer",
+          agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
+          sandbox: docker(),
+          cwd,
+          hooks: sandboxHooks,
+          copyToWorktree,
+          prompt: [
+            `Review planning spec #${rootIssue.number} in ${repository}.`,
+            `Inspect exactly base ${request.checkout.base.sha} and head ${request.checkout.candidate.sha}.`,
+            `Specification:\n${brief.problem}`,
+            `Acceptance criteria:\n${brief.acceptanceCriteria.map((criterion) => `- ${criterion}`).join("\n")}`,
+            `Required review axes: ${request.requiredAxes.join(", ")}.`,
+            `Use git diff ${request.checkout.base.sha} ${request.checkout.candidate.sha}. Do not edit files, create commits, or run GitHub commands.`,
+            "Return the review axes, findings, and evidence in <review-report> JSON.",
+          ].join("\n\n"),
+          output: shipyard.Output.object({
+            tag: "review-report",
+            schema: reviewSchema,
+          }),
+          completionSignal: "<promise>COMPLETE</promise>",
+          maxIterations: 1,
+          envAllowlist: modelEnvAllowlist,
+          branchStrategy: {
+            type: "branch",
+            branch: `shipyard/spec-review-${rootIssue.number}-${request.checkout.candidate.sha.slice(0, 12)}-${randomUUID().slice(0, 8)}`,
+            baseBranch: request.checkout.candidate.sha,
+          },
+        });
+        if (
+          reviewed.completionSignal === undefined ||
+          reviewed.commits.length > 0 ||
+          reviewed.preservedWorktreePath !== undefined
+        ) {
+          throw new Error("Spec review did not complete read-only");
+        }
+        return {
+          ...reviewed.output,
+          baseSha: request.checkout.base.sha,
+          headSha: request.checkout.candidate.sha,
+          briefHash: brief.hash,
+        };
+      },
+    };
+    const readCurrent = async (): Promise<shipyard.SpecCurrentCandidate> => {
+      const currentRoot = await transport.fetchIssue({
+        repository,
+        issueNumber: rootIssue.number,
+      });
+      if (
+        currentRoot === undefined ||
+        currentRoot.state !== "open" ||
+        `${currentRoot.title}\n\n${currentRoot.body || "(empty issue body)"}` !==
+          brief.problem
+      ) {
+        throw new Error("Planning spec changed or closed during delivery");
+      }
+      const latestBase = await currentBase();
+      const remoteBranch = await transport.findBranchByName({
+        repository,
+        branch: integrationBranch,
+      });
+      const pullRequests = await specPullRequestsFor(integrationBranch);
+      if (remoteBranch === undefined || pullRequests.length !== 1) {
+        throw new Error(
+          "Planning spec has no exact open integration pull request",
+        );
+      }
+      const pullRequest = pullRequests[0]!;
+      const metadata = shipyard.parseGitHubPublicationMetadata(
+        pullRequest.body,
+      );
+      const currentDelivery = await coordinatorRuntime.coordinator.getDelivery(
+        delivery.key,
+      );
+      if (
+        currentDelivery === undefined ||
+        pullRequest.state !== "OPEN" ||
+        pullRequest.headRefOid !== remoteBranch.headSha ||
+        pullRequest.baseRefName !== baseBranch ||
+        pullRequest.headRefName !== integrationBranch ||
+        metadata?.repository !== repository ||
+        metadata.itemId !== String(rootIssue.number) ||
+        metadata.kind !== "planning-spec" ||
+        metadata.deliveryVersion !== currentDelivery.version ||
+        metadata.briefRevision !== brief.revision ||
+        metadata.briefHash !== brief.hash ||
+        metadata.baseBranch !== baseBranch ||
+        metadata.baseSha !== latestBase.sha ||
+        metadata.branch !== integrationBranch ||
+        metadata.headSha !== remoteBranch.headSha
+      ) {
+        throw new Error(
+          "Remote spec pull request does not match the current candidate",
+        );
+      }
+      return {
+        base: latestBase,
+        head: { branch: integrationBranch, sha: remoteBranch.headSha },
+        briefHash: brief.hash,
+        pullRequest: {
+          id: String(pullRequest.number),
+          state: "open",
+          draft: pullRequest.isDraft,
+          baseBranch: pullRequest.baseRefName,
+          headBranch: pullRequest.headRefName,
+          baseSha: metadata.baseSha,
+          headSha: metadata.headSha,
+          briefHash: metadata.briefHash,
+          deliveryId: currentDelivery.id,
+          readyForHuman: pullRequest.labels.some(
+            (label) =>
+              label.name.toLowerCase() === shipyard.READY_FOR_HUMAN_LABEL,
+          ),
+        },
+      };
+    };
+    const result = await shipyard.deliverSpec({
+      coordinator: coordinatorRuntime.coordinator,
+      delivery,
+      brief,
+      policy,
+      workerId: `sequential-reviewer-spec-${randomUUID()}`,
+      base,
+      integrationBranch,
+      childWorker,
+      integration: specHost.integration,
+      verification,
+      childLifecycle: specHost.childLifecycle,
+      review,
+      readCurrent,
+      maxConcurrency: 2,
+      leaseTtlMs: 7_200_000,
+    });
+    if (result.outcome === "blocked" && result.lease !== undefined) {
+      try {
+        const current = await coordinatorRuntime.coordinator.getDelivery(
+          result.delivery.key,
+        );
+        if (current !== undefined) {
+          await specHost.publishBlocked({
+            delivery: current,
+            lease: result.lease,
+            reason: result.reason ?? "Spec delivery blocked",
+            ...(result.candidate === undefined
+              ? {}
+              : { candidate: result.candidate }),
+          });
+        }
+      } catch (error) {
+        console.error(
+          `Could not publish blocked state for spec #${rootIssue.number}: ${String(error)}`,
+        );
+      }
+    }
+    if (result.outcome === "ready-for-human") {
+      console.log(
+        `Planning spec #${rootIssue.number} ready for human handoff.`,
+      );
+    } else {
+      console.error(
+        `Planning spec #${rootIssue.number} blocked: ${result.reason ?? "delivery incomplete"}`,
+      );
+    }
+    return result;
+  };
   const listIssues = JSON.parse(
     await hostCommand("gh", [
       "issue",
@@ -187,42 +659,9 @@ try {
       "number",
     ]),
   ) as Array<{ number: number }>;
-  let selectedIssue: shipyard.GitHubIssueSnapshot | undefined;
-  for (const listed of listIssues) {
-    try {
-      const activation = await shipyard.readActivatedDeliveryRoot(
-        repository,
-        listed.number,
-        relationships,
-      );
-      if (activation.mode !== "standalone") continue;
-      const issue = await transport.fetchIssue({
-        repository,
-        issueNumber: listed.number,
-      });
-      if (
-        issue?.state === "open" &&
-        issue.labels.some((label) => label.toLowerCase() === "shipyard")
-      ) {
-        selectedIssue = issue;
-        break;
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (
-        /has a parent issue|is a repair issue|no longer activated/i.test(
-          message,
-        )
-      )
-        continue;
-      throw error;
-    }
-  }
-
-  if (selectedIssue === undefined) {
-    console.log("No standalone issue is ready.");
-  } else {
-    const issue = selectedIssue;
+  const deliverStandaloneIssue = async (
+    issue: shipyard.ActivatedDeliveryGroup["root"],
+  ) => {
     const base = await currentBase();
     const branch = `shipyard/issue-${issue.number}`;
     const identity: shipyard.WorkIdentity = {
@@ -629,6 +1068,62 @@ try {
       console.error(
         `Issue #${issue.number} blocked: ${result.reason ?? "delivery did not reach human handoff"}`,
       );
+    }
+    return result;
+  };
+
+  const seenDeliveryRoots = new Set<string>();
+  let completedDeliveryAttempt = false;
+  for (const listed of listIssues) {
+    let route: shipyard.ActivatedDeliveryGroup;
+    try {
+      route = await shipyard.readActivatedDeliveryGroup(
+        repository,
+        listed.number,
+        relationships,
+      );
+    } catch (error) {
+      if (error instanceof shipyard.GitHubDeliveryRouteError) {
+        continue;
+      }
+      throw error;
+    }
+
+    const rootKey = `${route.mode}:${route.root.number}`;
+    if (seenDeliveryRoots.has(rootKey)) continue;
+    seenDeliveryRoots.add(rootKey);
+
+    if (route.mode === "planning-spec") {
+      const result = await deliverSpecGroup(route);
+      if (
+        result.outcome === "blocked" &&
+        result.reason?.startsWith("Spec delivery is already leased:")
+      ) {
+        continue;
+      }
+      completedDeliveryAttempt = true;
+      break;
+    }
+
+    const result = await deliverStandaloneIssue(route.root);
+    if (
+      result.outcome === "blocked" &&
+      (result.reason === "delivery-busy" ||
+        result.reason?.startsWith(
+          `Implementation branch is unavailable: Branch shipyard/issue-${route.root.number} is leased by worker `,
+        ))
+    ) {
+      continue;
+    }
+    completedDeliveryAttempt = true;
+    break;
+  }
+
+  if (!completedDeliveryAttempt) {
+    if (seenDeliveryRoots.size > 0) {
+      console.error("All eligible deliveries are already leased.");
+    } else {
+      console.log("No activated delivery is ready.");
     }
   }
 } finally {

@@ -35,8 +35,11 @@ export {
 export { InMemoryGitHubStore } from "./store.js";
 export {
   createGitHubCliRelationshipReader,
+  GitHubDeliveryRouteError,
+  readActivatedDeliveryGroup,
   readActivatedDeliveryRoot,
   readPlanningSpecGraph,
+  type ActivatedDeliveryGroup,
 } from "./cli-relationships.js";
 export { createGitHubCliTransport } from "./cli-transport.js";
 export {

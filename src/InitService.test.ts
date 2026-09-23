@@ -460,8 +460,8 @@ describe("InitService scaffold", () => {
       );
       expect(mainTs).toContain("branch = `shipyard/issue-${issue.number}`");
       expect(mainTs).toContain('activation.mode !== "standalone"');
-      expect(mainTs).toContain('issue?.state === "open"');
-      expect(mainTs).toContain('label.toLowerCase() === "shipyard"');
+      expect(mainTs).toContain("readActivatedDeliveryGroup(");
+      expect(mainTs).toContain("for (const listed of listIssues)");
       expect(mainTs).not.toContain("MAX_ITERATIONS");
       expect(mainTs).not.toContain("for (let iteration");
     });
@@ -602,6 +602,48 @@ describe("InitService scaffold", () => {
       expect(mainTs).not.toContain("publishTemplateDelivery");
     });
   });
+
+  it.each(["simple-loop", "sequential-reviewer"])(
+    "%s promotes child activations through the fenced spec lifecycle",
+    async (templateName) => {
+      const dir = await makeDir();
+      await runScaffold(dir, { templateName });
+
+      const main = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
+      expect(main).toContain("readActivatedDeliveryGroup(");
+      expect(main).toContain('route.mode === "planning-spec"');
+      expect(main).toContain('if (route.mode === "planning-spec")');
+      expect(main).toContain("await shipyard.deliverSpec({");
+      expect(main).toContain("shipyard/spec-${rootIssue.number}");
+      expect(main).toContain("shipyard.resolveDeliveryGroup({");
+      expect(main).toContain("await shipyard.deliverStandalone({");
+      expect(main).toContain("const seenDeliveryRoots = new Set<string>()");
+      expect(main).toContain(
+        'result.reason?.startsWith("Spec delivery is already leased:")',
+      );
+      expect(main).toContain('result.reason === "delivery-busy"');
+      expect(main).toContain("instanceof shipyard.GitHubDeliveryRouteError");
+      expect(main).toContain(
+        "Implementation branch is unavailable: Branch shipyard/issue-",
+      );
+      const workerIdPrefix =
+        templateName === "simple-loop"
+          ? "simple-loop-spec-"
+          : "sequential-reviewer-spec-";
+      expect(main).toContain(`workerId: \`${workerIdPrefix}`);
+      expect(main).toContain(
+        "Planning spec #${rootIssue.number} is the delivery root.",
+      );
+      expect(main).not.toContain(
+        "Activated issue #${route.activatedIssue.number}",
+      );
+      expect(main).not.toContain(
+        "shipyard/spec-${route.activatedIssue.number}",
+      );
+      expect(main).toContain("initialRoute.activatedIssue.number");
+      expect(main).toContain('kind: "planning-spec"');
+    },
+  );
 
   it("simple-loop template does not scaffold compiled .js or .d.ts files", async () => {
     const dir = await makeDir();

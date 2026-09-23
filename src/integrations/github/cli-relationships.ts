@@ -69,6 +69,13 @@ export const parseCliIssue = (value: unknown): GitHubIssueSnapshot => {
 const isNotFound = (error: unknown): boolean =>
   error instanceof Error && /\bHTTP 404\b/.test(error.message);
 
+export class GitHubDeliveryRouteError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GitHubDeliveryRouteError";
+  }
+}
+
 /** Native GitHub relationship reads for hosts that use the gh CLI. */
 export const createGitHubCliRelationshipReader = (
   options: { readonly run?: TemplateCommand } = {},
@@ -165,7 +172,9 @@ export const readPlanningSpecGraph = async (
     issueNumber: parentNumber,
   });
   if (parent?.state !== "open") {
-    throw new Error(`Planning spec #${parentNumber} is missing or closed`);
+    throw new GitHubDeliveryRouteError(
+      `Planning spec #${parentNumber} is missing or closed`,
+    );
   }
   const nativeChildren =
     (await reader.fetchSubIssues?.({
@@ -180,7 +189,9 @@ export const readPlanningSpecGraph = async (
     ),
   );
   if (fallbackChildren.some((child) => child === undefined)) {
-    throw new Error(`Planning spec #${parentNumber} has a missing child issue`);
+    throw new GitHubDeliveryRouteError(
+      `Planning spec #${parentNumber} has a missing child issue`,
+    );
   }
   const children = [
     ...new Map(
@@ -194,7 +205,9 @@ export const readPlanningSpecGraph = async (
   ];
   const childNumbers = new Set(children.map((child) => child.number));
   if (childNumbers.size === 0) {
-    throw new Error(`Planning spec #${parentNumber} has no open child issues`);
+    throw new GitHubDeliveryRouteError(
+      `Planning spec #${parentNumber} has no open child issues`,
+    );
   }
   const graph = await Promise.all(
     children.map(async (child) => {
@@ -212,7 +225,9 @@ export const readPlanningSpecGraph = async (
               ),
             );
       if (fallbackBlockers.some((blocker) => blocker === undefined)) {
-        throw new Error(`Child #${child.number} has a missing dependency`);
+        throw new GitHubDeliveryRouteError(
+          `Child #${child.number} has a missing dependency`,
+        );
       }
       const dependsOn = [...nativeBlockers, ...fallbackBlockers]
         .filter(
@@ -222,7 +237,7 @@ export const readPlanningSpecGraph = async (
         .map((blocker) => blocker.number);
       for (const blocker of dependsOn) {
         if (!childNumbers.has(blocker)) {
-          throw new Error(
+          throw new GitHubDeliveryRouteError(
             `Child #${child.number} is blocked by issue #${blocker} outside this planning spec`,
           );
         }
@@ -239,5 +254,121 @@ export const readPlanningSpecGraph = async (
   return {
     root: { id: String(parent.number), title: parent.title },
     children: graph.sort((left, right) => Number(left.id) - Number(right.id)),
+  };
+};
+
+export interface ActivatedDeliveryGroup {
+  readonly activatedIssue: GitHubIssueSnapshot;
+  readonly root: GitHubIssueSnapshot;
+  readonly mode: "standalone" | "planning-spec";
+  readonly children: Awaited<
+    ReturnType<typeof readPlanningSpecGraph>
+  >["children"];
+}
+
+/** Resolve an activated issue to its standalone or planning-spec delivery root. */
+export const readActivatedDeliveryGroup = async (
+  repository: string,
+  issueNumber: number,
+  reader: GitHubIssueRelationshipReader = createGitHubCliRelationshipReader(),
+): Promise<ActivatedDeliveryGroup> => {
+  issuePath(repository, issueNumber);
+  const issue = await reader.fetchIssue({ repository, issueNumber });
+  if (
+    issue?.state !== "open" ||
+    !issue.labels.some((label) => label.toLowerCase() === "shipyard")
+  ) {
+    throw new GitHubDeliveryRouteError(
+      `Delivery #${issueNumber} is no longer activated`,
+    );
+  }
+  if (githubIssueKind(issue) === "pr-repair") {
+    throw new GitHubDeliveryRouteError(
+      `Delivery #${issueNumber} is a repair issue`,
+    );
+  }
+
+  const fallbackParents = issueReferences(issue.body, "Parent");
+  if (fallbackParents.length > 1) {
+    throw new GitHubDeliveryRouteError(
+      `Delivery #${issueNumber} has multiple parent issues`,
+    );
+  }
+  const nativeParent = await reader.fetchParentIssue?.({
+    repository,
+    issueNumber,
+  });
+  const fallbackParent = fallbackParents[0];
+  if (
+    nativeParent !== undefined &&
+    fallbackParent !== undefined &&
+    nativeParent.number !== fallbackParent
+  ) {
+    throw new GitHubDeliveryRouteError(
+      `Delivery #${issueNumber} has conflicting parent issues`,
+    );
+  }
+
+  const parentNumber = nativeParent?.number ?? fallbackParent;
+  if (parentNumber !== undefined) {
+    if (parentNumber === issueNumber) {
+      throw new GitHubDeliveryRouteError(
+        `Delivery #${issueNumber} cannot be its own parent`,
+      );
+    }
+    const parent =
+      nativeParent ??
+      (await reader.fetchIssue({ repository, issueNumber: parentNumber }));
+    if (parent === undefined || parent.number !== parentNumber) {
+      throw new GitHubDeliveryRouteError(
+        `Planning-spec parent #${parentNumber} is missing`,
+      );
+    }
+    if (parent.state !== "open") {
+      throw new GitHubDeliveryRouteError(
+        `Planning-spec parent #${parentNumber} is closed`,
+      );
+    }
+    if (githubIssueKind(parent) !== "planning-spec") {
+      throw new GitHubDeliveryRouteError(
+        `Parent #${parentNumber} is not a planning spec`,
+      );
+    }
+    const graph = await readPlanningSpecGraph(repository, parentNumber, reader);
+    if (!graph.children.some((child) => child.id === String(issueNumber))) {
+      throw new GitHubDeliveryRouteError(
+        `Child #${issueNumber} is missing from planning-spec parent #${parentNumber}`,
+      );
+    }
+    return {
+      activatedIssue: issue,
+      root: parent,
+      mode: "planning-spec",
+      children: graph.children,
+    };
+  }
+
+  const nativeChildren =
+    (await reader.fetchSubIssues?.({ repository, issueNumber })) ?? [];
+  const fallbackChildren = issueReferences(issue.body, "Children");
+  if (
+    githubIssueKind(issue) === "planning-spec" ||
+    nativeChildren.length > 0 ||
+    fallbackChildren.length > 0
+  ) {
+    const graph = await readPlanningSpecGraph(repository, issueNumber, reader);
+    return {
+      activatedIssue: issue,
+      root: issue,
+      mode: "planning-spec",
+      children: graph.children,
+    };
+  }
+
+  return {
+    activatedIssue: issue,
+    root: issue,
+    mode: "standalone",
+    children: [],
   };
 };
