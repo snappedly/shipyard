@@ -303,8 +303,8 @@ if (args[0] === "repo") console.log("owner/repo");
 else if (args[0] === "issue" && args[1] === "view") console.log(args.includes("labels") ? "shipyard" : "Fix bug");
 else if (args[0] === "pr" && args[1] === "list") console.log(state.number || "");
 else if (args[0] === "pr" && args[1] === "create") { state.number = 7; fs.writeFileSync(process.env.PR_STATE, JSON.stringify(state)); fs.appendFileSync(process.env.HANDOFF_LOG, "BODY " + fs.readFileSync(args[args.indexOf("--body-file") + 1], "utf8") + "\\n"); }
-else if (args[0] === "pr" && args[1] === "ready") { if (process.env.FAIL_PR_READY) process.exit(1); state.isDraft = false; fs.writeFileSync(process.env.PR_STATE, JSON.stringify(state)); if (process.env.FAIL_PR_READY_AFTER_UPDATE) process.exit(1); }
-else if (args[0] === "pr" && args[1] === "view") console.log(args.includes("isDraft") ? String(state.isDraft) : "https://example.test/pr/7");
+else if (args[0] === "pr" && args[1] === "ready") { state.readyAttempted = true; if (!process.env.FAIL_PR_READY) state.isDraft = false; if (process.env.CLOSE_PR_AFTER_READY) state.status = "CLOSED"; fs.writeFileSync(process.env.PR_STATE, JSON.stringify(state)); if (process.env.FAIL_PR_READY || process.env.FAIL_PR_READY_AFTER_UPDATE) process.exit(1); }
+else if (args[0] === "pr" && args[1] === "view") { if (process.env.FAIL_PR_STATUS && state.readyAttempted && args.includes("isDraft")) process.exit(1); console.log(args.includes("isDraft") ? String(state.isDraft) : args.includes("state") ? state.status || "OPEN" : "https://example.test/pr/7"); }
 else if (args[0] === "pr" && args[1] === "edit") {}
 else if (args[0] === "label") {}
 else if (args[0] === "issue" && args[1] === "edit") { if (process.env.FAIL_ACTIVATION) process.exit(1); }
@@ -414,6 +414,30 @@ else process.exit(2);
     expect(result.stdout).toContain("https://example.test/pr/7");
     expect(await readFile(state, "utf8")).toContain('"isDraft":false');
 
+    await writeFile(state, JSON.stringify({ number: 7, isDraft: true }));
+    result = run(
+      "bash",
+      [script("handoff.sh"), "1", "shipyard/issue-1", "staging", "owner/repo"],
+      dir,
+      bin,
+      { ...env, FAIL_PR_READY_AFTER_UPDATE: "1", FAIL_PR_STATUS: "1" },
+      "Checks: npm test pass; Review: approved",
+    );
+    expect(result.status).toBe(75);
+    expect(result.stderr).toContain("Could not confirm PR readiness");
+
+    await writeFile(state, JSON.stringify({ number: 7, isDraft: true }));
+    result = run(
+      "bash",
+      [script("handoff.sh"), "1", "shipyard/issue-1", "staging", "owner/repo"],
+      dir,
+      bin,
+      { ...env, CLOSE_PR_AFTER_READY: "1" },
+      "Checks: npm test pass; Review: approved",
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("did not become ready");
+
     await writeFile(state, JSON.stringify({ number: 0, isDraft: true }));
     result = run(
       "bash",
@@ -439,7 +463,7 @@ else process.exit(2);
       );
     expect(specCommands).not.toContain("gh issue close");
     expect(specCommands).not.toContain("gh pr merge");
-  });
+  }, 15_000);
 
   it("hands off a bundle clone whose target exists only as a remote ref", async () => {
     const { dir, bin } = await fixture();
@@ -484,7 +508,7 @@ if (args[0] === "issue" && args[1] === "view") {
   if (!args.includes("--repo")) process.exit(2);
   console.log(args.includes("labels") ? "shipyard" : "Fix bug");
 } else if (args[0] === "pr" && args[1] === "list") console.log("7");
-else if (args[0] === "pr" && args[1] === "view") console.log(args.includes("isDraft") ? "false" : "https://example.test/pr/7");
+else if (args[0] === "pr" && args[1] === "view") console.log(args.includes("isDraft") ? "false" : args.includes("state") ? "OPEN" : "https://example.test/pr/7");
 else if (args[0] === "pr" || args[0] === "label" || args[0] === "issue") {}
 else process.exit(2);
 `,

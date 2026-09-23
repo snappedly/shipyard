@@ -59,13 +59,17 @@ if ! gh pr edit "$number" --repo "$repo" --add-label ready-for-human; then
   echo "Could not label PR ready for human review" >&2
   exit 1
 fi
-if [[ "$draft" == true ]] && ! gh pr ready "$number" --repo "$repo"; then
-  current_draft=$(gh pr view "$number" --repo "$repo" --json isDraft --jq .isDraft 2>/dev/null || printf 'unknown')
-  if [[ "$current_draft" != false ]]; then
-    gh pr edit "$number" --repo "$repo" --remove-label ready-for-human || true
-    echo "PR did not become ready for human review" >&2
-    exit 1
-  fi
+if [[ "$draft" == true ]]; then gh pr ready "$number" --repo "$repo" || true; fi
+if ! current_draft=$(gh pr view "$number" --repo "$repo" --json isDraft --jq .isDraft) ||
+   ! current_state=$(gh pr view "$number" --repo "$repo" --json state --jq .state); then
+  gh pr edit "$number" --repo "$repo" --remove-label ready-for-human || true
+  echo "Could not confirm PR readiness; retry publication when GitHub is available" >&2
+  exit 75
+fi
+if [[ "$current_draft" != false || "$current_state" != OPEN ]]; then
+  gh pr edit "$number" --repo "$repo" --remove-label ready-for-human || true
+  echo "PR did not become ready for human review" >&2
+  exit 1
 fi
 for scope_id in "${scope_ids[@]}"; do
   if ! labels=$(gh issue view "$scope_id" --repo "$repo" --json labels --jq '.labels[].name'); then

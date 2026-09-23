@@ -95,7 +95,8 @@ If an attempted issue cannot be completed, Shipyard comments with the reason,
 marks it `shipyard:blocked`, and removes `shipyard` from the scope. For a failed
 spec ticket it also marks the parent spec blocked. Resolve the problem, remove
 `shipyard:blocked`, then add `shipyard` to retry. Missing or ambiguous
-relationships stop dispatch for inspection. The GitHub token
+relationships stop dispatch for inspection. If GitHub cannot confirm whether a
+PR became ready, Shipyard leaves the issue active for reconciliation. The GitHub token
 needs Contents, Issues, and Pull requests read/write permission plus Metadata
 read permission. Keep the Mac and foreground controller running for wake-ups.
 

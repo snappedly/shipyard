@@ -82,6 +82,7 @@ for (let iteration = 0; iteration < 3; iteration++) {
   if (!issue) break;
 
   let handedOff = false;
+  let publicationUncertain = false;
   try {
     const sandbox = await shipyard.createSandbox({
       branch: issue.branch,
@@ -124,6 +125,7 @@ for (let iteration = 0; iteration < 3; iteration++) {
         `bash .shipyard/handoff.sh ${issue.id} ${issue.branch} ${targetBranch} ${repository} ${[issue.id, ...(issue.tickets ?? []).map((ticket) => ticket.id)].join(",")}`,
         { stdin: evidence },
       );
+      if (handoff.exitCode === 75) publicationUncertain = true;
       if (handoff.exitCode !== 0)
         throw new Error(
           `PR handoff for #${issue.id} failed: ${handoff.stderr || handoff.stdout}`,
@@ -134,7 +136,7 @@ for (let iteration = 0; iteration < 3; iteration++) {
       await publication.close();
     }
   } catch (error) {
-    if (handedOff) throw error;
+    if (handedOff || publicationUncertain) throw error;
     blockScope(issue, error);
   }
 }

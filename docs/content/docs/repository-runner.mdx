@@ -70,7 +70,9 @@ failed attempted scope gets an issue comment describing the failure and a
 not retry automatically. If a child ticket fails, the ticket and parent spec
 are marked blocked. Resolve the problem, remove `shipyard:blocked`, and add
 `shipyard` to retry. Relationship resolution failures before a scope is selected
-remain in the runner logs and stop the invocation.
+remain in the runner logs and stop the invocation. If GitHub cannot confirm PR
+readiness, Shipyard leaves activation in place so the next invocation can
+reconcile the PR.
 
 Start always preflights the current backlog, recovering labels added while the
 Mac was off. If work exists, it invokes exactly `npx shipyard run`. After a

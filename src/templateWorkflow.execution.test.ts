@@ -28,6 +28,7 @@ const calls = vi.hoisted(() => ({
   reviewApproved: true,
   implementationComplete: true,
   handoffSucceeds: true,
+  handoffUncertain: false,
   finalChanges: false,
   finalReviewApproved: true,
   reviewCount: 0,
@@ -222,9 +223,13 @@ vi.mock("@snappedly-tools/shipyard", () => {
         }
         calls.events.push("handoff");
         return {
-          exitCode: calls.handoffSucceeds ? 0 : 1,
+          exitCode: calls.handoffUncertain ? 75 : calls.handoffSucceeds ? 0 : 1,
           stdout: "https://example.test/pr/1",
-          stderr: calls.handoffSucceeds ? "" : "push failed",
+          stderr: calls.handoffUncertain
+            ? "Could not confirm PR readiness"
+            : calls.handoffSucceeds
+              ? ""
+              : "push failed",
         };
       },
       close: async () => {
@@ -294,6 +299,7 @@ beforeEach(() => {
   calls.reviewApproved = true;
   calls.implementationComplete = true;
   calls.handoffSucceeds = true;
+  calls.handoffUncertain = false;
   calls.finalChanges = false;
   calls.finalReviewApproved = true;
   calls.reviewCount = 0;
@@ -668,5 +674,13 @@ describe("generated issue workflows", () => {
       "select",
     ]);
     expect(calls.blocked[0]?.reason).toContain("push failed");
+  });
+
+  it("leaves an uncertain PR publication active for reconciliation", async () => {
+    calls.handoffUncertain = true;
+    await expect(
+      import("./templates/simple-loop/main.mts" as string),
+    ).rejects.toThrow("Could not confirm PR readiness");
+    expect(calls.blocked).toEqual([]);
   });
 });

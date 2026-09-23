@@ -166,6 +166,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
     ids.map(async (id) => {
       const scope = scopes.find((item) => item.id === id)!;
       let handedOff = false;
+      let publicationUncertain = false;
       try {
         if (
           scope.branch !==
@@ -416,6 +417,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
             `bash .shipyard/handoff.sh ${id} ${scope.branch} ${targetBranch} ${repository} ${scopeIds}`,
             { stdin: handoffEvidence },
           );
+          if (handoff.exitCode === 75) publicationUncertain = true;
           if (handoff.exitCode !== 0)
             throw new Error(
               `PR handoff for #${id} failed: ${handoff.stderr || handoff.stdout}`,
@@ -426,7 +428,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
           await publication.close();
         }
       } catch (error) {
-        if (handedOff) throw error;
+        if (handedOff || publicationUncertain) throw error;
         if (error instanceof TicketFailures) {
           for (const failure of error.failures)
             blockScope(scope, failure.id, failure.reason);
