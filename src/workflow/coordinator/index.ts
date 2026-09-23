@@ -23,6 +23,7 @@ import {
   deliveryGroupFingerprint,
   deliveryIdFor,
   deliveryResourceKey,
+  parseDeliveryRecord,
   resolveDeliveryGroup,
 } from "./delivery.js";
 import type {
@@ -41,6 +42,7 @@ import type {
   DispatchIntent,
   DispatchRequest,
   DispatchResult,
+  ExpandDeliveryScopeInput,
   EffectExecution,
   EffectOperationContext,
   EffectIntent,
@@ -53,6 +55,7 @@ import type {
   RepositoryControl,
   SchedulePhaseInput,
   SchedulePhaseResult,
+  SpecDeliveryCheckpoint,
   StoredEvent,
   SubmitPhaseResultInput,
   WorkflowCoordinatorOptions,
@@ -331,6 +334,183 @@ export class WorkflowCoordinator {
     );
   }
 
+  /** Add scope against the locked current graph so stale snapshots cannot erase concurrent additions. */
+  async expandDeliveryScope(
+    input: ExpandDeliveryScopeInput,
+  ): Promise<DeliveryRecord> {
+    return this.storage.transaction(async (transaction) => {
+      await transaction.lockDelivery(input.key);
+      const existing = await transaction.getDelivery(input.key);
+      if (existing === undefined) {
+        throw new Error(`Delivery ${deliveryIdFor(input.key)} does not exist`);
+      }
+      if (existing.mergedAt !== undefined) {
+        throw new Error("Merged delivery graph is immutable");
+      }
+
+      const childrenById = new Map(
+        existing.graph.children.map((child) => [child.itemId, child]),
+      );
+      for (const child of input.addedChildren) {
+        if (
+          child.repository !== existing.key.repository ||
+          child.kind !== "executable-issue"
+        ) {
+          throw new Error(
+            `Only executable children may be added: ${child.itemId}`,
+          );
+        }
+        const current = childrenById.get(child.itemId);
+        if (current !== undefined && !sameIdentity(current, child)) {
+          throw new Error(`Child ${child.itemId} has conflicting identity`);
+        }
+        childrenById.set(child.itemId, child);
+      }
+
+      const dependencyMap = new Map<string, Set<string>>(
+        existing.graph.dependencies.map((dependency) => [
+          dependency.itemId,
+          new Set(dependency.dependsOn),
+        ]),
+      );
+      const protectedChildren = new Map(
+        existing.specCheckpoint?.children.map((child) => [
+          child.child.itemId,
+          child.status,
+        ]) ?? [],
+      );
+      const completedChildIds = new Set(input.completedChildIds ?? []);
+      if (
+        [...completedChildIds].some(
+          (itemId) =>
+            !existing.graph.children.some((child) => child.itemId === itemId),
+        )
+      ) {
+        throw new Error(
+          "Completed child set contains an item outside the current delivery",
+        );
+      }
+      for (const dependency of input.addedDependencies ?? []) {
+        const values =
+          dependencyMap.get(dependency.itemId) ?? new Set<string>();
+        const protectedStatus = protectedChildren.get(dependency.itemId);
+        if (
+          (protectedStatus !== undefined ||
+            completedChildIds.has(dependency.itemId)) &&
+          dependency.dependsOn.some((id) => !values.has(id))
+        ) {
+          throw new Error(
+            protectedStatus === "closed" ||
+              completedChildIds.has(dependency.itemId)
+              ? `Completed child ${dependency.itemId} cannot be mutated`
+              : `Child ${dependency.itemId} dependencies cannot change after work starts`,
+          );
+        }
+        for (const dependencyId of dependency.dependsOn) {
+          values.add(dependencyId);
+        }
+        dependencyMap.set(dependency.itemId, values);
+      }
+
+      const group = resolveDeliveryGroup({
+        issue: existing.root,
+        children: [...childrenById.values()],
+        dependencies: [...dependencyMap.entries()].map(
+          ([itemId, dependsOn]) => ({ itemId, dependsOn: [...dependsOn] }),
+        ),
+      });
+      const currentGroup: DeliveryGroup = {
+        key: existing.key,
+        id: existing.id,
+        mode: existing.mode,
+        root: existing.root,
+        graph: existing.graph,
+      };
+      if (
+        deliveryGroupFingerprint(currentGroup) ===
+        deliveryGroupFingerprint(group)
+      ) {
+        return existing;
+      }
+      const updated: DeliveryRecord = {
+        ...existing,
+        ...group,
+        updatedAt: this.clock.now(),
+        version: existing.version + 1,
+      };
+      await transaction.saveDelivery(updated);
+      return updated;
+    });
+  }
+
+  /** Persist spec recovery evidence under the same lease and delivery lock. */
+  async saveSpecDeliveryCheckpoint(
+    key: DeliveryKey,
+    lease: DeliveryLease,
+    checkpoint: SpecDeliveryCheckpoint,
+  ): Promise<DeliveryRecord> {
+    return this.storage.transaction(async (transaction) => {
+      await transaction.lockDelivery(key);
+      const existing = await transaction.getDelivery(key);
+      if (existing === undefined) {
+        throw new Error(`Delivery ${deliveryIdFor(key)} does not exist`);
+      }
+      if (existing.mergedAt !== undefined) {
+        throw new Error("Merged delivery checkpoint is immutable");
+      }
+      const currentLease = await transaction.getDeliveryLease(key);
+      this.assertDeliveryLease(currentLease, lease);
+
+      const previous = existing.specCheckpoint;
+      if (
+        previous?.pullRequest !== undefined &&
+        (checkpoint.pullRequest?.id !== previous.pullRequest.id ||
+          checkpoint.pullRequest.baseBranch !==
+            previous.pullRequest.baseBranch ||
+          checkpoint.pullRequest.headBranch !==
+            previous.pullRequest.headBranch ||
+          checkpoint.pullRequest.draft !== previous.pullRequest.draft)
+      ) {
+        throw new Error("Spec delivery pull request reference changed");
+      }
+      const children = new Map(
+        checkpoint.children.map((child) => [child.child.itemId, child]),
+      );
+      if (children.size !== checkpoint.children.length) {
+        throw new Error("Spec delivery checkpoint contains duplicate children");
+      }
+      for (const prior of previous?.children ?? []) {
+        const current = children.get(prior.child.itemId);
+        if (prior.status === "closed") {
+          if (
+            current !== undefined &&
+            JSON.stringify(current) !== JSON.stringify(prior)
+          ) {
+            throw new Error(
+              `Closed child ${prior.child.itemId} completion evidence is immutable`,
+            );
+          }
+          children.set(prior.child.itemId, prior);
+        }
+      }
+      const updated = parseDeliveryRecord({
+        ...existing,
+        specCheckpoint: {
+          ...checkpoint,
+          children: [...children.values()].sort((left, right) =>
+            left.child.itemId.localeCompare(right.child.itemId, undefined, {
+              numeric: true,
+            }),
+          ),
+        },
+        updatedAt: this.clock.now(),
+        version: existing.version + 1,
+      });
+      await transaction.saveDelivery(updated);
+      return updated;
+    });
+  }
+
   /** Freeze a provider-verified merged delivery before any later scope event. */
   async markDeliveryMerged(
     key: DeliveryKey,
@@ -384,8 +564,69 @@ export class WorkflowCoordinator {
       if (existing.mergedAt !== undefined) {
         throw new Error("Merged delivery graph is immutable");
       }
+      const children = new Map(
+        existing.graph.children.map((child) => [child.itemId, child]),
+      );
+      for (const child of group.graph.children) {
+        const current = children.get(child.itemId);
+        if (current !== undefined && !sameIdentity(current, child)) {
+          throw new Error(`Child ${child.itemId} has conflicting identity`);
+        }
+        children.set(child.itemId, child);
+      }
+      const dependencies = new Map<string, Set<string>>();
+      const protectedChildren = new Map(
+        existing.specCheckpoint?.children.map((child) => [
+          child.child.itemId,
+          child.status,
+        ]) ?? [],
+      );
+      const existingDependencies = new Map(
+        existing.graph.dependencies.map((dependency) => [
+          dependency.itemId,
+          new Set(dependency.dependsOn),
+        ]),
+      );
+      for (const dependency of group.graph.dependencies) {
+        const current =
+          existingDependencies.get(dependency.itemId) ?? new Set();
+        const protectedStatus = protectedChildren.get(dependency.itemId);
+        if (
+          protectedStatus !== undefined &&
+          dependency.dependsOn.some((itemId) => !current.has(itemId))
+        ) {
+          throw new Error(
+            protectedStatus === "closed"
+              ? `Completed child ${dependency.itemId} cannot be mutated`
+              : `Child ${dependency.itemId} dependencies cannot change after work starts`,
+          );
+        }
+      }
+      for (const dependency of [
+        ...existing.graph.dependencies,
+        ...group.graph.dependencies,
+      ]) {
+        const current =
+          dependencies.get(dependency.itemId) ?? new Set<string>();
+        dependency.dependsOn.forEach((itemId) => current.add(itemId));
+        dependencies.set(dependency.itemId, current);
+      }
+      const merged = resolveDeliveryGroup({
+        issue: existing.root,
+        children: [...children.values()],
+        dependencies: [...dependencies.entries()].map(
+          ([itemId, dependsOn]) => ({ itemId, dependsOn: [...dependsOn] }),
+        ),
+      });
+      if (
+        deliveryGroupFingerprint(existingGroup) ===
+        deliveryGroupFingerprint(merged)
+      ) {
+        return existing;
+      }
       const updated: DeliveryRecord = {
-        ...group,
+        ...existing,
+        ...merged,
         createdAt: existing.createdAt,
         updatedAt: this.clock.now(),
         version: existing.version + 1,

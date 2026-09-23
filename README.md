@@ -101,6 +101,13 @@ local-only orphan branch is ignored after interruption. If a delivery is
 blocked after bounded recovery, re-add the lowercase `shipyard` label to
 explicitly retry the existing delivery.
 
+On retry, the coordinator reconciles the existing pull request and remote head
+with saved child evidence before scheduling work. Completed children stay
+closed and are not run again. Pre-merge scope additions join the same delivery
+and invalidate its candidate checks and review; additions after merge need a
+follow-up delivery. Scope expansion reports when the pull request must return
+to draft; satisfy that transition before resuming delivery.
+
 ## Keep a repository running
 
 On Apple Silicon macOS, the optional repository runner keeps a foreground

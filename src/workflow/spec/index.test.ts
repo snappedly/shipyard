@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   InMemoryCoordinatorStorage,
   resolveDeliveryGroup,
@@ -171,8 +171,9 @@ describe("spec delivery planning", () => {
 
   it("expands open scope without reopening completed children", async () => {
     const delivery = deliveryFor(["101"]);
+    const expandedCoordinator = coordinator();
     const expanded = await expandSpecDeliveryScope({
-      coordinator: coordinator(),
+      coordinator: expandedCoordinator,
       delivery,
       addedChildren: [identity("102")],
       completedChildIds: ["101"],
@@ -183,6 +184,18 @@ describe("spec delivery planning", () => {
     expect(
       expanded.plan?.waves.map((wave) => wave.map((child) => child.itemId)),
     ).toEqual([["101", "102"]]);
+
+    const completedMutation = await expandSpecDeliveryScope({
+      coordinator: expandedCoordinator,
+      delivery: expanded.delivery!,
+      addedChildren: [identity("103")],
+      addedDependencies: [{ itemId: "101", dependsOn: ["103"] }],
+      completedChildIds: ["101"],
+    });
+    expect(completedMutation.status).toBe("rejected");
+    expect(completedMutation.reason).toContain(
+      "Completed child 101 cannot be mutated",
+    );
 
     const merged = await expandSpecDeliveryScope({
       coordinator: coordinator(),
@@ -225,6 +238,42 @@ describe("spec delivery planning", () => {
     expect(replay.disposition).toBe("ignored");
     expect(replay.reason).toBe("merged-delivery");
   });
+
+  it("merges concurrent additions made from stale scope snapshots", async () => {
+    const owner = coordinator();
+    const initial = deliveryFor(["101"]);
+    await owner.resolveDelivery(initial);
+
+    const [first, second] = await Promise.all([
+      expandSpecDeliveryScope({
+        coordinator: owner,
+        delivery: initial,
+        addedChildren: [identity("102")],
+      }),
+      expandSpecDeliveryScope({
+        coordinator: owner,
+        delivery: initial,
+        addedChildren: [identity("103")],
+      }),
+    ]);
+
+    expect(first.status).toBe("expanded");
+    expect(second.status).toBe("expanded");
+    expect(
+      (await owner.getDelivery(initial.key))?.graph.children.map(
+        (child) => child.itemId,
+      ),
+    ).toEqual(["101", "102", "103"]);
+
+    const beforeReplay = await owner.getDelivery(initial.key);
+    const replay = await owner.resolveDelivery(initial);
+    expect(replay.graph.children.map((child) => child.itemId)).toEqual([
+      "101",
+      "102",
+      "103",
+    ]);
+    expect(replay.version).toBe(beforeReplay?.version);
+  });
 });
 
 describe("spec delivery orchestration", () => {
@@ -262,6 +311,7 @@ describe("spec delivery orchestration", () => {
       },
     };
     const integration: SpecIntegrationAdapter = {
+      reconcileDelivery: async () => ({}),
       ensureDraftPullRequest: async (request) => {
         pullRequestCalls += 1;
         events.push(`draft:${request.candidate.sha}`);
@@ -293,6 +343,7 @@ describe("spec delivery orchestration", () => {
     };
     const checks = verification();
     const lifecycle = {
+      reconcileChild: async () => "open" as const,
       closeChild: async (
         request: Parameters<typeof checks.verifyChild>[0] & {
           verification: Awaited<ReturnType<typeof checks.verifyChild>>;
@@ -320,7 +371,7 @@ describe("spec delivery orchestration", () => {
       maxConcurrency: 2,
     });
 
-    expect(result.outcome).toBe("ready-for-human");
+    expect(result.outcome, result.reason).toBe("ready-for-human");
     expect(maximumWorkers).toBe(2);
     expect(pullRequestCalls).toBe(1);
     expect(result.children.map((child) => child.child.itemId)).toEqual([
@@ -413,6 +464,7 @@ describe("spec delivery orchestration", () => {
       },
     };
     const integration: SpecIntegrationAdapter = {
+      reconcileDelivery: async () => ({}),
       ensureDraftPullRequest: async (request) => ({
         id: "pr-100",
         baseBranch: base.branch,
@@ -444,7 +496,10 @@ describe("spec delivery orchestration", () => {
       },
       integration,
       verification: verification(),
-      childLifecycle: { closeChild: async () => undefined },
+      childLifecycle: {
+        reconcileChild: async () => "open",
+        closeChild: async () => undefined,
+      },
       review: reviewProvider,
       fixer,
     });
@@ -458,5 +513,452 @@ describe("spec delivery orchestration", () => {
     expect(result.candidate?.head.sha).toBe("fixed-head");
     expect(result.candidate?.pullRequest.id).toBe("pr-100");
     expect(result.parent).toEqual({ state: "open", merged: false });
+  });
+
+  it("resumes a published child after provider closure without repeating its work or closure", async () => {
+    const owner = coordinator();
+    const delivery = deliveryFor(["101"]);
+    const saveCheckpoint = owner.saveSpecDeliveryCheckpoint.bind(owner);
+    let failAfterPublication = true;
+    vi.spyOn(owner, "saveSpecDeliveryCheckpoint").mockImplementation(
+      async (key, lease, nextCheckpoint) => {
+        if (
+          failAfterPublication &&
+          nextCheckpoint.children.some((child) => child.status === "verifying")
+        ) {
+          failAfterPublication = false;
+          throw new Error("runner stopped after candidate publication");
+        }
+        return saveCheckpoint(key, lease, nextCheckpoint);
+      },
+    );
+    const remote: {
+      pullRequest?: {
+        id: string;
+        baseBranch: string;
+        headBranch: string;
+        draft: boolean;
+      };
+      head?: RevisionReference;
+      childClosed: boolean;
+    } = { childClosed: false };
+    const calls = {
+      worker: 0,
+      integrate: 0,
+      ensure: 0,
+      publish: 0,
+      verify: 0,
+      close: 0,
+    };
+    const integration: SpecIntegrationAdapter = {
+      reconcileDelivery: async () => ({
+        pullRequest: remote.pullRequest,
+        head: remote.head,
+      }),
+      ensureDraftPullRequest: async (request) => {
+        calls.ensure += 1;
+        remote.pullRequest = {
+          id: "pr-100",
+          baseBranch: base.branch,
+          headBranch: request.integrationBranch,
+          draft: true,
+        };
+        return {
+          id: "pr-100",
+          baseBranch: base.branch,
+          headBranch: request.integrationBranch,
+          draft: true,
+        };
+      },
+      integrateChild: async (request) => {
+        calls.integrate += 1;
+        return {
+          branch: request.integrationBranch,
+          sha: "integrated-101",
+        };
+      },
+      publishCandidate: async (request) => {
+        calls.publish += 1;
+        if (calls.publish === 1) {
+          throw new Error("runner stopped before publishing the candidate");
+        }
+        remote.head = request.candidate.head;
+        return {
+          pullRequestId: request.candidate.pullRequest.id,
+          head: request.candidate.head,
+        };
+      },
+    };
+    const checks: SpecVerificationAdapter = {
+      ...verification(),
+      verifyChild: async () => {
+        calls.verify += 1;
+        return {
+          checks: [],
+          cleanup: { status: "passed", summary: "Child cleanup passed." },
+          evidence: ["Focused child checks passed."],
+        };
+      },
+    };
+    const childLifecycle = {
+      reconcileChild: async () => (remote.childClosed ? "closed" : "open"),
+      closeChild: async () => {
+        calls.close += 1;
+        remote.childClosed = true;
+        throw new Error("runner stopped after GitHub closed the child");
+      },
+    };
+    const run = () =>
+      deliverSpec({
+        coordinator: owner,
+        delivery,
+        brief,
+        policy,
+        workerId: "coordinator-1",
+        base,
+        integrationBranch: "shipyard/spec-100",
+        childWorker: {
+          implement: async () => {
+            calls.worker += 1;
+            return {
+              commit: { branch: "shipyard/child-101", sha: "child-101" },
+            };
+          },
+        },
+        integration,
+        verification: checks,
+        childLifecycle,
+        review: review(),
+      });
+
+    const interrupted = await run();
+    expect(interrupted.outcome).toBe("blocked");
+    expect(
+      (await owner.getDelivery(delivery.key))?.specCheckpoint?.children,
+    ).toMatchObject([{ child: identity("101"), status: "publishing" }]);
+
+    const stoppedAfterPublication = await run();
+    expect(stoppedAfterPublication.outcome).toBe("blocked");
+    expect(remote.head?.sha).toBe("integrated-101");
+    expect(
+      (await owner.getDelivery(delivery.key))?.specCheckpoint?.children,
+    ).toMatchObject([{ child: identity("101"), status: "publishing" }]);
+
+    const stoppedAfterClosure = await run();
+    expect(stoppedAfterClosure.outcome).toBe("blocked");
+    expect(
+      (await owner.getDelivery(delivery.key))?.specCheckpoint?.children,
+    ).toMatchObject([{ child: identity("101"), status: "closing" }]);
+
+    const resumed = await run();
+
+    expect(resumed.outcome, resumed.reason).toBe("ready-for-human");
+    expect(resumed.children.map((child) => child.child.itemId)).toEqual([
+      "101",
+    ]);
+    expect(calls).toEqual({
+      worker: 1,
+      integrate: 1,
+      ensure: 1,
+      publish: 2,
+      verify: 1,
+      close: 1,
+    });
+
+    remote.pullRequest = { ...remote.pullRequest!, draft: false };
+    const nonDraftResume = await run();
+    expect(nonDraftResume.outcome).toBe("blocked");
+    expect(nonDraftResume.reason).toContain(
+      "return it to draft before resuming",
+    );
+    remote.pullRequest = { ...remote.pullRequest!, draft: true };
+
+    const changedDependency = await expandSpecDeliveryScope({
+      coordinator: owner,
+      delivery,
+      addedChildren: [identity("102")],
+      addedDependencies: [{ itemId: "101", dependsOn: ["102"] }],
+    });
+    expect(changedDependency.status).toBe("rejected");
+    expect(changedDependency.reason).toContain("Completed child 101");
+
+    remote.head = {
+      branch: "shipyard/spec-100",
+      sha: "contradictory-remote-head",
+    };
+    const contradiction = await run();
+    expect(contradiction.outcome).toBe("blocked");
+    expect(contradiction.reason).toContain(
+      "contradicts the coordinator checkpoint",
+    );
+    expect(calls.worker).toBe(1);
+  });
+
+  it("recovers a child integration published remotely before its checkpoint", async () => {
+    const owner = coordinator();
+    const delivery = deliveryFor(["101"]);
+    const saveCheckpoint = owner.saveSpecDeliveryCheckpoint.bind(owner);
+    let stopAfterRemoteIntegration = true;
+    vi.spyOn(owner, "saveSpecDeliveryCheckpoint").mockImplementation(
+      async (key, lease, nextCheckpoint) => {
+        if (
+          stopAfterRemoteIntegration &&
+          nextCheckpoint.children.some((child) => child.status === "publishing")
+        ) {
+          stopAfterRemoteIntegration = false;
+          throw new Error("runner stopped after pushing child integration");
+        }
+        return saveCheckpoint(key, lease, nextCheckpoint);
+      },
+    );
+    const sourceCommit = {
+      branch: "shipyard/child-101",
+      sha: "child-101",
+    };
+    const remote: {
+      pullRequest?: {
+        id: string;
+        baseBranch: string;
+        headBranch: string;
+        draft: true;
+      };
+      head?: RevisionReference;
+      integratedChild?: {
+        child: WorkIdentity;
+        sourceCommit: RevisionReference;
+        head: RevisionReference;
+      };
+    } = {};
+    const calls = { worker: 0, integrate: 0, ensure: 0, publish: 0 };
+    const integration: SpecIntegrationAdapter = {
+      reconcileDelivery: async () => ({
+        pullRequest: remote.pullRequest,
+        head: remote.head,
+        integratedChild: remote.integratedChild,
+      }),
+      ensureDraftPullRequest: async (request) => {
+        calls.ensure += 1;
+        remote.pullRequest = {
+          id: "pr-100",
+          baseBranch: base.branch,
+          headBranch: request.integrationBranch,
+          draft: true,
+        };
+        return remote.pullRequest;
+      },
+      integrateChild: async (request) => {
+        calls.integrate += 1;
+        const head = {
+          branch: request.integrationBranch,
+          sha: "integrated-101",
+        };
+        remote.head = head;
+        remote.integratedChild = {
+          child: request.child,
+          sourceCommit: request.sourceCommit,
+          head,
+        };
+        return head;
+      },
+      publishCandidate: async (request) => {
+        calls.publish += 1;
+        remote.head = request.candidate.head;
+        return {
+          pullRequestId: request.candidate.pullRequest.id,
+          head: request.candidate.head,
+        };
+      },
+    };
+    const run = () =>
+      deliverSpec({
+        coordinator: owner,
+        delivery,
+        brief,
+        policy,
+        workerId: "coordinator-1",
+        base,
+        integrationBranch: "shipyard/spec-100",
+        childWorker: {
+          implement: async () => {
+            calls.worker += 1;
+            return { commit: sourceCommit };
+          },
+        },
+        integration,
+        verification: verification(),
+        childLifecycle: {
+          reconcileChild: async () => "open",
+          closeChild: async () => undefined,
+        },
+        review: review(),
+      });
+
+    const interrupted = await run();
+    expect(interrupted.outcome).toBe("blocked");
+    expect(
+      (await owner.getDelivery(delivery.key))?.specCheckpoint?.children,
+    ).toMatchObject([{ child: identity("101"), status: "integrating" }]);
+    expect(remote.head?.sha).toBe("integrated-101");
+
+    const resumed = await run();
+    expect(resumed.outcome, resumed.reason).toBe("ready-for-human");
+    expect(calls).toEqual({ worker: 1, integrate: 1, ensure: 1, publish: 1 });
+  });
+
+  it("renews the delivery lease during long work and aborts promptly after lease loss", async () => {
+    const storage = new InMemoryCoordinatorStorage();
+    const owner = new WorkflowCoordinator({
+      storage,
+      clock: {
+        now: () => new Date().toISOString(),
+        nowMilliseconds: () => Date.now(),
+      },
+    });
+    const delivery = deliveryFor(["101"]);
+    let startWorker!: () => void;
+    const workerStarted = new Promise<void>((resolve) => {
+      startWorker = resolve;
+    });
+    let finishWorker!: () => void;
+    const workerGate = new Promise<void>((resolve) => {
+      finishWorker = resolve;
+    });
+    const work = deliverSpec({
+      coordinator: owner,
+      delivery,
+      brief,
+      policy,
+      workerId: "coordinator-1",
+      base,
+      integrationBranch: "shipyard/spec-100",
+      leaseTtlMs: 30,
+      childWorker: {
+        implement: async () => {
+          startWorker();
+          await workerGate;
+          return {
+            commit: { branch: "shipyard/child-101", sha: "child-101" },
+          };
+        },
+      },
+      integration: {
+        reconcileDelivery: async () => ({}),
+        ensureDraftPullRequest: async (request) => ({
+          id: "pr-100",
+          baseBranch: base.branch,
+          headBranch: request.integrationBranch,
+          draft: true,
+        }),
+        integrateChild: async (request) => ({
+          branch: request.integrationBranch,
+          sha: "integrated-101",
+        }),
+        publishCandidate: async (request) => ({
+          pullRequestId: request.candidate.pullRequest.id,
+          head: request.candidate.head,
+        }),
+      },
+      verification: verification(),
+      childLifecycle: {
+        reconcileChild: async () => "open",
+        closeChild: async () => undefined,
+      },
+      review: review(),
+    });
+
+    await workerStarted;
+    await new Promise((resolve) => setTimeout(resolve, 90));
+    await expect(
+      owner.acquireDeliveryLease({
+        repository,
+        key: delivery.key,
+        workerId: "competing-coordinator",
+        ttlMs: 30,
+      }),
+    ).rejects.toThrow(/leased/i);
+    finishWorker();
+    await expect(work).resolves.toMatchObject({ outcome: "ready-for-human" });
+
+    const lostOwner = coordinator();
+    const originalHeartbeat = lostOwner.heartbeatDeliveryLease.bind(lostOwner);
+    let loseNextHeartbeat = false;
+    vi.spyOn(lostOwner, "heartbeatDeliveryLease").mockImplementation(
+      async (lease) => {
+        if (loseNextHeartbeat) throw new Error("lease fenced by another owner");
+        return originalHeartbeat(lease);
+      },
+    );
+    let workerAborted = false;
+    let deliveryReturned = false;
+    let workerMutatedAfterReturn = false;
+    let integrationsAfterLoss = 0;
+    let startedLostWorker!: () => void;
+    const lostWorkerStarted = new Promise<void>((resolve) => {
+      startedLostWorker = resolve;
+    });
+    const lost = deliverSpec({
+      coordinator: lostOwner,
+      delivery,
+      brief,
+      policy,
+      workerId: "lost-coordinator",
+      base,
+      integrationBranch: "shipyard/spec-100",
+      leaseTtlMs: 30,
+      childWorker: {
+        implement: (request) =>
+          new Promise((_resolve, reject) => {
+            startedLostWorker();
+            request.signal.addEventListener(
+              "abort",
+              () => {
+                workerAborted = true;
+                setTimeout(() => {
+                  if (deliveryReturned) workerMutatedAfterReturn = true;
+                  reject(new Error("worker observed lease cancellation"));
+                }, 15);
+              },
+              { once: true },
+            );
+          }),
+      },
+      integration: {
+        reconcileDelivery: async () => ({}),
+        ensureDraftPullRequest: async (request) => ({
+          id: "pr-lost",
+          baseBranch: base.branch,
+          headBranch: request.integrationBranch,
+          draft: true,
+        }),
+        integrateChild: async (request) => {
+          integrationsAfterLoss += 1;
+          return {
+            branch: request.integrationBranch,
+            sha: "integrated-lost",
+          };
+        },
+        publishCandidate: async (request) => ({
+          pullRequestId: request.candidate.pullRequest.id,
+          head: request.candidate.head,
+        }),
+      },
+      verification: verification(),
+      childLifecycle: {
+        reconcileChild: async () => "open",
+        closeChild: async () => undefined,
+      },
+      review: review(),
+    });
+    await lostWorkerStarted;
+    loseNextHeartbeat = true;
+    await expect(lost).resolves.toMatchObject({
+      outcome: "blocked",
+      reason: expect.stringContaining("lease lost"),
+    });
+    deliveryReturned = true;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(workerAborted).toBe(true);
+    expect(workerMutatedAfterReturn).toBe(false);
+    expect(integrationsAfterLoss).toBe(0);
   });
 });

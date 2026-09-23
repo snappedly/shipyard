@@ -1,8 +1,10 @@
 import type {
   Assignment,
+  CheckEvidence,
   LifecycleState,
   PhaseResult,
   RepositoryPolicy,
+  RevisionReference,
   WorkBrief,
   WorkIdentity,
   WorkflowPhase,
@@ -70,8 +72,51 @@ export interface DeliveryRecord extends DeliveryGroup {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly version: number;
+  readonly specCheckpoint?: SpecDeliveryCheckpoint;
   readonly mergedAt?: string;
   readonly mergedSha?: string;
+}
+
+export interface DeliveryPullRequestReference {
+  readonly id: string;
+  readonly baseBranch: string;
+  readonly headBranch: string;
+  readonly draft: boolean;
+}
+
+export interface SpecChildVerificationEvidence {
+  readonly checks: readonly CheckEvidence[];
+  readonly cleanup: { readonly status: "passed"; readonly summary: string };
+  readonly evidence: readonly string[];
+}
+
+export interface SpecChildCheckpoint {
+  readonly child: WorkIdentity;
+  readonly status:
+    | "working"
+    | "integrating"
+    | "publishing"
+    | "verifying"
+    | "closing"
+    | "closed";
+  readonly workerBase?: RevisionReference;
+  readonly sourceCommit?: RevisionReference;
+  readonly candidate?: {
+    readonly deliveryId: string;
+    readonly briefHash: string;
+    readonly base: RevisionReference;
+    readonly head: RevisionReference;
+    readonly pullRequest: DeliveryPullRequestReference;
+  };
+  readonly verification?: SpecChildVerificationEvidence;
+  readonly closedAt?: string;
+}
+
+/** Idempotency evidence for an interrupted planning-spec delivery. */
+export interface SpecDeliveryCheckpoint {
+  readonly pullRequest?: DeliveryPullRequestReference;
+  readonly currentHead?: RevisionReference;
+  readonly children: readonly SpecChildCheckpoint[];
 }
 
 /** Current coordinator records associated with one delivery graph. */
@@ -373,6 +418,13 @@ export interface AcquireDeliveryLeaseInput {
   readonly key: DeliveryKey;
   readonly workerId: string;
   readonly ttlMs: number;
+}
+
+export interface ExpandDeliveryScopeInput {
+  readonly key: DeliveryKey;
+  readonly addedChildren: readonly WorkIdentity[];
+  readonly addedDependencies?: readonly DeliveryDependency[];
+  readonly completedChildIds?: readonly string[];
 }
 
 export interface SubmitPhaseResultInput {

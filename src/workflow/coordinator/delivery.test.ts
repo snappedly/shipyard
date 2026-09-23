@@ -6,6 +6,7 @@ import {
 } from "../contracts/index.js";
 import {
   InMemoryCoordinatorStorage,
+  parseDeliveryRecord,
   resolveDeliveryGroup,
   WorkflowCoordinator,
 } from "./index.js";
@@ -129,6 +130,73 @@ describe("delivery groups", () => {
         ],
       }),
     ).toThrow("dependency cycle");
+  });
+
+  it("parses durable spec completion evidence from a delivery record", () => {
+    const delivery = resolveDeliveryGroup({
+      issue: identity("100", "planning-spec"),
+      children: [identity("101")],
+    });
+    const record = parseDeliveryRecord({
+      ...delivery,
+      createdAt: "2026-09-22T17:00:00.000Z",
+      updatedAt: "2026-09-22T17:01:00.000Z",
+      version: 3,
+      specCheckpoint: {
+        pullRequest: {
+          id: "pr-100",
+          baseBranch: "staging",
+          headBranch: "shipyard/spec-100",
+          draft: true,
+        },
+        currentHead: {
+          branch: "shipyard/spec-100",
+          sha: "integrated-101",
+        },
+        children: [
+          {
+            child: identity("101"),
+            status: "closed",
+            workerBase: { branch: "shipyard/spec-100", sha: "base-100" },
+            sourceCommit: { branch: "shipyard/child-101", sha: "child-101" },
+            candidate: {
+              deliveryId: delivery.id,
+              briefHash: "brief-hash",
+              base: { branch: "staging", sha: "a".repeat(40) },
+              head: { branch: "shipyard/spec-100", sha: "integrated-101" },
+              pullRequest: {
+                id: "pr-100",
+                baseBranch: "staging",
+                headBranch: "shipyard/spec-100",
+                draft: true,
+              },
+            },
+            verification: {
+              checks: [
+                {
+                  name: "focused",
+                  command: "npm test -- affected.test.ts",
+                  status: "passed",
+                  summary: "Focused checks passed.",
+                },
+              ],
+              cleanup: { status: "passed", summary: "Cleanup passed." },
+              evidence: ["The published child candidate passed verification."],
+            },
+            closedAt: "2026-09-22T17:01:00.000Z",
+          },
+        ],
+      },
+    });
+
+    expect(record.specCheckpoint?.children[0]).toMatchObject({
+      child: identity("101"),
+      status: "closed",
+      verification: {
+        cleanup: { status: "passed" },
+        evidence: ["The published child candidate passed verification."],
+      },
+    });
   });
 
   it("leases a spec delivery once while leaving an unrelated delivery eligible", async () => {

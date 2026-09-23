@@ -4,6 +4,8 @@ import {
   type DeliveryGroup,
   type DeliveryLease,
   type DeliveryRecord,
+  type SpecChildCheckpoint,
+  type SpecDeliveryCheckpoint,
   type WorkflowCoordinator,
 } from "../coordinator/index.js";
 import {
@@ -135,8 +137,7 @@ export const planSpecDelivery = (delivery: DeliveryGroup): SpecDeliveryPlan => {
 export const expandSpecDeliveryScope = async (
   input: SpecScopeExpansionInput,
 ): Promise<SpecScopeExpansionResult> => {
-  const current = await input.coordinator.getDelivery(input.delivery.key);
-  if (input.parentState === "merged" || current?.mergedAt !== undefined) {
+  if (input.parentState === "merged") {
     return {
       status: "follow-up-required",
       candidateInvalidated: false,
@@ -147,90 +148,59 @@ export const expandSpecDeliveryScope = async (
         "Merged deliveries cannot be mutated; create a follow-up delivery",
     };
   }
-  const existingById = new Map(
-    input.delivery.graph.children.map((child) => [child.itemId, child]),
-  );
-  for (const child of input.addedChildren) {
-    if (child.kind !== "executable-issue") {
-      return {
-        status: "rejected",
-        candidateInvalidated: false,
-        checksInvalidated: false,
-        reviewInvalidated: false,
-        draftRequired: false,
-        reason: `Only executable children may be added: ${child.itemId}`,
-      };
+  let current: DeliveryRecord | undefined;
+  try {
+    current = await input.coordinator.getDelivery(input.delivery.key);
+    if (current === undefined) {
+      current = await input.coordinator.resolveDelivery(input.delivery);
     }
-    if (existingById.has(child.itemId)) {
-      return {
-        status: "rejected",
-        candidateInvalidated: false,
-        checksInvalidated: false,
-        reviewInvalidated: false,
-        draftRequired: false,
-        reason: `Child ${child.itemId} is already part of the delivery`,
-      };
-    }
-  }
-  const completed = new Set(input.completedChildIds ?? []);
-  if ([...completed].some((itemId) => !existingById.has(itemId))) {
+  } catch (error) {
     return {
       status: "rejected",
       candidateInvalidated: false,
       checksInvalidated: false,
       reviewInvalidated: false,
       draftRequired: false,
-      reason:
-        "Completed child set contains an item outside the current delivery",
+      reason: errorMessage(error),
     };
   }
-  const dependencyMap = new Map<string, Set<string>>(
-    input.delivery.graph.dependencies.map((dependency) => [
-      dependency.itemId,
-      new Set(dependency.dependsOn),
-    ]),
-  );
-  for (const dependency of input.addedDependencies ?? []) {
-    if (completed.has(dependency.itemId)) {
-      const existing =
-        dependencyMap.get(dependency.itemId) ?? new Set<string>();
-      if (
-        existing.size !== dependency.dependsOn.length ||
-        dependency.dependsOn.some((itemId) => !existing.has(itemId))
-      ) {
-        return {
-          status: "rejected",
-          candidateInvalidated: false,
-          checksInvalidated: false,
-          reviewInvalidated: false,
-          draftRequired: false,
-          reason: `Completed child ${dependency.itemId} cannot be mutated`,
-        };
-      }
-    }
-    const values = dependencyMap.get(dependency.itemId) ?? new Set<string>();
-    for (const parent of dependency.dependsOn) values.add(parent);
-    dependencyMap.set(dependency.itemId, values);
+  if (current?.mergedAt !== undefined) {
+    return {
+      status: "follow-up-required",
+      candidateInvalidated: false,
+      checksInvalidated: false,
+      reviewInvalidated: false,
+      draftRequired: false,
+      reason:
+        "Merged deliveries cannot be mutated; create a follow-up delivery",
+    };
   }
-  const children = [...input.delivery.graph.children, ...input.addedChildren];
+  if (current === undefined) {
+    return {
+      status: "rejected",
+      candidateInvalidated: false,
+      checksInvalidated: false,
+      reviewInvalidated: false,
+      draftRequired: false,
+      reason: "Delivery does not exist",
+    };
+  }
   try {
-    const next = resolveDeliveryGroup({
-      issue: input.delivery.root,
-      children,
-      dependencies: [...dependencyMap.entries()].map(([itemId, dependsOn]) => ({
-        itemId,
-        dependsOn: [...dependsOn],
-      })),
+    const delivery = await input.coordinator.expandDeliveryScope({
+      key: current.key,
+      addedChildren: input.addedChildren,
+      addedDependencies: input.addedDependencies,
+      completedChildIds: input.completedChildIds,
     });
-    const delivery = await input.coordinator.resolveDelivery(next);
+    const changed = delivery.version !== current.version;
     return {
       status: "expanded",
       delivery,
       plan: planSpecDelivery(delivery),
-      candidateInvalidated: true,
-      checksInvalidated: true,
-      reviewInvalidated: true,
-      draftRequired: true,
+      candidateInvalidated: changed,
+      checksInvalidated: changed,
+      reviewInvalidated: changed,
+      draftRequired: changed,
     };
   } catch (error) {
     return {
@@ -268,7 +238,27 @@ export interface SpecPullRequest {
   readonly id: string;
   readonly baseBranch: string;
   readonly headBranch: string;
-  readonly draft: true;
+  readonly draft: boolean;
+}
+
+export interface ReconcileSpecDeliveryInput {
+  readonly delivery: DeliveryGroup;
+  readonly base: RevisionReference;
+  readonly integrationBranch: string;
+  readonly lease: DeliveryLease;
+  readonly signal: AbortSignal;
+}
+
+export interface SpecRemoteDeliveryState {
+  readonly pullRequest?: SpecPullRequest;
+  /** Current remote integration branch head, when a draft PR exists. */
+  readonly head?: RevisionReference;
+  /** Exact in-flight child integration completed on the remote branch. */
+  readonly integratedChild?: {
+    readonly child: WorkIdentity;
+    readonly sourceCommit: RevisionReference;
+    readonly head: RevisionReference;
+  };
 }
 
 export interface SpecCandidate {
@@ -285,6 +275,7 @@ export interface EnsureSpecPullRequestInput {
   readonly base: RevisionReference;
   readonly integrationBranch: string;
   readonly lease: DeliveryLease;
+  readonly signal: AbortSignal;
 }
 
 export interface IntegrateSpecChildInput {
@@ -294,12 +285,14 @@ export interface IntegrateSpecChildInput {
   readonly currentHead: RevisionReference;
   readonly integrationBranch: string;
   readonly lease: DeliveryLease;
+  readonly signal: AbortSignal;
 }
 
 export interface PublishSpecCandidateInput {
   readonly delivery: DeliveryGroup;
   readonly candidate: SpecCandidate;
   readonly lease: DeliveryLease;
+  readonly signal: AbortSignal;
 }
 
 export interface SpecPublishedCandidate {
@@ -308,13 +301,23 @@ export interface SpecPublishedCandidate {
 }
 
 export interface SpecIntegrationAdapter {
-  /** Create or resume the one draft pull request for this delivery. */
+  /**
+   * Read provider state before resuming. Report draft state accurately; a
+   * non-draft pull request must be returned to draft before the delivery runs.
+   */
+  reconcileDelivery(
+    input: ReconcileSpecDeliveryInput,
+  ): Promise<SpecRemoteDeliveryState>;
+  /** Create or resume by stable delivery identity; retries must not create another PR. */
   ensureDraftPullRequest(
     input: EnsureSpecPullRequestInput,
   ): Promise<SpecPullRequest>;
-  /** Integrate one worker commit into the shared branch. Calls are serialized. */
+  /**
+   * Integrate one worker commit into the shared branch. Calls are serialized
+   * and must be idempotent for the delivery, child, and source commit tuple.
+   */
   integrateChild(input: IntegrateSpecChildInput): Promise<RevisionReference>;
-  /** Publish the exact shared head through the already established PR identity. */
+  /** Publishing the same PR head again must not create a second commit or PR. */
   publishCandidate(
     input: PublishSpecCandidateInput,
   ): Promise<SpecPublishedCandidate>;
@@ -361,7 +364,17 @@ export interface CompleteSpecChildInput extends SpecChildVerificationInput {
 }
 
 export interface SpecChildLifecycle {
-  /** Record child completion only after the integrated candidate is published and verified. */
+  /** Read provider closure state to reconcile a crash around issue closure. */
+  reconcileChild(input: {
+    readonly delivery: DeliveryGroup;
+    readonly child: WorkIdentity;
+    readonly lease: DeliveryLease;
+    readonly signal: AbortSignal;
+  }): Promise<"open" | "closed">;
+  /**
+   * Close only after publication and verification. Completion comments must be
+   * idempotent for the delivery, child, source commit, and candidate head.
+   */
   closeChild(input: CompleteSpecChildInput): Promise<void>;
 }
 
@@ -533,6 +546,37 @@ const makeCandidate = (input: {
     pullRequest: input.pullRequest,
   });
 
+const recordFromCheckpoint = (
+  progress: SpecChildCheckpoint,
+): SpecChildRecord => {
+  if (
+    progress.workerBase === undefined ||
+    progress.sourceCommit === undefined ||
+    progress.candidate === undefined ||
+    progress.verification === undefined
+  ) {
+    throw new Error(
+      `Closed child ${progress.child.itemId} has incomplete coordinator evidence`,
+    );
+  }
+  return freezeClone({
+    child: progress.child,
+    workerBase: progress.workerBase,
+    sourceCommit: progress.sourceCommit,
+    candidate: progress.candidate,
+    verification: progress.verification,
+  });
+};
+
+const samePullRequest = (
+  left: SpecPullRequest,
+  right: SpecPullRequest,
+): boolean =>
+  left.id === right.id &&
+  left.baseBranch === right.baseBranch &&
+  left.headBranch === right.headBranch &&
+  left.draft === right.draft;
+
 const resultFor = (input: {
   readonly outcome: SpecDeliveryResult["outcome"];
   readonly delivery: DeliveryGroup;
@@ -599,7 +643,8 @@ const validateOptions = (options: SpecDeliveryOptions): string | undefined => {
  * The child worker interface intentionally returns only implementation evidence.
  * Publication, integration, verification, review, repair, and child completion
  * remain behind coordinator-owned adapters; there is no merge or parent-close
- * operation in this interface.
+ * operation in this interface. Resume requires the existing pull request to
+ * remain a draft; callers must satisfy `draftRequired` after scope expansion.
  */
 export const deliverSpec = async (
   options: SpecDeliveryOptions,
@@ -673,19 +718,34 @@ export const deliverSpec = async (
     options.signal?.addEventListener("abort", abortFromCaller, { once: true });
 
   let currentLease = lease;
-  let currentHead: RevisionReference = freezeClone({
+  const baseHead: RevisionReference = freezeClone({
     branch: options.integrationBranch,
     sha: options.base.sha,
   });
+  let checkpoint: SpecDeliveryCheckpoint = delivery.specCheckpoint ?? {
+    currentHead: baseHead,
+    children: [],
+  };
+  let currentHead: RevisionReference = checkpoint.currentHead ?? baseHead;
   let publishedHead: RevisionReference | undefined;
-  let pullRequest: SpecPullRequest | undefined;
+  let pullRequest: SpecPullRequest | undefined = checkpoint.pullRequest;
   let repairBatches = 0;
   let followUps = 0;
   const records = new Map<string, SpecChildRecord>();
   const reviews: SpecReviewRound[] = [];
-  const states = new Map<string, "pending" | "running" | "closed">(
-    plan.children.map((child) => [child.identity.itemId, "pending"]),
-  );
+  const states = new Map<string, "pending" | "running" | "closed">();
+  for (const child of plan.children) {
+    const completed = checkpoint.children.find(
+      (progress) => progress.child.itemId === child.identity.itemId,
+    );
+    states.set(
+      child.identity.itemId,
+      completed?.status === "closed" ? "closed" : "pending",
+    );
+    if (completed?.status === "closed") {
+      records.set(child.identity.itemId, recordFromCheckpoint(completed));
+    }
+  }
   const active = new Map<
     string,
     Promise<{
@@ -696,10 +756,105 @@ export const deliverSpec = async (
     }>
   >();
 
+  let leaseFailure: unknown;
+  let leaseTimer: ReturnType<typeof setTimeout> | undefined;
+  let leaseHeartbeat: Promise<void> | undefined;
+  let stopLeaseHeartbeats = false;
+  const grantedLeaseTtlMs = Math.max(1, lease.expiresAt - lease.heartbeatAt);
+  const heartbeatIntervalMs = Math.max(1, Math.floor(grantedLeaseTtlMs / 3));
+  const loseLease = (error: unknown): void => {
+    leaseFailure = error;
+    if (!controller.signal.aborted) {
+      controller.abort(`spec delivery lease lost: ${errorMessage(error)}`);
+    }
+  };
+  const assertOwned = (): void => {
+    if (leaseFailure !== undefined) {
+      throw new Error(`Delivery lease lost: ${errorMessage(leaseFailure)}`);
+    }
+    if (controller.signal.aborted) {
+      throw new Error(
+        `Spec delivery was cancelled: ${errorMessage(controller.signal.reason)}`,
+      );
+    }
+  };
+  const scheduleLeaseHeartbeat = (): void => {
+    if (stopLeaseHeartbeats || controller.signal.aborted) return;
+    leaseTimer = setTimeout(() => {
+      leaseHeartbeat = (async () => {
+        try {
+          currentLease =
+            await options.coordinator.heartbeatDeliveryLease(currentLease);
+        } catch (error) {
+          loseLease(error);
+        } finally {
+          leaseHeartbeat = undefined;
+          scheduleLeaseHeartbeat();
+        }
+      })();
+    }, heartbeatIntervalMs);
+    leaseTimer.unref?.();
+  };
+  const stopHeartbeats = async (): Promise<void> => {
+    stopLeaseHeartbeats = true;
+    if (leaseTimer !== undefined) clearTimeout(leaseTimer);
+    await leaseHeartbeat;
+  };
   const refreshLease = async (): Promise<DeliveryLease> => {
-    currentLease =
-      await options.coordinator.heartbeatDeliveryLease(currentLease);
-    return currentLease;
+    assertOwned();
+    try {
+      currentLease =
+        await options.coordinator.heartbeatDeliveryLease(currentLease);
+      return currentLease;
+    } catch (error) {
+      loseLease(error);
+      assertOwned();
+      throw error;
+    }
+  };
+  scheduleLeaseHeartbeat();
+
+  const saveCheckpoint = async (
+    next: SpecDeliveryCheckpoint,
+  ): Promise<void> => {
+    assertOwned();
+    delivery = await options.coordinator.saveSpecDeliveryCheckpoint(
+      delivery.key,
+      currentLease,
+      next,
+    );
+    checkpoint = delivery.specCheckpoint ?? next;
+  };
+
+  const saveChildProgress = async (
+    progress: SpecChildCheckpoint,
+  ): Promise<void> => {
+    const children = checkpoint.children.filter(
+      (child) => child.child.itemId !== progress.child.itemId,
+    );
+    children.push(freezeClone(progress));
+    await saveCheckpoint({
+      ...checkpoint,
+      pullRequest,
+      currentHead: publishedHead ?? checkpoint.currentHead ?? baseHead,
+      children,
+    });
+  };
+
+  const refreshScope = async (): Promise<void> => {
+    const latest = await options.coordinator.getDelivery(delivery.key);
+    if (latest === undefined)
+      throw new Error("Spec delivery record disappeared");
+    if (latest.mergedAt !== undefined) {
+      throw new Error("Merged delivery cannot run another spec delivery");
+    }
+    delivery = latest;
+    plan = planSpecDelivery(latest);
+    for (const child of plan.children) {
+      if (!states.has(child.identity.itemId)) {
+        states.set(child.identity.itemId, "pending");
+      }
+    }
   };
 
   const currentCandidate = (): SpecCandidate | undefined =>
@@ -717,13 +872,17 @@ export const deliverSpec = async (
     candidateHead: RevisionReference,
   ): Promise<SpecPullRequest> => {
     if (pullRequest !== undefined) return pullRequest;
+    await refreshLease();
+    assertOwned();
     const created = await options.integration.ensureDraftPullRequest({
       delivery,
       candidate: candidateHead,
       base: options.base,
       integrationBranch: options.integrationBranch,
       lease: currentLease,
+      signal: controller.signal,
     });
+    assertOwned();
     if (
       created.id.trim().length === 0 ||
       created.baseBranch !== options.base.branch ||
@@ -735,41 +894,77 @@ export const deliverSpec = async (
       );
     }
     pullRequest = freezeClone(created);
+    await saveCheckpoint({
+      ...checkpoint,
+      pullRequest,
+      currentHead: checkpoint.currentHead ?? baseHead,
+    });
     return pullRequest;
   };
 
-  const publish = async (): Promise<SpecCandidate> => {
+  const publishCandidate = async (
+    candidate: SpecCandidate,
+    childProgress?: SpecChildCheckpoint,
+  ): Promise<SpecCandidate> => {
     if (pullRequest === undefined) {
       throw new Error("Spec candidate has no draft pull request");
     }
-    const candidate = makeCandidate({
-      delivery,
-      briefHash: brief.hash,
-      base: options.base,
-      head: currentHead,
-      pullRequest,
-    });
+    await refreshLease();
+    assertOwned();
+    const stableCandidate = freezeClone(candidate);
     const published = await options.integration.publishCandidate({
       delivery,
-      candidate,
+      candidate: stableCandidate,
       lease: currentLease,
+      signal: controller.signal,
     });
+    assertOwned();
     if (
       published.pullRequestId !== pullRequest.id ||
-      !sameRevision(published.head, currentHead)
+      !sameRevision(published.head, stableCandidate.head)
     ) {
       throw new Error(
         "Published candidate does not match the exact integration head",
       );
     }
     publishedHead = freezeClone(published.head);
-    return candidate;
+    currentHead = freezeClone(published.head);
+    if (childProgress !== undefined) {
+      await saveChildProgress({ ...childProgress, status: "verifying" });
+    } else {
+      await saveCheckpoint({
+        ...checkpoint,
+        pullRequest,
+        currentHead: publishedHead,
+      });
+    }
+    return stableCandidate;
   };
 
-  const startReadyWorkers = (): void => {
+  const publish = async (): Promise<SpecCandidate> => {
+    if (pullRequest === undefined) {
+      throw new Error("Spec candidate has no draft pull request");
+    }
+    return publishCandidate(
+      makeCandidate({
+        delivery,
+        briefHash: brief.hash,
+        base: options.base,
+        head: currentHead,
+        pullRequest,
+      }),
+    );
+  };
+
+  const startReadyWorkers = async (): Promise<void> => {
     const maxConcurrency = options.maxConcurrency ?? defaultMaxConcurrency;
+    const starts: Array<{
+      readonly child: SpecChildPlan;
+      readonly workerBase: RevisionReference;
+      readonly request: SpecChildWorkerRequest;
+    }> = [];
     for (const child of plan.children) {
-      if (active.size >= maxConcurrency) break;
+      if (active.size + starts.length >= maxConcurrency) break;
       if (states.get(child.identity.itemId) !== "pending") continue;
       if (
         child.dependsOn.some(
@@ -778,8 +973,25 @@ export const deliverSpec = async (
       ) {
         continue;
       }
+      await refreshLease();
+      const sourceState = await options.childLifecycle.reconcileChild({
+        delivery,
+        child: child.identity,
+        lease: currentLease,
+        signal: controller.signal,
+      });
+      assertOwned();
+      if (sourceState !== "open") {
+        throw new Error(
+          `Child ${child.identity.itemId} is closed without coordinator completion evidence`,
+        );
+      }
       const workerBase = freezeClone(currentHead);
-      states.set(child.identity.itemId, "running");
+      await saveChildProgress({
+        child: child.identity,
+        status: "working",
+        workerBase,
+      });
       const request = Object.freeze({
         delivery: freezeClone(delivery),
         child: freezeClone(child.identity),
@@ -788,13 +1000,51 @@ export const deliverSpec = async (
         lease: freezeClone(currentLease),
         signal: controller.signal,
       });
+      starts.push({ child, workerBase, request });
+    }
+    if (starts.length > 0) await refreshLease();
+    for (const { child, workerBase, request } of starts) {
+      assertOwned();
+      states.set(child.identity.itemId, "running");
       const execution = Promise.resolve()
-        .then(() => options.childWorker.implement(request))
+        .then(() => {
+          assertOwned();
+          return options.childWorker.implement(
+            Object.freeze({ ...request, lease: freezeClone(currentLease) }),
+          );
+        })
         .then(
           (result) => ({ child, workerBase, result }),
           (error) => ({ child, workerBase, error }),
         );
       active.set(child.identity.itemId, execution);
+    }
+  };
+
+  const waitForWorker = async (): Promise<{
+    readonly child: SpecChildPlan;
+    readonly workerBase: RevisionReference;
+    readonly result?: SpecChildWorkerResult;
+    readonly error?: unknown;
+  }> => {
+    let onAbort: (() => void) | undefined;
+    const aborted = new Promise<never>((_resolve, reject) => {
+      onAbort = () => {
+        try {
+          assertOwned();
+          reject(new Error("Spec delivery was cancelled"));
+        } catch (error) {
+          reject(error);
+        }
+      };
+      controller.signal.addEventListener("abort", onAbort, { once: true });
+    });
+    try {
+      return await Promise.race([...active.values(), aborted]);
+    } finally {
+      if (onAbort !== undefined) {
+        controller.signal.removeEventListener("abort", onAbort);
+      }
     }
   };
 
@@ -805,17 +1055,354 @@ export const deliverSpec = async (
 
   let blockedReason: string | undefined;
   try {
-    while (records.size < plan.children.length) {
-      if (controller.signal.aborted) {
-        throw new Error("Spec delivery was cancelled");
+    await refreshLease();
+    const remote = await options.integration.reconcileDelivery({
+      delivery,
+      base: options.base,
+      integrationBranch: options.integrationBranch,
+      lease: currentLease,
+      signal: controller.signal,
+    });
+    assertOwned();
+    const expectedHead = checkpoint.currentHead ?? baseHead;
+    const pendingPublish = checkpoint.children.find(
+      (child) => child.status === "publishing",
+    );
+    const pendingIntegration = checkpoint.children.find(
+      (child) => child.status === "integrating",
+    );
+    if (pullRequest !== undefined && remote.pullRequest === undefined) {
+      throw new Error("Coordinator records a pull request missing from GitHub");
+    }
+    if (
+      remote.pullRequest !== undefined &&
+      (remote.pullRequest.id.trim().length === 0 ||
+        remote.pullRequest.baseBranch !== options.base.branch ||
+        remote.pullRequest.headBranch !== options.integrationBranch ||
+        typeof remote.pullRequest.draft !== "boolean")
+    ) {
+      throw new Error("GitHub returned an invalid spec delivery pull request");
+    }
+    if (remote.pullRequest?.draft === false) {
+      throw new Error(
+        "Spec delivery cannot resume while its pull request is not a draft; return it to draft before resuming",
+      );
+    }
+    if (
+      pullRequest !== undefined &&
+      remote.pullRequest !== undefined &&
+      !samePullRequest(pullRequest, remote.pullRequest)
+    ) {
+      throw new Error("GitHub pull request contradicts coordinator evidence");
+    }
+    if (remote.head !== undefined) {
+      if (
+        !revisionIsValid(remote.head) ||
+        remote.head.branch !== options.integrationBranch
+      ) {
+        throw new Error("GitHub returned an invalid spec integration head");
       }
-      startReadyWorkers();
+    } else if (
+      remote.pullRequest !== undefined &&
+      expectedHead.sha !== baseHead.sha
+    ) {
+      throw new Error(
+        "GitHub did not return the recorded remote integration head",
+      );
+    }
+    const remoteHead = remote.head ?? expectedHead;
+    const recoveredIntegration = remote.integratedChild;
+    if (
+      recoveredIntegration !== undefined &&
+      (pendingIntegration === undefined ||
+        pendingIntegration.sourceCommit === undefined ||
+        pendingIntegration.child.repository !==
+          recoveredIntegration.child.repository ||
+        pendingIntegration.child.itemId !== recoveredIntegration.child.itemId ||
+        pendingIntegration.child.kind !== recoveredIntegration.child.kind ||
+        !sameRevision(
+          pendingIntegration.sourceCommit,
+          recoveredIntegration.sourceCommit,
+        ) ||
+        !revisionIsValid(recoveredIntegration.head) ||
+        recoveredIntegration.head.branch !== options.integrationBranch ||
+        recoveredIntegration.head.sha === expectedHead.sha ||
+        !sameRevision(remoteHead, recoveredIntegration.head))
+    ) {
+      throw new Error(
+        "GitHub integration evidence contradicts the coordinator checkpoint",
+      );
+    }
+    const publishedPendingChild =
+      pendingPublish?.candidate !== undefined &&
+      sameRevision(remoteHead, pendingPublish.candidate.head);
+    if (
+      !sameRevision(remoteHead, expectedHead) &&
+      !publishedPendingChild &&
+      recoveredIntegration === undefined
+    ) {
+      throw new Error(
+        "GitHub integration head contradicts the coordinator checkpoint",
+      );
+    }
+    pullRequest = remote.pullRequest ?? pullRequest;
+    currentHead = freezeClone(remoteHead);
+    if (pullRequest !== undefined) publishedHead = freezeClone(remoteHead);
+    checkpoint = {
+      ...checkpoint,
+      pullRequest,
+      currentHead: remoteHead,
+      children: checkpoint.children.map((child) => {
+        if (child === pendingPublish && publishedPendingChild) {
+          return { ...child, status: "verifying" };
+        }
+        return child;
+      }),
+    };
+    if (
+      pendingIntegration !== undefined &&
+      recoveredIntegration !== undefined
+    ) {
+      const child = plan.children.find(
+        (entry) => entry.identity.itemId === pendingIntegration.child.itemId,
+      );
+      if (child === undefined) {
+        throw new Error(
+          `Checkpoint child ${pendingIntegration.child.itemId} is outside the current scope`,
+        );
+      }
+      const recoveredPullRequest = await ensurePullRequest(
+        recoveredIntegration.head,
+      );
+      const candidate = makeCandidate({
+        delivery,
+        briefHash: brief.hash,
+        base: options.base,
+        head: recoveredIntegration.head,
+        pullRequest: recoveredPullRequest,
+      });
+      checkpoint = {
+        ...checkpoint,
+        children: checkpoint.children.map((entry) =>
+          entry.child.itemId === pendingIntegration.child.itemId
+            ? { ...entry, status: "publishing", candidate }
+            : entry,
+        ),
+      };
+    }
+    if (
+      JSON.stringify(checkpoint) !== JSON.stringify(delivery.specCheckpoint)
+    ) {
+      await saveCheckpoint(checkpoint);
+    }
+
+    await refreshScope();
+    for (const child of plan.children) {
+      await refreshLease();
+      const progress = checkpoint.children.find(
+        (entry) => entry.child.itemId === child.identity.itemId,
+      );
+      const childState = await options.childLifecycle.reconcileChild({
+        delivery,
+        child: child.identity,
+        lease: currentLease,
+        signal: controller.signal,
+      });
+      assertOwned();
+      if (progress?.status === "closed") {
+        if (childState !== "closed") {
+          throw new Error(
+            `GitHub child #${child.identity.itemId} contradicts closed coordinator evidence`,
+          );
+        }
+        records.set(child.identity.itemId, recordFromCheckpoint(progress));
+        states.set(child.identity.itemId, "closed");
+      } else if (childState === "closed" && progress?.status !== "closing") {
+        throw new Error(
+          `Child ${child.identity.itemId} is closed without coordinator completion evidence`,
+        );
+      }
+      if (progress?.status === "closing" && childState === "closed") {
+        const closed = {
+          ...progress,
+          status: "closed" as const,
+          closedAt: new Date().toISOString(),
+        };
+        await saveChildProgress(closed);
+        records.set(child.identity.itemId, recordFromCheckpoint(closed));
+        states.set(child.identity.itemId, "closed");
+      }
+    }
+
+    while (true) {
+      assertOwned();
+      await refreshScope();
+      const resumable = checkpoint.children.find((child) =>
+        ["integrating", "publishing", "verifying", "closing"].includes(
+          child.status,
+        ),
+      );
+      if (resumable !== undefined) {
+        const child = plan.children.find(
+          (entry) => entry.identity.itemId === resumable.child.itemId,
+        );
+        if (child === undefined) {
+          throw new Error(
+            `Checkpoint child ${resumable.child.itemId} is outside the current scope`,
+          );
+        }
+        if (resumable.status === "integrating") {
+          if (
+            resumable.workerBase === undefined ||
+            resumable.sourceCommit === undefined
+          ) {
+            throw new Error(
+              `Child ${child.identity.itemId} integration checkpoint is incomplete`,
+            );
+          }
+          await refreshLease();
+          const integratedHead = await options.integration.integrateChild({
+            delivery,
+            child: child.identity,
+            sourceCommit: resumable.sourceCommit,
+            currentHead: freezeClone(currentHead),
+            integrationBranch: options.integrationBranch,
+            lease: currentLease,
+            signal: controller.signal,
+          });
+          assertOwned();
+          if (
+            !revisionIsValid(integratedHead) ||
+            integratedHead.branch !== options.integrationBranch ||
+            integratedHead.sha === currentHead.sha
+          ) {
+            throw new Error(
+              "Integration adapter returned an invalid shared head",
+            );
+          }
+          currentHead = freezeClone(integratedHead);
+          await refreshLease();
+          await ensurePullRequest(currentHead);
+          const candidate = makeCandidate({
+            delivery,
+            briefHash: brief.hash,
+            base: options.base,
+            head: currentHead,
+            pullRequest: pullRequest!,
+          });
+          await saveChildProgress({
+            ...resumable,
+            status: "publishing",
+            candidate,
+          });
+          await publishCandidate(candidate, {
+            ...resumable,
+            status: "publishing",
+            candidate,
+          });
+          continue;
+        }
+        if (resumable.status === "publishing") {
+          if (resumable.candidate === undefined) {
+            throw new Error(
+              `Child ${child.identity.itemId} publication checkpoint is incomplete`,
+            );
+          }
+          await publishCandidate(resumable.candidate, resumable);
+          continue;
+        }
+        if (resumable.status === "verifying") {
+          if (
+            resumable.candidate === undefined ||
+            resumable.sourceCommit === undefined
+          ) {
+            throw new Error(
+              `Child ${child.identity.itemId} verification checkpoint is incomplete`,
+            );
+          }
+          await refreshLease();
+          const childVerification = await options.verification.verifyChild({
+            delivery,
+            child: child.identity,
+            sourceCommit: resumable.sourceCommit,
+            candidate: freezeClone(resumable.candidate),
+            lease: currentLease,
+            signal: controller.signal,
+          });
+          assertOwned();
+          const issue = verificationFailure(childVerification, policy);
+          if (issue !== undefined) throw new Error(issue);
+          await saveChildProgress({
+            ...resumable,
+            status: "closing",
+            verification: {
+              checks: childVerification.checks,
+              cleanup: {
+                status: "passed",
+                summary: childVerification.cleanup.summary,
+              },
+              evidence: childVerification.evidence,
+            },
+          });
+          continue;
+        }
+        if (resumable.status === "closing") {
+          if (
+            resumable.candidate === undefined ||
+            resumable.sourceCommit === undefined ||
+            resumable.verification === undefined
+          ) {
+            throw new Error(
+              `Child ${child.identity.itemId} closure checkpoint is incomplete`,
+            );
+          }
+          await refreshLease();
+          const providerState = await options.childLifecycle.reconcileChild({
+            delivery,
+            child: child.identity,
+            lease: currentLease,
+            signal: controller.signal,
+          });
+          assertOwned();
+          if (providerState === "open") {
+            await refreshLease();
+            await options.childLifecycle.closeChild({
+              delivery,
+              child: child.identity,
+              sourceCommit: freezeClone(resumable.sourceCommit),
+              candidate: freezeClone(resumable.candidate),
+              verification: freezeClone(resumable.verification),
+              lease: currentLease,
+              signal: controller.signal,
+            });
+            assertOwned();
+          }
+          const closed: SpecChildCheckpoint = {
+            ...resumable,
+            status: "closed",
+            closedAt: new Date().toISOString(),
+          };
+          await saveChildProgress(closed);
+          records.set(child.identity.itemId, recordFromCheckpoint(closed));
+          states.set(child.identity.itemId, "closed");
+          continue;
+        }
+      }
+      if (
+        active.size === 0 &&
+        plan.children.every(
+          (child) => states.get(child.identity.itemId) === "closed",
+        )
+      ) {
+        break;
+      }
+      await startReadyWorkers();
       if (active.size === 0) {
         throw new Error(
           "Spec delivery has no dependency-safe child ready to run",
         );
       }
-      const completion = await Promise.race(active.values());
+      const completion = await waitForWorker();
       active.delete(completion.child.identity.itemId);
       if (completion.error !== undefined) {
         throw new Error(
@@ -837,65 +1424,20 @@ export const deliverSpec = async (
           `Child ${completion.child.identity.itemId} returned an invalid or shared-branch commit`,
         );
       }
-
-      await refreshLease();
-      const workerBase = completion.workerBase;
-      const integratedHead = await options.integration.integrateChild({
-        delivery,
+      assertOwned();
+      await saveChildProgress({
         child: completion.child.identity,
+        status: "integrating",
+        workerBase: completion.workerBase,
         sourceCommit: freezeClone(sourceCommit),
-        currentHead: freezeClone(currentHead),
-        integrationBranch: options.integrationBranch,
-        lease: currentLease,
       });
-      if (
-        !revisionIsValid(integratedHead) ||
-        integratedHead.branch !== options.integrationBranch ||
-        integratedHead.sha === currentHead.sha
-      ) {
-        throw new Error("Integration adapter returned an invalid shared head");
-      }
-      currentHead = freezeClone(integratedHead);
-      await refreshLease();
-      await ensurePullRequest(currentHead);
-      const candidate = await publish();
-      const verification = await options.verification.verifyChild({
-        delivery,
-        child: completion.child.identity,
-        sourceCommit: freezeClone(sourceCommit),
-        candidate,
-        lease: currentLease,
-        signal: controller.signal,
-      });
-      const verificationIssue = verificationFailure(verification, policy);
-      if (verificationIssue !== undefined) throw new Error(verificationIssue);
-      await refreshLease();
-      await options.childLifecycle.closeChild({
-        delivery,
-        child: completion.child.identity,
-        sourceCommit: freezeClone(sourceCommit),
-        candidate,
-        verification,
-        lease: currentLease,
-        signal: controller.signal,
-      });
-      records.set(
-        completion.child.identity.itemId,
-        freezeClone({
-          child: completion.child.identity,
-          workerBase,
-          sourceCommit,
-          candidate,
-          verification,
-        }),
-      );
-      states.set(completion.child.identity.itemId, "closed");
     }
 
     const candidateBeforeReview = currentCandidate();
     if (candidateBeforeReview === undefined) {
       throw new Error("Spec delivery did not publish an integration candidate");
     }
+    const reviewedGraph = JSON.stringify(delivery.graph);
     await refreshLease();
     const integratedVerification = await options.verification.verifyIntegrated({
       delivery,
@@ -903,8 +1445,15 @@ export const deliverSpec = async (
       lease: currentLease,
       signal: controller.signal,
     });
+    assertOwned();
     const integratedIssue = verificationFailure(integratedVerification, policy);
     if (integratedIssue !== undefined) throw new Error(integratedIssue);
+    await refreshScope();
+    if (JSON.stringify(delivery.graph) !== reviewedGraph) {
+      throw new Error(
+        "Spec scope changed during integrated verification; resume delivery for the updated graph",
+      );
+    }
 
     const review = async (
       mode: "full" | "targeted",
@@ -949,6 +1498,7 @@ export const deliverSpec = async (
         evidence: reviewResult.evidence,
         failure: reviewResult.failure?.message,
       });
+      assertOwned();
       reviews.push(round);
       return round;
     };
@@ -971,6 +1521,7 @@ export const deliverSpec = async (
         lease: currentLease,
         signal: controller.signal,
       });
+      assertOwned();
       if (
         !revisionIsValid(fixed.head) ||
         fixed.head.branch !== options.integrationBranch ||
@@ -988,6 +1539,7 @@ export const deliverSpec = async (
         lease: currentLease,
         signal: controller.signal,
       });
+      assertOwned();
       const fixedIssue = verificationFailure(fixedVerification, policy);
       if (fixedIssue !== undefined) throw new Error(fixedIssue);
       followUps = 1;
@@ -1010,6 +1562,13 @@ export const deliverSpec = async (
       );
     }
 
+    await refreshScope();
+    if (JSON.stringify(delivery.graph) !== reviewedGraph) {
+      throw new Error(
+        "Spec scope changed during review; resume delivery for the updated graph",
+      );
+    }
+
     return resultFor({
       outcome: "ready-for-human",
       delivery,
@@ -1025,10 +1584,11 @@ export const deliverSpec = async (
     });
   } catch (error) {
     blockedReason = errorMessage(error);
-    controller.abort(blockedReason);
+    if (!controller.signal.aborted) controller.abort(blockedReason);
     await settleActiveWorkers();
   } finally {
     options.signal?.removeEventListener("abort", abortFromCaller);
+    await stopHeartbeats();
   }
 
   return resultFor({

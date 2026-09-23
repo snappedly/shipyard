@@ -5,6 +5,9 @@ import type {
   DeliveryKey,
   DeliveryMode,
   DeliveryRecord,
+  DeliveryPullRequestReference,
+  SpecChildCheckpoint,
+  SpecDeliveryCheckpoint,
 } from "./types.js";
 
 export interface ResolveDeliveryGroupInput {
@@ -235,6 +238,50 @@ export const parseDeliveryRecord = (value: unknown): DeliveryRecord => {
       kind: kind as WorkIdentity["kind"],
     };
   };
+  const revision = (
+    value: unknown,
+    path: string,
+  ): { branch: string; sha: string } => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      throw new Error(`${path} must be an object`);
+    }
+    const record = value as Record<string, unknown>;
+    if (
+      typeof record.branch !== "string" ||
+      record.branch.trim().length === 0 ||
+      typeof record.sha !== "string" ||
+      record.sha.trim().length === 0
+    ) {
+      throw new Error(`${path} is not a revision reference`);
+    }
+    return { branch: record.branch, sha: record.sha };
+  };
+  const pullRequest = (
+    value: unknown,
+    path: string,
+  ): DeliveryPullRequestReference => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      throw new Error(`${path} must be an object`);
+    }
+    const record = value as Record<string, unknown>;
+    if (
+      typeof record.id !== "string" ||
+      record.id.trim().length === 0 ||
+      typeof record.baseBranch !== "string" ||
+      record.baseBranch.trim().length === 0 ||
+      typeof record.headBranch !== "string" ||
+      record.headBranch.trim().length === 0 ||
+      typeof record.draft !== "boolean"
+    ) {
+      throw new Error(`${path} is not a pull request reference`);
+    }
+    return {
+      id: record.id,
+      baseBranch: record.baseBranch,
+      headBranch: record.headBranch,
+      draft: record.draft,
+    };
+  };
   const rootIdentity = identity(rootRecord, "delivery.root");
   const children = Array.isArray(graphRecord.children)
     ? graphRecord.children.map((child, index) =>
@@ -301,11 +348,229 @@ export const parseDeliveryRecord = (value: unknown): DeliveryRecord => {
   ) {
     throw new Error("Stored delivery merge metadata is invalid");
   }
+  let specCheckpoint: SpecDeliveryCheckpoint | undefined;
+  if (candidate.specCheckpoint !== undefined) {
+    const rawCheckpoint = candidate.specCheckpoint;
+    if (
+      typeof rawCheckpoint !== "object" ||
+      rawCheckpoint === null ||
+      Array.isArray(rawCheckpoint)
+    ) {
+      throw new Error("Stored spec delivery checkpoint must be an object");
+    }
+    const checkpoint = rawCheckpoint as Record<string, unknown>;
+    if (!Array.isArray(checkpoint.children)) {
+      throw new Error(
+        "Stored spec delivery checkpoint children must be an array",
+      );
+    }
+    const checkpointPullRequest =
+      checkpoint.pullRequest === undefined
+        ? undefined
+        : pullRequest(checkpoint.pullRequest, "specCheckpoint.pullRequest");
+    const completedIds = new Set<string>();
+    const checkpointChildren: SpecChildCheckpoint[] = checkpoint.children.map(
+      (item, index) => {
+        const path = `specCheckpoint.children[${index}]`;
+        if (typeof item !== "object" || item === null || Array.isArray(item)) {
+          throw new Error(`${path} must be an object`);
+        }
+        const childRecord = item as Record<string, unknown>;
+        const child = identity(childRecord.child, `${path}.child`);
+        if (
+          !normalized.graph.children.some((entry) => sameIdentity(entry, child))
+        ) {
+          throw new Error(`${path}.child is outside the delivery graph`);
+        }
+        if (completedIds.has(child.itemId)) {
+          throw new Error(`${path}.child is duplicated`);
+        }
+        completedIds.add(child.itemId);
+        const statuses = [
+          "working",
+          "integrating",
+          "publishing",
+          "verifying",
+          "closing",
+          "closed",
+        ];
+        if (
+          typeof childRecord.status !== "string" ||
+          !statuses.includes(childRecord.status)
+        ) {
+          throw new Error(`${path}.status is invalid`);
+        }
+        const status = childRecord.status as SpecChildCheckpoint["status"];
+        const workerBase =
+          childRecord.workerBase === undefined
+            ? undefined
+            : revision(childRecord.workerBase, `${path}.workerBase`);
+        const sourceCommit =
+          childRecord.sourceCommit === undefined
+            ? undefined
+            : revision(childRecord.sourceCommit, `${path}.sourceCommit`);
+        const rawCandidate = childRecord.candidate;
+        let candidate: SpecChildCheckpoint["candidate"] | undefined;
+        if (rawCandidate !== undefined) {
+          if (
+            typeof rawCandidate !== "object" ||
+            rawCandidate === null ||
+            Array.isArray(rawCandidate)
+          ) {
+            throw new Error(`${path}.candidate must be an object`);
+          }
+          const candidateRecord = rawCandidate as Record<string, unknown>;
+          if (
+            typeof candidateRecord.deliveryId !== "string" ||
+            typeof candidateRecord.briefHash !== "string"
+          ) {
+            throw new Error(`${path}.candidate identity is invalid`);
+          }
+          candidate = {
+            deliveryId: candidateRecord.deliveryId,
+            briefHash: candidateRecord.briefHash,
+            base: revision(candidateRecord.base, `${path}.candidate.base`),
+            head: revision(candidateRecord.head, `${path}.candidate.head`),
+            pullRequest: pullRequest(
+              candidateRecord.pullRequest,
+              `${path}.candidate.pullRequest`,
+            ),
+          };
+        }
+        let verification: SpecChildCheckpoint["verification"];
+        if (childRecord.verification !== undefined) {
+          if (
+            typeof childRecord.verification !== "object" ||
+            childRecord.verification === null ||
+            Array.isArray(childRecord.verification)
+          ) {
+            throw new Error(`${path}.verification must be an object`);
+          }
+          const rawVerification = childRecord.verification as Record<
+            string,
+            unknown
+          >;
+          const cleanup = rawVerification.cleanup;
+          if (
+            !Array.isArray(rawVerification.checks) ||
+            !rawVerification.checks.every(
+              (check) =>
+                typeof check === "object" &&
+                check !== null &&
+                typeof (check as Record<string, unknown>).name === "string" &&
+                typeof (check as Record<string, unknown>).command ===
+                  "string" &&
+                (check as Record<string, unknown>).status === "passed" &&
+                typeof (check as Record<string, unknown>).summary === "string",
+            ) ||
+            typeof cleanup !== "object" ||
+            cleanup === null ||
+            (cleanup as Record<string, unknown>).status !== "passed" ||
+            typeof (cleanup as Record<string, unknown>).summary !== "string" ||
+            !Array.isArray(rawVerification.evidence) ||
+            !rawVerification.evidence.every(
+              (entry) => typeof entry === "string",
+            )
+          ) {
+            throw new Error(`${path}.verification is invalid`);
+          }
+          verification = {
+            checks: rawVerification.checks as NonNullable<
+              SpecChildCheckpoint["verification"]
+            >["checks"],
+            cleanup: {
+              status: "passed",
+              summary: (cleanup as Record<string, unknown>).summary as string,
+            },
+            evidence: rawVerification.evidence as string[],
+          };
+        }
+        const closedAt = childRecord.closedAt;
+        if (closedAt !== undefined && typeof closedAt !== "string") {
+          throw new Error(`${path}.closedAt must be a string`);
+        }
+        if (
+          workerBase === undefined ||
+          ([
+            "integrating",
+            "publishing",
+            "verifying",
+            "closing",
+            "closed",
+          ].includes(status) &&
+            sourceCommit === undefined) ||
+          (["publishing", "verifying", "closing", "closed"].includes(status) &&
+            candidate === undefined) ||
+          (["closing", "closed"].includes(status) &&
+            verification === undefined) ||
+          (status === "closed" && typeof closedAt !== "string")
+        ) {
+          throw new Error(`${path} is missing state required by ${status}`);
+        }
+        return {
+          child,
+          status,
+          workerBase,
+          sourceCommit,
+          candidate,
+          verification,
+          ...(closedAt === undefined ? {} : { closedAt }),
+        };
+      },
+    );
+    const currentHead =
+      checkpoint.currentHead === undefined
+        ? undefined
+        : revision(checkpoint.currentHead, "specCheckpoint.currentHead");
+    if (
+      checkpointChildren.some((child) =>
+        ["publishing", "verifying", "closing", "closed"].includes(child.status),
+      ) &&
+      checkpointPullRequest === undefined
+    ) {
+      throw new Error("Spec child progress has no pull request identity");
+    }
+    if (
+      checkpointPullRequest !== undefined &&
+      currentHead !== undefined &&
+      currentHead.branch !== checkpointPullRequest.headBranch
+    ) {
+      throw new Error("Spec checkpoint head does not match its pull request");
+    }
+    for (const child of checkpointChildren) {
+      if (
+        child.candidate !== undefined &&
+        (child.candidate.deliveryId !== normalized.id ||
+          child.candidate.briefHash.trim().length === 0 ||
+          checkpointPullRequest === undefined ||
+          child.candidate.base.branch !== checkpointPullRequest.baseBranch ||
+          child.candidate.pullRequest.id !== checkpointPullRequest.id ||
+          child.candidate.pullRequest.baseBranch !==
+            checkpointPullRequest.baseBranch ||
+          child.candidate.pullRequest.headBranch !==
+            checkpointPullRequest.headBranch ||
+          child.candidate.pullRequest.draft !== checkpointPullRequest.draft ||
+          child.candidate.head.branch !== checkpointPullRequest.headBranch ||
+          (child.sourceCommit !== undefined &&
+            child.sourceCommit.branch === checkpointPullRequest.headBranch))
+      ) {
+        throw new Error(
+          `Spec child ${child.child.itemId} candidate is inconsistent`,
+        );
+      }
+    }
+    specCheckpoint = {
+      pullRequest: checkpointPullRequest,
+      currentHead,
+      children: checkpointChildren,
+    };
+  }
   return {
     ...normalized,
     createdAt,
     updatedAt,
     version,
+    ...(specCheckpoint === undefined ? {} : { specCheckpoint }),
     ...(mergedAt === undefined
       ? {}
       : { mergedAt, mergedSha: mergedSha as string }),
