@@ -74,7 +74,7 @@ else if (args[0] === "api" && path.includes("/sub_issues?")) console.log(JSON.st
   {number:4,title:"Sibling",body:"**Work item type:** executable",state:"OPEN"}
 ] : []));
 else if (args[0] === "api" && path.includes("/dependencies/blocked_by?")) console.log(JSON.stringify(path.includes("/4/") ? [{number:3,title:"Child",state:"OPEN"}] : []));
-else if (args[0] === "pr" && args[1] === "list") console.log(args.includes("shipyard/issue-6") || (process.env.READY_SPEC && args.includes("shipyard/spec-2")) ? JSON.stringify([{number:9,isDraft:false,labels:process.env.UNLABELED_PR ? [] : [{name:"ready-for-human"}]}]) : "[]");
+else if (args[0] === "pr" && args[1] === "list") console.log(args.includes("shipyard/issue-6") || (process.env.READY_SPEC && args.includes("shipyard/spec-2")) ? JSON.stringify([{number:9,isDraft:false,labels:process.env.UNLABELED_PR ? [] : [{name:"ready-for-human"}],body:process.env.UNVERIFIED_PR ? "Incomplete manual PR" : "<!-- shipyard:verified-handoff -->"}]) : "[]");
 else if (args[0] === "pr" && args[1] === "edit") {}
 else if (args[0] === "issue" && args[1] === "edit") {}
 else process.exit(2);
@@ -181,6 +181,15 @@ else process.exit(2);
       expect(unlabeledReady.status, unlabeledReady.stderr).toBe(0);
       expect(JSON.parse(unlabeledReady.stdout)).toEqual([]);
     }
+    const unverified = run("node", [script("select-issues.mjs")], dir, bin, {
+      GH_LOG: log,
+      ACTIVATION: "siblings",
+      READY_SPEC: "1",
+      UNLABELED_PR: "1",
+      UNVERIFIED_PR: "1",
+    });
+    expect(unverified.status, unverified.stderr).toBe(0);
+    expect(JSON.parse(unverified.stdout)).toHaveLength(1);
     const reconciled = await readFile(log, "utf8");
     expect(reconciled).toContain(
       "pr edit 9 --repo owner/repo --add-label ready-for-human",
@@ -398,6 +407,7 @@ else process.exit(2);
     );
     expect(commands).not.toContain("gh issue close");
     expect(commands).not.toContain("gh pr merge");
+    expect(commands).toContain("<!-- shipyard:verified-handoff -->");
 
     result = run(
       "bash",

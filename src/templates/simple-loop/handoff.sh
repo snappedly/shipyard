@@ -38,7 +38,7 @@ trap 'rm -f "$body"' EXIT
 links=""
 IFS=',' read -ra scope_ids <<< "$scope"
 for scope_id in "${scope_ids[@]}"; do links+="#$scope_id "; done
-printf 'Source issues: %s\n\n## Verification and review\n\n%s\n\nHuman review and merge required.\n' "$links" "$evidence" > "$body"
+printf 'Source issues: %s\n\n## Verification and review\n\n%s\n\nHuman review and merge required.\n\n<!-- shipyard:verified-handoff -->\n' "$links" "$evidence" > "$body"
 
 # Keep Git credentials inside the disposable sandbox, not in the host worktree.
 git remote set-url origin "https://github.com/$repo.git"

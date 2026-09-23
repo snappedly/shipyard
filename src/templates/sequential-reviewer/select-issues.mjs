@@ -193,9 +193,14 @@ for (const candidate of activated) {
     "--state",
     "open",
     "--json",
-    "number,isDraft,labels",
+    "number,isDraft,labels,body",
   );
-  const ready = existing.find((pr) => !pr.isDraft);
+  const ready = existing.find(
+    (pr) =>
+      !pr.isDraft &&
+      (pr.labels.some((label) => label.name === "ready-for-human") ||
+        pr.body?.includes("<!-- shipyard:verified-handoff -->")),
+  );
   if (ready) {
     if (!ready.labels.some((label) => label.name === "ready-for-human"))
       gh(
