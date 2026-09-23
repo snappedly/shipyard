@@ -117,4 +117,8 @@ describe("getTemplateDependencies", () => {
   it("reports zod for simple-loop's structured phase and review reports", () => {
     expect(getTemplateDependencies("simple-loop")).toContain("zod");
   });
+
+  it("reports zod for sequential-reviewer's structured phase and review reports", () => {
+    expect(getTemplateDependencies("sequential-reviewer")).toContain("zod");
+  });
 });

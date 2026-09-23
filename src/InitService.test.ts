@@ -392,7 +392,20 @@ describe("InitService scaffold", () => {
       expect(mainTs).toContain('"@snappedly-tools/shipyard"');
     });
 
-    it("main.mts uses createSandbox so implementer and reviewer share a sandbox", async () => {
+    it(".env.example includes host-only coordinator and check settings", async () => {
+      const dir = await makeDir();
+      await runScaffold(dir, { templateName: "sequential-reviewer" });
+
+      const envExample = await readFile(
+        join(dir, ".shipyard", ".env.example"),
+        "utf-8",
+      );
+      expect(envExample).toContain("SHIPYARD_DATABASE_URL=");
+      expect(envExample).toContain("SHIPYARD_CHECKS=");
+      expect(envExample).toContain("SHIPYARD_BASE_BRANCH=staging");
+    });
+
+    it("main.mts uses the canonical standalone host lifecycle", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "sequential-reviewer" });
 
@@ -400,11 +413,29 @@ describe("InitService scaffold", () => {
         join(dir, ".shipyard", "main.mts"),
         "utf-8",
       );
-      expect(mainTs).toContain("createSandbox");
-      expect(mainTs).toContain("sandbox.run");
-      expect(mainTs).toContain("sandbox.close");
+      expect(mainTs).toContain(
+        "createCredentialIsolatedRunPhaseEngineAdapter(",
+      );
+      expect(mainTs).toContain("await shipyard.deliverStandalone({");
+      expect(mainTs).toContain("openPostgresCoordinator({");
+      expect(mainTs).toContain("readActivatedDeliveryRoot(");
+      expect(mainTs).toContain("verifyChecks: runCandidateChecks");
+      expect(mainTs).toContain("cleanup: runCandidateCleanup");
       expect(mainTs).toContain("implement-prompt.md");
       expect(mainTs).toContain("review-prompt.md");
+      expect(mainTs).toContain("prompt: options.prompt");
+      expect(mainTs).toContain(
+        'const modelEnvAllowlist = ["CLAUDE_CODE_OAUTH_TOKEN","ANTHROPIC_API_KEY"] as const;',
+      );
+      expect(mainTs).not.toMatch(/workerEnvAllowlist:[\s\S]{0,200}GH_TOKEN/);
+      expect(mainTs).not.toMatch(
+        /workerEnvAllowlist:[\s\S]{0,200}SHIPYARD_DATABASE_URL/,
+      );
+      expect(mainTs).not.toContain("publishTemplateDelivery");
+      expect(mainTs).not.toContain('"issue",\n      "close"');
+      expect(mainTs).not.toContain('"pr",\n          "create"');
+      expect(mainTs).not.toContain('"pr",\n          "ready"');
+      expect(mainTs).not.toContain("merge-to-head");
     });
 
     it("main.mts does not use merge-to-head (incompatible with reviewer handoff)", async () => {
@@ -418,7 +449,7 @@ describe("InitService scaffold", () => {
       expect(mainTs).not.toContain("merge-to-head");
     });
 
-    it("main.mts only reviews when implementer produces commits", async () => {
+    it("main.mts selects one activated standalone issue per invocation", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "sequential-reviewer" });
 
@@ -426,10 +457,34 @@ describe("InitService scaffold", () => {
         join(dir, ".shipyard", "main.mts"),
         "utf-8",
       );
-      expect(mainTs).toContain("implement.commits.length");
+      expect(mainTs).toContain("branch = `shipyard/issue-${issue.number}`");
+      expect(mainTs).toContain('activation.mode !== "standalone"');
+      expect(mainTs).toContain('issue?.state === "open"');
+      expect(mainTs).toContain('label.toLowerCase() === "shipyard"');
+      expect(mainTs).not.toContain("MAX_ITERATIONS");
+      expect(mainTs).not.toContain("for (let iteration");
     });
 
-    it("implement-prompt.md contains coordinator guardrails and no closure command", async () => {
+    it("sequential-reviewer gives a Codex worker only the OpenAI API key", async () => {
+      const dir = await makeDir();
+      await runScaffold(dir, {
+        templateName: "sequential-reviewer",
+        agent: codexAgent,
+        model: codexAgent.defaultModel,
+      });
+
+      const mainTs = await readFile(
+        join(dir, ".shipyard", "main.mts"),
+        "utf-8",
+      );
+      expect(mainTs).toContain(
+        'const modelEnvAllowlist = ["OPENAI_API_KEY"] as const;',
+      );
+      expect(mainTs).not.toContain("ANTHROPIC_API_KEY");
+      expect(mainTs).not.toContain("CLAUDE_CODE_OAUTH_TOKEN");
+    });
+
+    it("implement-prompt.md delegates selection and lifecycle authority to the host", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "sequential-reviewer" });
 
@@ -437,16 +492,18 @@ describe("InitService scaffold", () => {
         join(dir, ".shipyard", "implement-prompt.md"),
         "utf-8",
       );
-      expect(prompt).toContain("gh issue list");
+      expect(prompt).toContain("host coordinator");
+      expect(prompt).toContain("Do not query GitHub");
+      expect(prompt).not.toContain("gh issue list");
       expect(prompt).not.toContain("gh issue close");
-      expect(prompt).toContain("coordinator-owned standalone delivery");
-      expect(prompt).toContain("Do not publish a branch or pull request");
+      expect(prompt).toContain("owns its durable delivery");
+      expect(prompt).toContain("publish a branch or pull request");
       expect(prompt).not.toContain("{{ISSUE_NUMBER}}");
       expect(prompt).toContain("{{ISSUE_TITLE}}");
       expect(prompt).not.toContain("{{BRANCH}}");
     });
 
-    it("implement-prompt.md hints the issue list is pre-filtered and discourages unfiltered re-query", async () => {
+    it("implement-prompt.md forbids selecting another issue", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "sequential-reviewer" });
 
@@ -454,11 +511,8 @@ describe("InitService scaffold", () => {
         join(dir, ".shipyard", "implement-prompt.md"),
         "utf-8",
       );
-      expect(prompt).toContain(
-        "already been filtered to issues ready for work",
-      );
-      expect(prompt).toContain("sole source of truth");
-      expect(prompt).toContain("Do not run your own unfiltered query");
+      expect(prompt).toContain("host coordinator");
+      expect(prompt).toContain("Do not query GitHub, select another issue");
     });
 
     it("review-prompt.md contains {{BRANCH}} prompt argument", async () => {
@@ -492,7 +546,7 @@ describe("InitService scaffold", () => {
       expect(standards).toContain("Customize");
     });
 
-    it("review-prompt.md references @.shipyard/CODING_STANDARDS.md", async () => {
+    it("review-prompt.md references .shipyard/CODING_STANDARDS.md", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "sequential-reviewer" });
 
@@ -500,7 +554,7 @@ describe("InitService scaffold", () => {
         join(dir, ".shipyard", "review-prompt.md"),
         "utf-8",
       );
-      expect(prompt).toContain("@.shipyard/CODING_STANDARDS.md");
+      expect(prompt).toContain(".shipyard/CODING_STANDARDS.md");
     });
 
     it("review-prompt.md diffs the exact base and candidate revisions", async () => {
@@ -512,16 +566,16 @@ describe("InitService scaffold", () => {
         "utf-8",
       );
       expect(prompt).toContain("git diff {{BASE_SHA}} {{HEAD_SHA}}");
-      expect(prompt).toContain("git log {{BASE_SHA}}..{{HEAD_SHA}}");
+      expect(prompt).toContain("git log {{BASE_SHA}}..{{HEAD_SHA}} --oneline");
       expect(prompt).not.toContain("{{SOURCE_BRANCH}}");
       expect(prompt).not.toContain("git diff main");
       expect(prompt).not.toContain("git log main");
       const main = await readFile(join(dir, ".shipyard", "main.mts"), "utf8");
-      expect(main).toContain("BASE_SHA: baseSha");
-      expect(main).toContain("HEAD_SHA: implement.commits.at(-1)!.sha");
+      expect(main).toContain("request.candidate.base.sha");
+      expect(main).toContain("request.candidate.head.sha");
     });
 
-    it("main.mts runs the implementer for a single iteration (one issue per outer pass)", async () => {
+    it("main.mts limits implementation to one iteration", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "sequential-reviewer" });
 
@@ -529,15 +583,11 @@ describe("InitService scaffold", () => {
         join(dir, ".shipyard", "main.mts"),
         "utf-8",
       );
-      const implementerSection = mainTs.slice(
-        mainTs.indexOf('name: "implementer"'),
-        mainTs.indexOf('name: "implementer"') + 200,
-      );
-      expect(implementerSection).toContain("maxIterations: 1");
-      expect(implementerSection).not.toContain("maxIterations: 100");
+      expect(mainTs).toContain("maxIterations: 1");
+      expect(mainTs).not.toContain("maxIterations: 100");
     });
 
-    it("main.mts stops the loop when the implementer produces no commits", async () => {
+    it("main.mts reports blocked delivery without bypassing the coordinator", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "sequential-reviewer" });
 
@@ -545,10 +595,10 @@ describe("InitService scaffold", () => {
         join(dir, ".shipyard", "main.mts"),
         "utf-8",
       );
-      const noCommitIndex = mainTs.indexOf("!implement.commits.length");
-      const section = mainTs.slice(noCommitIndex, noCommitIndex + 400);
-      expect(section).toContain("break");
-      expect(section).not.toContain("continue");
+      expect(mainTs).toContain('result.outcome === "ready-for-human"');
+      expect(mainTs).toContain("result.reason");
+      expect(mainTs).toContain("deliverStandalone");
+      expect(mainTs).not.toContain("publishTemplateDelivery");
     });
   });
 
@@ -673,6 +723,14 @@ describe("InitService scaffold", () => {
         join(dir, ".shipyard", promptFilename),
         "utf-8",
       );
+      const main = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
+      if (templateName === "sequential-reviewer") {
+        expect(main).toContain('"--label",\n      "shipyard"');
+        expect(main).toContain('label.toLowerCase() === "shipyard"');
+        expect(main).toContain('activation.mode !== "standalone"');
+        expect(prompt).not.toContain("gh issue list");
+        return;
+      }
       expect(prompt).toContain("gh issue list --state open --label shipyard");
       expect(prompt).not.toContain("--label Shipyard");
     },
@@ -690,9 +748,7 @@ describe("InitService scaffold", () => {
       expect(prompt, `${template}/${file}`).toContain("{{TASK_ID}}");
       const main = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
       expect(main).toContain(
-        template === "simple-loop"
-          ? '.replaceAll("{{TASK_ID}}", String(issue.number))'
-          : "TASK_ID: String(issue.number)",
+        '.replaceAll("{{TASK_ID}}", String(issue.number))',
       );
     }
   });
@@ -1293,7 +1349,7 @@ describe("InitService scaffold", () => {
 
     // --- sequential-reviewer ---
 
-    it("sequential-reviewer with github-issues produces implement-prompt with gh issue commands", async () => {
+    it("sequential-reviewer keeps issue selection and closure on the host", async () => {
       const dir = await makeDir();
       await runScaffold(dir, {
         templateName: "sequential-reviewer",
@@ -1304,9 +1360,10 @@ describe("InitService scaffold", () => {
         join(dir, ".shipyard", "implement-prompt.md"),
         "utf-8",
       );
-      expect(prompt).toContain("gh issue list");
-      expect(prompt).toContain("labels");
-      expect(prompt).toContain("comments");
+      expect(prompt).toContain("Do not query GitHub");
+      expect(prompt).not.toContain("gh issue list");
+      expect(prompt).not.toContain("labels");
+      expect(prompt).not.toContain("comments");
       expect(prompt).not.toContain("gh issue close");
       expect(prompt).not.toContain("{{LIST_TASKS_COMMAND}}");
       expect(prompt).not.toContain("{{CLOSE_TASK_COMMAND}}");

@@ -70,8 +70,14 @@ SHIPYARD_BASE_BRANCH=staging`,
   },
   {
     name: "sequential-reviewer",
-    description:
-      "Implements issues one by one, with a code review step after each",
+    description: "Completes one standalone issue through reviewed PR handoff",
+    dependencies: ["zod"],
+    envExample: `# Host-only durable workflow coordinator
+SHIPYARD_DATABASE_URL=
+# Host-side candidate checks (JSON array of {name, command, required})
+SHIPYARD_CHECKS=[{"name":"tests","command":"npm test","required":true}]
+# Optional integration branch override; defaults to staging
+SHIPYARD_BASE_BRANCH=staging`,
   },
   {
     name: "parallel-planner",

@@ -65,8 +65,8 @@ the [agent guide](docs/content/docs/agents.mdx) for authentication details.
 | Template                       | Best for              | Built-in flow                                             |
 | ------------------------------ | --------------------- | --------------------------------------------------------- |
 | `blank`                        | One custom task       | One agent run                                             |
-| `simple-loop`                  | A small issue backlog | Standalone delivery → draft PR → human handoff            |
-| `sequential-reviewer`          | Safer issue delivery  | Standalone delivery → review → draft PR → human handoff   |
+| `simple-loop`                  | A small issue backlog | Standalone delivery → checks/review → human handoff       |
+| `sequential-reviewer`          | Safer issue delivery  | Implement → checks/review → human handoff                 |
 | `parallel-planner`             | Independent issues    | Group dependencies → integrate → draft PR → human handoff |
 | `parallel-planner-with-review` | Maximum autonomy      | Group → review/repair → draft PR → human handoff          |
 
@@ -75,10 +75,11 @@ limits, branch strategy, hooks, and checks in `.shipyard/main.ts` or
 `.shipyard/main.mts`.
 
 The bundled GitHub workflows select or plan issues on the host and publish one
-draft PR per delivery. `simple-loop` verifies the published candidate, review,
-and cleanup before handing off a ready PR and closing its source issue with
-commit and PR evidence. The other templates leave source issues open. The host
-`gh` login needs Contents and Pull requests write access. Set
+draft PR per delivery. `simple-loop` and `sequential-reviewer` verify the
+published candidate, checks, review, and cleanup before marking the PR ready
+for human merge and closing its source issue with commit and PR evidence. The
+other templates leave source issues open. The host `gh` login needs Contents
+and Pull requests write access. Set
 `SHIPYARD_BASE_BRANCH` if the integration branch is not `staging`. Required
 checks and review findings must be resolved before a draft PR is marked ready
 for merge.
