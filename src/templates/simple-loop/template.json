@@ -1,4 +1,4 @@
 {
   "name": "simple-loop",
-  "description": "Picks issues one by one and closes them"
+  "description": "Uses /implement for standalone issues and /implement-spec for linked specs"
 }

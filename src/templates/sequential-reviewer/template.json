@@ -1,4 +1,4 @@
 {
   "name": "sequential-reviewer",
-  "description": "Implements issues one by one, with a code review step after each"
+  "description": "Uses implementation skills for issue delivery and human PR review"
 }

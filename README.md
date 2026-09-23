@@ -8,9 +8,9 @@
 
 [![CI](https://github.com/snappedly/shipyard/actions/workflows/ci.yml/badge.svg)](https://github.com/snappedly/shipyard/actions/workflows/ci.yml)
 
-Give Shipyard a backlog and a policy. It plans dependencies, runs AI coding
-agents in isolated sandboxes, reviews their work, and returns reviewable
-commits—without babysitting.
+Give Shipyard a prompt or an activated GitHub issue. Its runner starts the
+existing sandboxed workflow; bundled issue templates follow your installed
+implementation skills and hand back a pull request for human review.
 
 ## The Shipyard advantage
 
@@ -19,8 +19,8 @@ plane around the agent:
 
 - **Protected execution:** Run Codex or Claude Code in an isolated Docker-backed
   sandbox with explicit mounts, credentials, and network access.
-- **Real orchestration:** Plan dependencies, parallelize safe work, leave
-  blocked work alone, review each branch, and merge completed work.
+- **Skill-owned delivery:** The installed skills choose dependency handling,
+  delegation, cleanup, checks, and review for the selected issue or spec.
 - **Failure-aware by design:** Use finite budgets, no-progress detection,
   cancellation, logs, and recovery artifacts instead of runaway loops.
 - **Reviewable output:** Runs preserve branches, worktrees, logs, and evidence;
@@ -38,8 +38,8 @@ npx shipyard init
 ```
 
 `init` asks for the agent, authentication, sandbox, issue tracker, and workflow
-template, then creates `.shipyard/`. For the first run, choose Docker and
-`blank` or `sequential-reviewer`.
+template, then creates `.shipyard/`. Choose `blank` for a custom workflow or an
+issue workflow template for GitHub issue delivery.
 
 Add the requested credentials to `.shipyard/.env`, write a task in
 `.shipyard/prompt.md` when using the `blank` template, then run:
@@ -61,13 +61,10 @@ the [agent guide](docs/content/docs/agents.mdx) for authentication details.
 
 ## Pick the workflow you need
 
-| Template                       | Best for              | Built-in flow                                     |
-| ------------------------------ | --------------------- | ------------------------------------------------- |
-| `blank`                        | One custom task       | One agent run                                     |
-| `simple-loop`                  | A small issue backlog | Implement issues sequentially                     |
-| `sequential-reviewer`          | Safer issue delivery  | Implement → review, one issue at a time           |
-| `parallel-planner`             | Independent issues    | Plan dependencies → implement in parallel → merge |
-| `parallel-planner-with-review` | Maximum autonomy      | Plan → implement and review in parallel → merge   |
+| Template                                                                                 | Best for              | Built-in flow                                                                                                    |
+| ---------------------------------------------------------------------------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `blank`                                                                                  | A custom workflow     | One agent run using your prompt                                                                                  |
+| `simple-loop`, `sequential-reviewer`, `parallel-planner`, `parallel-planner-with-review` | GitHub issue delivery | `/implement` for a standalone issue; `/implement-spec` for a linked spec; one PR for a human to review and merge |
 
 All templates are generated TypeScript. Adjust prompts, models, iteration
 limits, branch strategy, hooks, and checks in `.shipyard/main.ts` or
@@ -77,8 +74,11 @@ limits, branch strategy, hooks, and checks in `.shipyard/main.ts` or
 
 On Apple Silicon macOS, the optional repository runner keeps a foreground
 Shipyard controller ready for GitHub Issues. Label an issue `shipyard`; the
-controller wakes, drains a finite batch of eligible work, coalesces duplicate
-wake-ups, and stops when it makes no progress. Restarting it recovers work
+controller wakes, runs one bounded issue workflow at a time, coalesces duplicate
+wake-ups, and stops when it makes no progress. A standalone issue follows
+`/implement`. A planning spec or linked child follows `/implement-spec` as one
+integrated change. The workflow opens one PR when checks and review permit
+handoff; a maintainer merges it. Restarting the controller recovers work
 labelled while the host was offline.
 
 Accept runner installation during `init`, or install it later:

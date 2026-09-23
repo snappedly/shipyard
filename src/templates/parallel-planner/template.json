@@ -1,4 +1,4 @@
 {
   "name": "parallel-planner",
-  "description": "Plans parallelizable issues, executes on separate branches, merges"
+  "description": "Lets /implement-spec own dependency-aware implementation and delegation"
 }

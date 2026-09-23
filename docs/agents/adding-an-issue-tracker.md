@@ -11,9 +11,17 @@ For terminology (**issue tracker**, **task**, **template argument**, etc.), see 
 
 ## What an issue tracker integration actually is
 
-Shipyard does not embed any issue tracker itself. An issue-tracker entry is a **scaffold template**: when a user picks it during `shipyard init`, we substitute three CLI commands (`LIST_TASKS_COMMAND`, `VIEW_TASK_COMMAND`, `CLOSE_TASK_COMMAND`) into the generated prompt files, and we drop a Dockerfile snippet that installs the relevant CLI into the **sandbox**.
+`IssueTrackerEntry` supplies scaffold arguments and optional credentials. The
+`blank` template can use its command examples inside the sandbox. The bundled
+GitHub issue workflow templates also include GitHub-specific host selection,
+relationship resolution, and PR handoff code in their self-contained
+`main.mts`. Adding another entry does not make another tracker work with those
+templates; support for another provider needs a separate runtime-adapter design.
 
-The generated project then runs those commands itself — Shipyard is not in the loop at runtime.
+For GitHub, the host workflow uses the host `gh` login and Git credentials for
+issue selection and PR publication. The `.shipyard/.env` token is passed to the
+sandboxed agent and should remain separately scoped. The Dockerfile installs
+the tracker CLI for agent skills that need it.
 
 This means the requirements below are about what the **CLI** can do unattended inside a Debian-based container, not about what the issue tracker can do as a product.
 
@@ -104,6 +112,6 @@ For a new issue tracker `foo`:
 
 - [ ] `ISSUE_TRACKER_REGISTRY` entry in [`src/InitService.ts`](../../src/InitService.ts).
 - [ ] `FOO_TOOLS` Dockerfile-snippet constant in `src/InitService.ts`.
-- [ ] Tests in `src/InitService.test.ts` covering: entry is listed by `listIssueTrackers`, `getIssueTracker("foo")` returns the entry with the expected `templateArgs`, `.env.example` includes the token line, generated prompts contain the substituted commands.
+- [ ] Tests covering: entry is listed by `listIssueTrackers`, `getIssueTracker("foo")` returns the expected `templateArgs`, `.env.example` includes the token line, and generated scaffold output exposes the intended tracker workflow.
 - [ ] Changeset in `.changeset/` (patch, since pre-1.0). See [`AGENTS.md`](../../AGENTS.md).
 - [ ] `README.md` update if the public-facing list of supported issue trackers is mentioned there.

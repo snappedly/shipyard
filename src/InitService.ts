@@ -42,8 +42,7 @@ export interface TemplateMetadata {
   name: string;
   description: string;
   /**
-   * Host-side npm packages the template's `main` file imports directly (e.g.
-   * the planner templates import `zod` for their `<plan>` output schema). Init
+   * Host-side npm packages the template's `main` file imports directly. Init
    * offers to install these with the detected package manager so that
    * `npx tsx ${CONFIG_DIR}/main.ts` doesn't crash with ERR_MODULE_NOT_FOUND.
    */
@@ -57,24 +56,23 @@ const TEMPLATES: TemplateMetadata[] = [
   },
   {
     name: "simple-loop",
-    description: "Picks issues one by one and closes them",
+    description:
+      "Uses /implement for standalone issues and /implement-spec for linked specs",
   },
   {
     name: "sequential-reviewer",
     description:
-      "Implements issues one by one, with a code review step after each",
+      "Uses implementation skills for issue delivery and human PR review",
   },
   {
     name: "parallel-planner",
     description:
-      "Plans parallelizable issues, executes on separate branches, merges",
-    dependencies: ["zod"],
+      "Lets /implement-spec own dependency-aware implementation and delegation",
   },
   {
     name: "parallel-planner-with-review",
     description:
-      "Plans parallelizable issues, executes with per-branch review, merges",
-    dependencies: ["zod"],
+      "Uses implementation skills for cleanup, checks, review, and PR handoff",
   },
 ];
 
@@ -347,8 +345,9 @@ const ISSUE_TRACKER_REGISTRY: IssueTrackerEntry[] = [
       CLOSE_TASK_COMMAND: `gh issue close <ID> --comment "Completed by ${PRODUCT_NAME}"`,
       ISSUE_TRACKER_TOOLS: GITHUB_CLI_TOOLS,
     },
-    envExample: `# GitHub personal access token — the agent uses it to read and manage GitHub Issues
-# Runner installation/start uses the host \`gh\` login for repository administration.
+    envExample: `# GitHub personal access token passed to the sandboxed agent for issue operations
+# Host issue selection and PR handoff use the host \`gh\` login and Git credentials.
+# Runner installation/start also uses the host \`gh\` login for repository administration.
 # Create a fine-grained token: https://github.com/settings/personal-access-tokens/new
 # Required repository permissions: Issues (Read and write) and Metadata (Read)
 # Or leave blank and run: GH_TOKEN="$(gh auth token)" npx shipyard run

@@ -44,6 +44,13 @@ to commit the changes. Init always attempts to create or update the lowercase
 `shipyard` label; built-in issue workflows select only open issues carrying
 that label.
 
+For GitHub issue automation, choose one of the issue workflow templates instead
+of `blank`. An activated standalone issue follows `/implement`; an activated
+planning spec or linked child follows `/implement-spec` as one integrated
+change. The installed skill owns implementation, dependency handling,
+delegation, cleanup, checks, and review. Shipyard opens one PR for a maintainer
+to review and merge.
+
 ### 3. Configure and run
 
 Init generates `.shipyard/main.ts` for ESM projects (`"type": "module"`),
@@ -82,9 +89,7 @@ advanced multi-agent workflow instead.
 - [Agent providers](/docs/agents): choose an agent and configure authentication.
 - [Repository runner](/docs/repository-runner): wake a foreground Shipyard
   controller from labelled GitHub Issues.
-- Try the `simple-loop`, `sequential-reviewer`, `parallel-planner`, or
-  `parallel-planner-with-review` templates after reviewing their prompts.
-
-The optional workflow coordinator APIs support more elaborate hosted automation.
-They are not required to run the library or its templates; ordinary use needs
-no database, webhook service, or release-policy configuration.
+- The `simple-loop`, `sequential-reviewer`, `parallel-planner`, and
+  `parallel-planner-with-review` templates provide the same skill-owned GitHub
+  issue flow. Review the generated prompt and host credential requirements
+  before activating a repository.

@@ -1,4 +1,4 @@
 {
   "name": "parallel-planner-with-review",
-  "description": "Plans parallelizable issues, executes with per-branch review, merges"
+  "description": "Uses implementation skills for cleanup, checks, review, and PR handoff"
 }

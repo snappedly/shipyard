@@ -2,7 +2,7 @@
 
 Each directory under `src/templates/<name>/` is a self-contained unit. Files inside it — `main.mts`, prompts, markdown, anything else — may not import from each other, from a `templates/_shared/` module, or from any internal Shipyard source. Duplication between templates is expected and welcome.
 
-The rule is about Shipyard's _own_ code: templates depend on the published `@snappedly-tools/shipyard` package (the root export and its `./sandboxes/*` subpaths), never on its internals or on each other. A template may still import a third-party npm package — e.g. the `parallel-planner` templates import [Zod](https://zod.dev) for `Output.object`'s schema — as long as `init`'s next-steps tell the user to install it.
+The rule is about Shipyard's _own_ code: templates depend on the published `@snappedly-tools/shipyard` package (the root export and its `./sandboxes/*` subpaths), never on its internals or on each other. A template may still import a third-party npm package when its generated setup installs that dependency before the workflow runs.
 
 Motivation: a template directory is the unit of distribution. `shipyard init <template>` copies the directory verbatim into the user's `.shipyard/`, and the result has to run against nothing but `@snappedly-tools/shipyard` plus whatever third-party packages `init` told the user to install. A shared helper would either need to be inlined at copy time (complicating `init`) or promoted to a public export (growing the package's API surface to support template internals). Beyond the copy-time constraint, templates exist to demonstrate distinct orchestration shapes and are expected to drift apart over time; a shared helper becomes a junk drawer of flags as each template's needs diverge.
 
