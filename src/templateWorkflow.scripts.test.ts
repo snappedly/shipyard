@@ -303,7 +303,7 @@ if (args[0] === "repo") console.log("owner/repo");
 else if (args[0] === "issue" && args[1] === "view") console.log(args.includes("labels") ? "shipyard" : "Fix bug");
 else if (args[0] === "pr" && args[1] === "list") console.log(state.number || "");
 else if (args[0] === "pr" && args[1] === "create") { state.number = 7; fs.writeFileSync(process.env.PR_STATE, JSON.stringify(state)); fs.appendFileSync(process.env.HANDOFF_LOG, "BODY " + fs.readFileSync(args[args.indexOf("--body-file") + 1], "utf8") + "\\n"); }
-else if (args[0] === "pr" && args[1] === "ready") { state.isDraft = false; fs.writeFileSync(process.env.PR_STATE, JSON.stringify(state)); }
+else if (args[0] === "pr" && args[1] === "ready") { if (process.env.FAIL_PR_READY) process.exit(1); state.isDraft = false; fs.writeFileSync(process.env.PR_STATE, JSON.stringify(state)); if (process.env.FAIL_PR_READY_AFTER_UPDATE) process.exit(1); }
 else if (args[0] === "pr" && args[1] === "view") console.log(args.includes("isDraft") ? String(state.isDraft) : "https://example.test/pr/7");
 else if (args[0] === "pr" && args[1] === "edit") {}
 else if (args[0] === "label") {}
@@ -385,6 +385,34 @@ else process.exit(2);
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("https://example.test/pr/7");
     expect(result.stderr).toContain("next invocation will retry cleanup");
+
+    await writeFile(state, JSON.stringify({ number: 7, isDraft: true }));
+    result = run(
+      "bash",
+      [script("handoff.sh"), "1", "shipyard/issue-1", "staging", "owner/repo"],
+      dir,
+      bin,
+      { ...env, FAIL_PR_READY: "1" },
+      "Checks: npm test pass; Review: approved",
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("did not become ready");
+    expect(await readFile(state, "utf8")).toContain('"isDraft":true');
+    expect(await readFile(log, "utf8")).toContain(
+      "gh pr edit 7 --repo owner/repo --remove-label ready-for-human",
+    );
+
+    result = run(
+      "bash",
+      [script("handoff.sh"), "1", "shipyard/issue-1", "staging", "owner/repo"],
+      dir,
+      bin,
+      { ...env, FAIL_PR_READY_AFTER_UPDATE: "1" },
+      "Checks: npm test pass; Review: approved",
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("https://example.test/pr/7");
+    expect(await readFile(state, "utf8")).toContain('"isDraft":false');
 
     await writeFile(state, JSON.stringify({ number: 0, isDraft: true }));
     result = run(

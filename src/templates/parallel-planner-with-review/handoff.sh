@@ -51,11 +51,22 @@ fi
 [[ -n "$number" ]] || { echo "PR publication did not return an open PR" >&2; exit 1; }
 gh pr edit "$number" --repo "$repo" --body-file "$body"
 draft=$(gh pr view "$number" --repo "$repo" --json isDraft --jq .isDraft)
+url=$(gh pr view "$number" --repo "$repo" --json url --jq .url)
+[[ -n "$url" ]] || { echo "PR publication did not return a URL" >&2; exit 1; }
 gh label create ready-for-human --repo "$repo" --color 0E8A16 --description 'Ready for maintainer review' --force
-gh pr edit "$number" --repo "$repo" --add-label ready-for-human
-if [[ "$draft" == true ]]; then gh pr ready "$number" --repo "$repo"; fi
-url=$(gh pr view "$number" --repo "$repo" --json url,isDraft,state --jq 'select(.state == "OPEN" and .isDraft == false) | .url')
-[[ -n "$url" ]] || { echo "PR did not become ready for human review" >&2; exit 1; }
+if ! gh pr edit "$number" --repo "$repo" --add-label ready-for-human; then
+  gh pr edit "$number" --repo "$repo" --remove-label ready-for-human || true
+  echo "Could not label PR ready for human review" >&2
+  exit 1
+fi
+if [[ "$draft" == true ]] && ! gh pr ready "$number" --repo "$repo"; then
+  current_draft=$(gh pr view "$number" --repo "$repo" --json isDraft --jq .isDraft 2>/dev/null || printf 'unknown')
+  if [[ "$current_draft" != false ]]; then
+    gh pr edit "$number" --repo "$repo" --remove-label ready-for-human || true
+    echo "PR did not become ready for human review" >&2
+    exit 1
+  fi
+fi
 for scope_id in "${scope_ids[@]}"; do
   if ! labels=$(gh issue view "$scope_id" --repo "$repo" --json labels --jq '.labels[].name'); then
     echo "Warning: could not inspect activation on issue #$scope_id; the next invocation will retry cleanup" >&2
