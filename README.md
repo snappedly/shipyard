@@ -82,11 +82,15 @@ wake-ups, and stops when it makes no progress. Restarting it recovers work
 labelled while the host was offline.
 
 The bundled issue workflows install Snappedly skills and the candidate's
-dependencies in Docker. They implement activated standalone issues with
-`/implement`, apply their selected review stages, and open a non-draft PR for
-human merge. Successful handoff removes `shipyard` from the source issue;
-the issue stays open under the target repository's closure policy. Planning
-specs and linked children wait for the whole-spec workflow. The GitHub token
+dependencies in Docker. A standalone issue runs through `/implement`. Activating
+a planning spec or a linked executable child resolves the parent, all linked
+children, and dependencies into one `/implement-spec` scope. The sequential
+templates deliver that scope on one branch; the parallel templates assign ready
+children to `/implement` workers, integrate dependency waves, and review the
+complete spec. Each scope produces one non-draft PR for human merge, linking
+its parent and children. Successful handoff removes `shipyard` from activated
+issues; issues remain open under the target repository's closure policy.
+Missing or ambiguous relationships stop dispatch for inspection. The GitHub token
 needs Contents, Issues, and Pull requests read/write permission plus Metadata
 read permission. Keep the Mac and foreground controller running for wake-ups.
 

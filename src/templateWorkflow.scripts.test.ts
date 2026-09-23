@@ -38,45 +38,176 @@ const run = (
     },
   });
 
-describe("standalone workflow scripts", () => {
-  it("selects standalone issues, skips specs and linked children, and reconciles a ready PR", async () => {
+describe("issue workflow scripts", () => {
+  it("resolves activated parent and child into one dependency ordered spec scope", async () => {
     const { dir, bin } = await fixture();
     const log = join(dir, "gh.log");
     await executable(
       join(bin, "gh"),
       `
 const fs = require("node:fs");
-const args = process.argv.slice(2);
+const args = process.argv.slice(2); const path = args[1] || "";
 fs.appendFileSync(process.env.GH_LOG, args.join(" ") + "\\n");
 if (args[0] === "repo") console.log("owner/repo");
-else if (args[0] === "issue" && args[1] === "list") console.log(JSON.stringify([
-  {number:1,title:"Standalone",body:""},
-  {number:2,title:"Spec",body:"**Work item type:** planning spec"},
-  {number:3,title:"Text child",body:"## Parent\\n#2"},
-  {number:4,title:"Native child",body:""},
-  {number:5,title:"Native spec",body:""},
-  {number:6,title:"Already ready",body:""}
+else if (args[0] === "issue" && args[1] === "list" && args.includes("open")) {
+  const pool = [
+    {number:1,title:"Standalone",body:""},
+    {number:2,title:"Spec",body:"**Work item type:** planning spec"},
+    {number:3,title:"Child",body:"**Work item type:** executable\\n\\n## Parent\\n#2"},
+    {number:4,title:"Sibling",body:""},
+    {number:6,title:"Already ready",body:""}
+  ];
+  const ids = process.env.ACTIVATION === "parent" ? [2] : process.env.ACTIVATION === "siblings" ? [3,4] : [1,2,3,6];
+  console.log(JSON.stringify(pool.filter((item) => ids.includes(item.number))));
+}
+else if (args[0] === "issue" && args[1] === "list" && args.includes("all")) console.log(JSON.stringify([
+  {number:3,title:"Child",body:"**Work item type:** executable\\n\\n## Parent\\n#2",state:"OPEN"},
+  {number:4,title:"Sibling",body:"**Work item type:** executable",state:"OPEN"}
 ]));
-else if (args[0] === "api" && args[1].endsWith("/parent")) {
-  if (args[1].includes("/4/")) console.log("{}");
+else if (args[0] === "issue" && args[1] === "view") console.log(JSON.stringify({number:2,title:"Spec",body:"**Work item type:** planning spec",state:"OPEN"}));
+else if (args[0] === "api" && path.endsWith("/parent")) {
+  if (!process.env.TEXT_ONLY && (path.includes("/3/") || path.includes("/4/"))) console.log(JSON.stringify({number:2}));
   else { console.error("gh: Not Found (HTTP 404)"); process.exit(1); }
 }
-else if (args[0] === "api" && args[1].endsWith("/sub_issues")) console.log(args[1].includes("/5/") ? "1" : "0");
-else if (args[0] === "pr" && args[1] === "list") console.log(args.includes("shipyard/issue-6") ? JSON.stringify([{number:9,isDraft:false,labels:[{name:"ready-for-human"}]}]) : "[]");
-else if (args[0] === "issue" && args[1] === "edit") console.log("");
+else if (args[0] === "api" && path.includes("/sub_issues?")) console.log(JSON.stringify(process.env.TEXT_ONLY ? [] : path.includes("/2/") ? [
+  {number:3,title:"Child",body:"**Work item type:** executable\\n\\n## Parent\\n#2",state:"OPEN"},
+  {number:4,title:"Sibling",body:"**Work item type:** executable",state:"OPEN"}
+] : []));
+else if (args[0] === "api" && path.includes("/dependencies/blocked_by?")) console.log(JSON.stringify(path.includes("/4/") ? [{number:3,title:"Child",state:"OPEN"}] : []));
+else if (args[0] === "pr" && args[1] === "list") console.log(args.includes("shipyard/issue-6") || (process.env.READY_SPEC && args.includes("shipyard/spec-2")) ? JSON.stringify([{number:9,isDraft:false,labels:[{name:"ready-for-human"}]}]) : "[]");
+else if (args[0] === "issue" && args[1] === "edit") {}
 else process.exit(2);
 `,
     );
-    const result = run("node", [script("select-issues.mjs")], dir, bin, {
-      GH_LOG: log,
-    });
-    expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual([
-      { id: "1", title: "Standalone", branch: "shipyard/issue-1" },
-    ]);
+    for (const template of [
+      "simple-loop",
+      "sequential-reviewer",
+      "parallel-planner",
+      "parallel-planner-with-review",
+    ]) {
+      const result = run(
+        "node",
+        [join(templateDir, "templates", template, "select-issues.mjs")],
+        dir,
+        bin,
+        { GH_LOG: log },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual([
+        {
+          id: "1",
+          title: "Standalone",
+          branch: "shipyard/issue-1",
+          kind: "standalone",
+        },
+        {
+          id: "2",
+          title: "Spec",
+          body: "**Work item type:** planning spec",
+          branch: "shipyard/spec-2",
+          kind: "spec",
+          tickets: [
+            {
+              id: "3",
+              title: "Child",
+              body: "**Work item type:** executable\n\n## Parent\n#2",
+              state: "OPEN",
+              blockedBy: [],
+            },
+            {
+              id: "4",
+              title: "Sibling",
+              body: "**Work item type:** executable",
+              state: "OPEN",
+              blockedBy: [{ id: "3", title: "Child", state: "OPEN" }],
+            },
+          ],
+        },
+      ]);
+    }
     expect(await readFile(log, "utf8")).toContain(
       "issue edit 6 --repo owner/repo --remove-label shipyard",
     );
+    for (const activation of ["parent", "siblings"]) {
+      const result = run("node", [script("select-issues.mjs")], dir, bin, {
+        GH_LOG: log,
+        ACTIVATION: activation,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      const scopes = JSON.parse(result.stdout);
+      expect(scopes).toHaveLength(1);
+      expect(scopes[0].id).toBe("2");
+      expect(
+        scopes[0].tickets.map((ticket: { id: string }) => ticket.id),
+      ).toEqual(["3", "4"]);
+    }
+    const textOnly = run("node", [script("select-issues.mjs")], dir, bin, {
+      GH_LOG: log,
+      ACTIVATION: "parent",
+      TEXT_ONLY: "1",
+    });
+    expect(textOnly.status, textOnly.stderr).toBe(0);
+    expect(
+      JSON.parse(textOnly.stdout)[0].tickets.map(
+        (ticket: { id: string }) => ticket.id,
+      ),
+    ).toEqual(["3"]);
+    const alreadyReady = run("node", [script("select-issues.mjs")], dir, bin, {
+      GH_LOG: log,
+      ACTIVATION: "siblings",
+      READY_SPEC: "1",
+    });
+    expect(alreadyReady.status, alreadyReady.stderr).toBe(0);
+    expect(JSON.parse(alreadyReady.stdout)).toEqual([]);
+    const reconciled = await readFile(log, "utf8");
+    for (const id of [3, 4])
+      expect(reconciled).toContain(
+        `issue edit ${id} --repo owner/repo --remove-label shipyard`,
+      );
+  });
+
+  it("rejects conflicting native and body parent links", async () => {
+    const { dir, bin } = await fixture();
+    await executable(
+      join(bin, "gh"),
+      `
+const args = process.argv.slice(2);
+if (args[0] === "repo") console.log("owner/repo");
+else if (args[0] === "issue" && args[1] === "list") console.log(JSON.stringify([{number:3,title:"Child",body:"## Parent\\n#9"}]));
+else if (args[0] === "api" && args[1].endsWith("/parent")) console.log(JSON.stringify({number:2}));
+else process.exit(2);
+`,
+    );
+    const result = run("node", [script("select-issues.mjs")], dir, bin);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Conflicting parent links for #3");
+  });
+
+  it("rejects incomplete or non-executable spec relationships", async () => {
+    const { dir, bin } = await fixture();
+    await executable(
+      join(bin, "gh"),
+      `
+const args = process.argv.slice(2); const path = args[1] || "";
+if (args[0] === "repo") console.log("owner/repo");
+else if (args[0] === "issue" && args[1] === "list" && args.includes("open")) console.log(JSON.stringify([{number:2,title:"Spec",body:"**Work item type:** planning spec"}]));
+else if (args[0] === "issue" && args[1] === "list" && args.includes("all")) console.log("[]");
+else if (args[0] === "api" && path.endsWith("/parent")) { console.error("Not Found (HTTP 404)"); process.exit(1); }
+else if (args[0] === "api" && path.includes("/sub_issues?")) console.log(JSON.stringify(process.env.CASE === "missing" ? [] : [{number:3,title:"Planning child",body:"**Work item type:** planning spec",state:"open"}]));
+else if (args[0] === "api" && path.includes("/dependencies/blocked_by?")) console.log("[]");
+else process.exit(2);
+`,
+    );
+    for (const [scenario, message] of [
+      ["missing", "no linked executable tickets"],
+      ["nonexec", "not an executable ticket"],
+    ] as const) {
+      const result = run("node", [script("select-issues.mjs")], dir, bin, {
+        CASE: scenario,
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(message);
+    }
   });
 
   it("installs the candidate's package manager and complete skill directories before work", async () => {
@@ -169,9 +300,9 @@ const args = process.argv.slice(2);
 let state = JSON.parse(fs.readFileSync(process.env.PR_STATE, "utf8"));
 fs.appendFileSync(process.env.HANDOFF_LOG, "gh " + args.join(" ") + "\\n");
 if (args[0] === "repo") console.log("owner/repo");
-else if (args[0] === "issue" && args[1] === "view") console.log("Fix bug");
+else if (args[0] === "issue" && args[1] === "view") console.log(args.includes("labels") ? "shipyard" : "Fix bug");
 else if (args[0] === "pr" && args[1] === "list") console.log(state.number || "");
-else if (args[0] === "pr" && args[1] === "create") { state.number = 7; fs.writeFileSync(process.env.PR_STATE, JSON.stringify(state)); }
+else if (args[0] === "pr" && args[1] === "create") { state.number = 7; fs.writeFileSync(process.env.PR_STATE, JSON.stringify(state)); fs.appendFileSync(process.env.HANDOFF_LOG, "BODY " + fs.readFileSync(args[args.indexOf("--body-file") + 1], "utf8") + "\\n"); }
 else if (args[0] === "pr" && args[1] === "ready") { state.isDraft = false; fs.writeFileSync(process.env.PR_STATE, JSON.stringify(state)); }
 else if (args[0] === "pr" && args[1] === "view") console.log(args.includes("isDraft") ? String(state.isDraft) : "https://example.test/pr/7");
 else if (args[0] === "pr" && args[1] === "edit") {}
@@ -192,6 +323,28 @@ else process.exit(2);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("Missing verification evidence");
     expect(await readFile(log, "utf8").catch(() => "")).toBe("");
+    for (const [packet, message] of [
+      ["Review: approved", "Missing check evidence"],
+      ["Checks: npm test pass", "Missing review evidence"],
+    ] as const) {
+      result = run(
+        "bash",
+        [
+          script("handoff.sh"),
+          "1",
+          "shipyard/issue-1",
+          "staging",
+          "owner/repo",
+        ],
+        dir,
+        bin,
+        env,
+        packet,
+      );
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(message);
+    }
+    expect(await readFile(log, "utf8").catch(() => "")).toBe("");
 
     result = run(
       "bash",
@@ -199,7 +352,7 @@ else process.exit(2);
       dir,
       bin,
       env,
-      "npm test: pass; review: approved",
+      "Checks: npm test pass; Review: approved",
     );
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("https://example.test/pr/7");
@@ -209,7 +362,7 @@ else process.exit(2);
       dir,
       bin,
       env,
-      "npm test: pass; review: approved",
+      "Checks: npm test pass; Review: approved",
     );
     expect(result.status, result.stderr).toBe(0);
     const commands = await readFile(log, "utf8");
@@ -220,5 +373,31 @@ else process.exit(2);
     );
     expect(commands).not.toContain("gh issue close");
     expect(commands).not.toContain("gh pr merge");
+
+    await writeFile(state, JSON.stringify({ number: 0, isDraft: true }));
+    result = run(
+      "bash",
+      [
+        script("handoff.sh"),
+        "2",
+        "shipyard/spec-2",
+        "staging",
+        "owner/repo",
+        "2,3,4",
+      ],
+      dir,
+      bin,
+      env,
+      "Checks: pass; Review: approved",
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const specCommands = await readFile(log, "utf8");
+    expect(specCommands).toContain("BODY Source issues: #2 #3 #4");
+    for (const id of [2, 3, 4])
+      expect(specCommands).toContain(
+        `gh issue edit ${id} --repo owner/repo --remove-label shipyard`,
+      );
+    expect(specCommands).not.toContain("gh issue close");
+    expect(specCommands).not.toContain("gh pr merge");
   });
 });

@@ -54,13 +54,17 @@ or manually dispatching **Shipyard wake-up** signals the controller. A
 differently cased label, issue edit, or comment does not wake it.
 
 The bundled issue templates install Snappedly skills and repository
-dependencies inside their Docker sandbox. They implement eligible standalone
-issues, keep each template's planning and review stages, and hand an open,
-non-draft PR to a maintainer. They do not merge or close the issue. Successful
-handoff marks the PR `ready-for-human` and removes `shipyard` from the issue,
-so a later wake-up does not repeat it. Failed setup, checks, or review retain
-the label and logs for diagnosis. Planning specs and linked children are held
-for the whole-spec workflow.
+dependencies inside their Docker sandbox. Standalone issues use `/implement`.
+An activated planning spec or linked executable child becomes one
+`/implement-spec` scope containing the parent, all linked children, and their
+dependencies. The selected template keeps its sequential or parallel planning,
+implementation, and review stages. Parallel templates run ready child tickets
+through scoped `/implement` workers and integrate each dependency wave into one
+spec branch. The complete scope gets one open, non-draft PR with links to all
+issues. The workflow never merges into the target branch or closes issues.
+Successful handoff marks the PR `ready-for-human` and removes `shipyard` from
+activated parent and child issues, so later wake-ups do not repeat work. Failed
+setup, relationships, checks, or review retain activation and logs for diagnosis.
 
 Start always preflights the current backlog, recovering labels added while the
 Mac was off. If work exists, it invokes exactly `npx shipyard run`. After a

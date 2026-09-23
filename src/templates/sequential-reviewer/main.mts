@@ -1,5 +1,5 @@
 // Sequential Reviewer: one implementation and one independent review per
-// activated standalone issue. Publication follows successful review.
+// activated issue scope. Publication follows successful review.
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import * as shipyard from "@snappedly-tools/shipyard";
@@ -37,7 +37,20 @@ const handoffEvidence = (stdout: string): string | undefined =>
 for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
   const issues = JSON.parse(
     execFileSync("node", [".shipyard/select-issues.mjs"], { encoding: "utf8" }),
-  ) as Array<{ id: string; title: string; branch: string }>;
+  ) as Array<{
+    id: string;
+    title: string;
+    branch: string;
+    kind: "standalone" | "spec";
+    body?: string;
+    tickets?: Array<{
+      id: string;
+      title: string;
+      body: string;
+      state: string;
+      blockedBy: Array<{ id: string; title: string; state: string }>;
+    }>;
+  }>;
   const issue = issues[0];
   if (!issue) break;
 
@@ -56,6 +69,8 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
         TASK_ID: issue.id,
         ISSUE_TITLE: issue.title,
         BRANCH: issue.branch,
+        SCOPE: JSON.stringify(issue),
+        SKILL: issue.kind === "spec" ? "/implement-spec" : "/implement",
       },
     });
     const implementationEvidence = handoffEvidence(implement.stdout);
@@ -69,7 +84,12 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
       maxIterations: 1,
       agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
       promptFile: "./.shipyard/review-prompt.md",
-      promptArgs: { BRANCH: issue.branch, TASK_ID: issue.id },
+      promptArgs: {
+        BRANCH: issue.branch,
+        SCOPE: JSON.stringify(issue),
+        SKILL: issue.kind === "spec" ? "/implement-spec" : "/implement",
+        TASK_ID: issue.id,
+      },
     });
     const reviewEvidence = handoffEvidence(review.stdout);
     if (
@@ -80,7 +100,7 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
       throw new Error(`Issue #${issue.id} has unresolved review findings`);
     }
     const handoff = await sandbox.exec(
-      `bash .shipyard/handoff.sh ${issue.id} ${issue.branch} ${targetBranch} ${repository}`,
+      `bash .shipyard/handoff.sh ${issue.id} ${issue.branch} ${targetBranch} ${repository} ${[issue.id, ...(issue.tickets ?? []).map((ticket) => ticket.id)].join(",")}`,
       { stdin: `${implementationEvidence}\n\n${reviewEvidence}` },
     );
     if (handoff.exitCode !== 0)

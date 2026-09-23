@@ -1,5 +1,5 @@
-// Simple loop: select one activated standalone issue per iteration, implement
-// it, then hand its verified commit to a human through a pull request.
+// Simple loop: select one activated issue scope per iteration, implement it,
+// then hand its verified commit to a human through a pull request.
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import * as shipyard from "@snappedly-tools/shipyard";
@@ -36,7 +36,20 @@ const handoffEvidence = (stdout: string): string | undefined =>
 for (let iteration = 0; iteration < 3; iteration++) {
   const issues = JSON.parse(
     execFileSync("node", [".shipyard/select-issues.mjs"], { encoding: "utf8" }),
-  ) as Array<{ id: string; title: string; branch: string }>;
+  ) as Array<{
+    id: string;
+    title: string;
+    branch: string;
+    kind: "standalone" | "spec";
+    body?: string;
+    tickets?: Array<{
+      id: string;
+      title: string;
+      body: string;
+      state: string;
+      blockedBy: Array<{ id: string; title: string; state: string }>;
+    }>;
+  }>;
   const issue = issues[0];
   if (!issue) break;
 
@@ -55,13 +68,15 @@ for (let iteration = 0; iteration < 3; iteration++) {
         TASK_ID: issue.id,
         ISSUE_TITLE: issue.title,
         BRANCH: issue.branch,
+        SCOPE: JSON.stringify(issue),
+        SKILL: issue.kind === "spec" ? "/implement-spec" : "/implement",
       },
     });
     const evidence = handoffEvidence(result.stdout);
     if (!result.completionSignal || !evidence)
       throw new Error(`Issue #${issue.id} has no verified completion evidence`);
     const handoff = await sandbox.exec(
-      `bash .shipyard/handoff.sh ${issue.id} ${issue.branch} ${targetBranch} ${repository}`,
+      `bash .shipyard/handoff.sh ${issue.id} ${issue.branch} ${targetBranch} ${repository} ${[issue.id, ...(issue.tickets ?? []).map((ticket) => ticket.id)].join(",")}`,
       { stdin: evidence },
     );
     if (handoff.exitCode !== 0)

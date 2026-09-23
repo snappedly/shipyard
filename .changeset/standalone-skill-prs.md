@@ -2,4 +2,4 @@
 "@snappedly-tools/shipyard": minor
 ---
 
-Run bundled standalone issue workflows with Snappedly skills in Docker and hand verified changes to human review through pull requests.
+Run bundled standalone and whole-spec issue workflows with Snappedly skills in Docker, preserving template stage order and handing one verified pull request per scope to human review.

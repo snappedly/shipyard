@@ -5,6 +5,7 @@ issue=${1:?issue number required}
 branch=${2:?branch required}
 base=${3:?target branch required}
 repo=${4:?GitHub repository required}
+scope=${5:-$issue}
 [[ "$issue" =~ ^[0-9]+$ && ( "$branch" == "shipyard/issue-$issue" || "$branch" == "shipyard/spec-$issue" ) ]] || {
   echo "Invalid issue or branch for PR handoff" >&2; exit 1;
 }
@@ -12,8 +13,11 @@ repo=${4:?GitHub repository required}
   echo "Invalid target branch for PR handoff" >&2; exit 1;
 }
 
+[[ "$scope" =~ ^[0-9]+(,[0-9]+)*$ && ( "$scope" == "$issue" || "$scope" == "$issue,"* ) ]] || { echo "Invalid PR scope" >&2; exit 1; }
 evidence=$(cat)
 [[ -n "$evidence" ]] || { echo "Missing verification evidence" >&2; exit 1; }
+grep -Eiq '(^|[[:space:]])Checks:' <<< "$evidence" || { echo "Missing check evidence" >&2; exit 1; }
+grep -Eiq '(^|[[:space:]])Review:' <<< "$evidence" || { echo "Missing review evidence" >&2; exit 1; }
 [[ -z $(git status --porcelain) ]] || {
   echo "Uncommitted changes prevent PR handoff" >&2; exit 1;
 }
@@ -28,7 +32,10 @@ git merge-base --is-ancestor "$base" HEAD || {
 title=$(gh issue view "$issue" --json title --jq .title)
 body=$(mktemp)
 trap 'rm -f "$body"' EXIT
-printf 'Source: #%s\n\n## Verification and review\n\n%s\n\nHuman review and merge required.\n' "$issue" "$evidence" > "$body"
+links=""
+IFS=',' read -ra scope_ids <<< "$scope"
+for scope_id in "${scope_ids[@]}"; do links+="#$scope_id "; done
+printf 'Source issues: %s\n\n## Verification and review\n\n%s\n\nHuman review and merge required.\n' "$links" "$evidence" > "$body"
 
 # Keep Git credentials inside the disposable sandbox, not in the host worktree.
 git remote set-url origin "https://github.com/$repo.git"
@@ -46,5 +53,10 @@ gh label create ready-for-human --repo "$repo" --color 0E8A16 --description 'Rea
 gh pr edit "$number" --repo "$repo" --add-label ready-for-human
 url=$(gh pr view "$number" --repo "$repo" --json url,isDraft,state --jq 'select(.state == "OPEN" and .isDraft == false) | .url')
 [[ -n "$url" ]] || { echo "PR did not become ready for human review" >&2; exit 1; }
-gh issue edit "$issue" --repo "$repo" --remove-label shipyard
+for scope_id in "${scope_ids[@]}"; do
+  labels=$(gh issue view "$scope_id" --repo "$repo" --json labels --jq '.labels[].name')
+  if grep -Fxq shipyard <<< "$labels"; then
+    gh issue edit "$scope_id" --repo "$repo" --remove-label shipyard
+  fi
+done
 printf '%s\n' "$url"
