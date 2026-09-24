@@ -558,6 +558,13 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     const commands = await readFile(ghArgsFile, "utf8");
     for (const label of [
       "shipyard",
+      "bug",
+      "enhancement",
+      "needs-triage",
+      "needs-info",
+      "ready-for-agent",
+      "ready-for-human",
+      "wontfix",
       "shipyard:blocked",
       "shipyard:pending",
       "shipyard:complete",

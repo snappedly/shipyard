@@ -663,6 +663,13 @@ const initCommand = Command.make(
         const failedLabels: string[] = [];
         for (const [name, description, color] of [
           [ACTIVATION_LABEL, `Issues for ${PRODUCT_NAME} to work on`, "F9A825"],
+          ["bug", "Something is broken", "D73A4A"],
+          ["enhancement", "New feature or improvement", "A2EEEF"],
+          ["needs-triage", "Maintainer evaluation needed", "FBCA04"],
+          ["needs-info", "Waiting for reporter information", "D4C5F9"],
+          ["ready-for-agent", "Ready for agent implementation", "0E8A16"],
+          ["ready-for-human", "Requires human implementation", "1D76DB"],
+          ["wontfix", "Will not be actioned", "FFFFFF"],
           ["shipyard:blocked", "Shipyard work needs intervention", "B60205"],
           ["shipyard:pending", "Shipyard is working on this ticket", "1D76DB"],
           [

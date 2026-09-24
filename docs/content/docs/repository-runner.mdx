@@ -54,7 +54,12 @@ or manually dispatching **Shipyard wake-up** signals the controller. A
 differently cased label, issue edit, or comment does not wake it.
 
 The bundled issue templates install Snappedly skills and repository
-dependencies inside their Docker sandbox. Standalone issues use `/implement`.
+dependencies inside their Docker sandbox. Shipyard runs `/triage` when it takes
+an activated ticket, then rereads the issue. Only an open ticket carrying both
+`shipyard` and `ready-for-agent`, with no conflicting triage state, can reach
+implementation. Any other triage outcome follows the normal blocked flow:
+`shipyard:blocked` is added, `shipyard` is removed, and the reason is commented
+on the ticket. Standalone ready issues use `/implement`.
 An activated planning spec or linked executable child becomes one
 `/implement-spec` scope containing the parent, linked children labelled
 `shipyard`, and their dependencies. Unlabelled children remain outside the work

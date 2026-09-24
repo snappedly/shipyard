@@ -43,7 +43,7 @@ while IFS= read -r -d '' skill_file; do
   ln -sfn "$HOME/.agents/skills/$skill_name" "$HOME/.claude/skills/$skill_name"
 done < <(find "$source_dir/repo/skills" -name SKILL.md -print0)
 
-for skill in implement implement-spec code-cleanup code-review tdd; do
+for skill in triage implement implement-spec code-cleanup code-review tdd; do
   if [[ ! -s "$HOME/.agents/skills/$skill/SKILL.md" || -z $(find "$source_dir/repo/skills" -path "*/$skill/SKILL.md" -print -quit) ]]; then
     echo "Snappedly skill installation incomplete: $skill" >&2
     exit 1
