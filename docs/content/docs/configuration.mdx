@@ -137,17 +137,21 @@ supply sandbox variables. Keep `.shipyard/.env` untracked.
 
 ## Codex model roles
 
-Generated scripts use `codex(CODEX_MODELS.routine)`. Use
-`codex(CODEX_MODELS.strong)` for heavier planning or review, or pass your chosen
-model directly: `codex("your-model", { effort: "high" })`.
+Custom workflows can use `codex(CODEX_MODELS.routine)` and
+`codex(CODEX_MODELS.strong)`, or pass a model directly:
+`codex("your-model", { effort: "high" })`.
 
-The role defaults live in `src/modelConfig.ts`. Override them in the **host
-process environment before starting your script**:
+The library reads these existing Codex role overrides from the host process
+environment when the module loads:
 
 - `SHIPYARD_CODEX_ROUTINE_MODEL`
 - `SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT`
 - `SHIPYARD_CODEX_STRONG_MODEL`
 - `SHIPYARD_CODEX_STRONG_REASONING_EFFORT`
 
-These configure the host-side library at import time; putting them only in
-`.shipyard/.env` does not change the model roles.
+Generated `simple-loop` and `sequential-reviewer` workflows also support the
+provider-independent `SHIPYARD_ROUTINE_MODEL` and `SHIPYARD_STRONG_MODEL`
+variables in `.shipyard/.env`. The generated workflow loads that file before it
+resolves model roles. A host value overrides the same file entry. The
+repository-root `.env` is not loaded. See [agent setup](agents.mdx) for provider
+examples, model catalogs, and precedence.

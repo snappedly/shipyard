@@ -691,6 +691,7 @@ const initCommand = Command.make(
           scaffold(cwd, {
             agent: selectedAgent,
             model: selectedModel,
+            modelExplicit: modelFlag._tag === "Some",
             templateName: selectedTemplate,
             issueTracker: selectedIssueTracker,
             sandboxProvider: selectedSandboxProvider,

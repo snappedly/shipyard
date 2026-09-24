@@ -52,6 +52,8 @@ branch options.
 Fill in any credentials required in `.shipyard/.env`.
 `GH_TOKEN` in `.shipyard/.env` to a GH token with Contents, Issues, and Pull
 Requests read/write access and Metadata read access.
+For `simple-loop` and `sequential-reviewer`, set the routine and strong model
+roles there too. See [agent setup](docs/content/docs/agents.mdx).
 
 Commit the setup and prompt so the sandbox can read them. Make sure the Git ignore file keeps
 `.shipyard/.env` out of the commit.

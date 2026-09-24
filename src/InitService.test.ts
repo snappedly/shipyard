@@ -61,12 +61,16 @@ describe("InitService scaffold", () => {
       expectedKey: "CLAUDE_CODE_OAUTH_TOKEN=",
       unexpectedKey: "OPENAI_API_KEY=",
       expectClaudeSetupTokenHint: true,
+      expectedModelExample: "SHIPYARD_ROUTINE_MODEL=sonnet",
+      expectedModelCatalog: "https://code.claude.com/docs/en/model-config",
     },
     {
       agent: codexAgent,
       expectedKey: "OPENAI_API_KEY=",
       unexpectedKey: "ANTHROPIC_API_KEY=",
       expectClaudeSetupTokenHint: false,
+      expectedModelExample: "SHIPYARD_ROUTINE_MODEL=gpt-6-luna",
+      expectedModelCatalog: "https://learn.chatgpt.com/docs/models",
     },
   ])(
     "generates .env.example with $agent.name env var",
@@ -75,6 +79,8 @@ describe("InitService scaffold", () => {
       expectedKey,
       unexpectedKey,
       expectClaudeSetupTokenHint,
+      expectedModelExample,
+      expectedModelCatalog,
     }) => {
       const dir = await makeDir();
       await runScaffold(dir, { agent, model: agent.defaultModel });
@@ -86,6 +92,11 @@ describe("InitService scaffold", () => {
       expect(envExample).toContain(expectedKey);
       expect(envExample).not.toContain(unexpectedKey);
       expect(envExample).not.toContain("issues/191");
+      expect(envExample).toContain("SHIPYARD_ROUTINE_MODEL=");
+      expect(envExample).toContain("SHIPYARD_STRONG_MODEL=");
+      expect(envExample).toContain(expectedModelExample);
+      expect(envExample).toContain(expectedModelCatalog);
+      expect(envExample).toContain("Aliases can change their target over time");
       if (expectClaudeSetupTokenHint) {
         expect(envExample).toContain("claude setup-token");
       } else {
@@ -243,9 +254,10 @@ describe("InitService scaffold", () => {
     await runScaffold(dir, { model: "claude-sonnet-4-6" });
 
     const mainTs = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
-    expect(mainTs).toContain('claudeCode("claude-sonnet-4-6")');
-    // Should not contain the template's original model
-    expect(mainTs).not.toContain('claudeCode("claude-opus-4-8")');
+    expect(mainTs).toContain('roleAgent("routine", "claude-sonnet-4-6")');
+    expect(mainTs).toContain("const agentFactory = shipyard.claudeCode;");
+    expect(mainTs).toContain("const CODEX_PROVIDER = false;");
+    expect(mainTs).not.toContain("shipyard.CODEX_MODELS.routine");
   });
 
   it("scaffolds main.mts with default model when using agent default", async () => {
@@ -253,7 +265,25 @@ describe("InitService scaffold", () => {
     await runScaffold(dir);
 
     const mainTs = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
-    expect(mainTs).toContain('claudeCode("claude-opus-4-8")');
+    expect(mainTs).toContain('roleAgent("routine", "claude-opus-4-8")');
+  });
+
+  it("lets init --model supply both unset Codex roles without default effort", async () => {
+    const dir = await makeDir();
+    await runScaffold(dir, {
+      agent: codexAgent,
+      model: "unlisted-model",
+      modelExplicit: true,
+      templateName: "sequential-reviewer",
+    });
+
+    const mainTs = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
+    expect(mainTs).toContain('roleAgent("routine", "unlisted-model")');
+    expect(mainTs).toContain('roleAgent("strong", "unlisted-model")');
+    expect(mainTs).toContain("const CODEX_PROVIDER = true;");
+    expect(mainTs).toContain("const agentFactory = shipyard.codex;");
+    expect(mainTs).not.toContain("shipyard.CODEX_MODELS.routine");
+    expect(mainTs).not.toContain("shipyard.CODEX_MODELS.strong");
   });
 
   // --- Template-specific tests ---
@@ -397,7 +427,11 @@ describe("InitService scaffold", () => {
     });
 
     const mainTs = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
-    expect(mainTs).toContain("shipyard.codex(shipyard.CODEX_MODELS.routine)");
+    expect(mainTs).toContain("const agentFactory = shipyard.codex;");
+    expect(mainTs).toContain(
+      'roleAgent("routine", shipyard.CODEX_MODELS.routine)',
+    );
+    expect(mainTs).toContain("const CODEX_PROVIDER = true;");
     expect(mainTs).not.toContain("claudeCode");
   });
 
@@ -900,7 +934,7 @@ describe("InitService scaffold", () => {
         "utf-8",
       );
       expect(mainContent).toContain("@snappedly-tools/shipyard");
-      expect(mainContent).toContain('claudeCode("claude-opus-4-8")');
+      expect(mainContent).toContain('roleAgent("routine", "claude-opus-4-8")');
     });
 
     it("main.ts scaffolded with type: module rewrites the Codex factory correctly", async () => {
@@ -919,7 +953,7 @@ describe("InitService scaffold", () => {
         "utf-8",
       );
       expect(mainContent).toContain(
-        "shipyard.codex(shipyard.CODEX_MODELS.routine)",
+        'roleAgent("routine", shipyard.CODEX_MODELS.routine)',
       );
       expect(mainContent).not.toContain("claudeCode");
     });

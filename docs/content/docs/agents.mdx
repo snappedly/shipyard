@@ -31,14 +31,6 @@ Codex supports two authentication modes:
 `--codex-auth api-key` is the default. `GH_TOKEN` is for prompts that access
 GitHub, not a requirement of the Codex provider.
 
-Generated Codex runs use `CODEX_MODELS.routine` by default. For heavier
-planning, review, or merge work, use `codex(CODEX_MODELS.strong)`. Each role
-contains a model identifier and its reasoning effort. Defaults are centralized
-in `src/modelConfig.ts`; set overrides in the host process environment before
-starting the script with
-`SHIPYARD_CODEX_ROUTINE_MODEL`, `SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT`,
-`SHIPYARD_CODEX_STRONG_MODEL`, and `SHIPYARD_CODEX_STRONG_REASONING_EFFORT`.
-
 ### Claude Code
 
 Uses Claude Code as the AI coding agent inside the sandbox.
@@ -51,3 +43,32 @@ Required environment variables (one of):
 | `ANTHROPIC_API_KEY`       | Anthropic API key (alternative to `CLAUDE_CODE_OAUTH_TOKEN`)                                                                                       |
 
 `GH_TOKEN` is also needed when your prompt accesses GitHub.
+
+## Choose models for generated workflows
+
+Generated `simple-loop` and `sequential-reviewer` workflows use
+`SHIPYARD_ROUTINE_MODEL` for factual triage and implementation. The
+`sequential-reviewer` workflow uses `SHIPYARD_STRONG_MODEL` for its independent
+review. The selected provider handles both roles.
+
+Set either variable in `.shipyard/.env`. A host environment value overrides the
+same entry in that file. Shipyard does not load the repository-root `.env`.
+`shipyard init --model <model>` supplies each role that has no
+`SHIPYARD_ROUTINE_MODEL` or `SHIPYARD_STRONG_MODEL` value.
+
+Choose a value supported by the selected provider and its authentication route.
+For Codex, see the [Codex model picker](https://learn.chatgpt.com/docs/models).
+For Claude Code, see [available models and aliases](https://code.claude.com/docs/en/model-config).
+The generated `.env.example` has an example for the selected provider. Shipyard
+passes each nonempty value to the provider unchanged. The provider reports
+unavailable models. Aliases can change their target over time. Use a versioned
+model ID when you need a fixed target.
+
+When you do not set a role variable or pass `--model`, Codex keeps its existing
+role overrides: `SHIPYARD_CODEX_ROUTINE_MODEL`,
+`SHIPYARD_CODEX_STRONG_MODEL`, `SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT`, and
+`SHIPYARD_CODEX_STRONG_REASONING_EFFORT`. A newly selected Codex model uses the
+provider's default reasoning effort unless you set the matching effort variable.
+
+Direct library calls such as `codex(CODEX_MODELS.routine)` and
+`claudeCode("sonnet")` remain available for custom workflows.

@@ -1,6 +1,26 @@
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { NodeFileSystem } from "@effect/platform-node";
+import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getAgent, scaffold } from "./InitService.js";
 
 const initialRepository = process.env.GH_REPO;
+const initialCwd = process.cwd();
+const modelEnvironmentNames = [
+  "SHIPYARD_ROUTINE_MODEL",
+  "SHIPYARD_STRONG_MODEL",
+  "SHIPYARD_CODEX_ROUTINE_MODEL",
+  "SHIPYARD_CODEX_STRONG_MODEL",
+  "SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT",
+  "SHIPYARD_CODEX_STRONG_REASONING_EFFORT",
+] as const;
+const initialModelEnvironment = Object.fromEntries(
+  modelEnvironmentNames.map((name) => [name, process.env[name]]),
+);
+let envDirectory: string | undefined;
 
 const calls = vi.hoisted(() => ({
   events: [] as string[],
@@ -8,6 +28,14 @@ const calls = vi.hoisted(() => ({
   triaged: [] as Array<{ id: string; beforeEvents: number }>,
   verified: [] as string[],
   triageReady: true,
+  envFileExists: false,
+  providerFailureModel: "",
+  agentInvocations: [] as Array<{
+    name: string;
+    provider: string;
+    model: string;
+    effort?: string;
+  }>,
   selected: 0,
   spec: false,
   multi: false,
@@ -49,6 +77,7 @@ const calls = vi.hoisted(() => ({
 }));
 
 vi.mock("node:child_process", () => ({
+  exec: () => undefined,
   execFileSync: (
     command: string,
     args: string[],
@@ -135,7 +164,9 @@ vi.mock("node:child_process", () => ({
     throw new Error(`Unexpected ${command}`);
   },
 }));
-vi.mock("node:fs", () => ({ existsSync: () => false }));
+vi.mock("node:fs", () => ({
+  existsSync: () => calls.envFileExists,
+}));
 vi.mock("@snappedly-tools/shipyard/sandboxes/docker", () => ({
   docker: () => ({}),
 }));
@@ -151,11 +182,27 @@ vi.mock("@snappedly-tools/shipyard", () => {
     return {
       run: async ({
         name,
+        agent,
         promptArgs,
       }: {
         name: string;
+        agent?: {
+          name: string;
+          model: string;
+          effort?: string;
+        };
         promptArgs?: Record<string, string>;
       }) => {
+        if (agent) {
+          calls.agentInvocations.push({
+            name,
+            provider: agent.name,
+            model: agent.model,
+            effort: agent.effort,
+          });
+          if (agent.model === calls.providerFailureModel)
+            throw new Error(`Provider rejected model ${agent.model}`);
+        }
         if (name.startsWith("triage #")) {
           calls.triaged.push({
             id: name.slice("triage #".length),
@@ -275,9 +322,43 @@ vi.mock("@snappedly-tools/shipyard", () => {
       },
     };
   };
+  const codexModel = (role: "routine" | "strong") => ({
+    model:
+      process.env[`SHIPYARD_CODEX_${role.toUpperCase()}_MODEL`]?.trim() ||
+      `${role}-default`,
+    effort:
+      process.env[
+        `SHIPYARD_CODEX_${role.toUpperCase()}_REASONING_EFFORT`
+      ]?.trim() || "max",
+  });
+  const makeAgent = (
+    name: string,
+    model: string | { model: string; effort: string },
+    options?: { effort?: string | null },
+  ) => ({
+    name,
+    model: typeof model === "string" ? model : model.model,
+    effort:
+      options?.effort === null
+        ? undefined
+        : (options?.effort ??
+          (typeof model === "string" ? undefined : model.effort)),
+  });
   return {
-    CODEX_MODELS: { routine: "routine", strong: "strong" },
-    codex: () => ({}),
+    CODEX_MODELS: {
+      get routine() {
+        return codexModel("routine");
+      },
+      get strong() {
+        return codexModel("strong");
+      },
+    },
+    codex: (
+      model: string | { model: string; effort: string },
+      options?: { effort?: string | null },
+    ) => makeAgent("codex", model, options),
+    claudeCode: (model: string, options?: { effort?: string | null }) =>
+      makeAgent("claude-code", model, options),
     Output: { object: () => ({}) },
     createSandbox: async ({
       branch,
@@ -320,11 +401,16 @@ vi.mock("@snappedly-tools/shipyard", () => {
 
 beforeEach(() => {
   vi.resetModules();
+  for (const name of modelEnvironmentNames) delete process.env[name];
+  envDirectory = undefined;
   calls.events.length = 0;
   calls.pendingEdits.length = 0;
   calls.triaged.length = 0;
   calls.verified.length = 0;
   calls.triageReady = true;
+  calls.envFileExists = false;
+  calls.providerFailureModel = "";
+  calls.agentInvocations.length = 0;
   calls.selected = 0;
   calls.spec = false;
   calls.multi = false;
@@ -352,10 +438,26 @@ beforeEach(() => {
   calls.blocked.length = 0;
 });
 
-afterEach(() => {
+afterEach(async () => {
+  process.chdir(initialCwd);
+  if (envDirectory) await rm(envDirectory, { recursive: true, force: true });
+  for (const name of modelEnvironmentNames) {
+    const value = initialModelEnvironment[name];
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
   if (initialRepository === undefined) delete process.env.GH_REPO;
   else process.env.GH_REPO = initialRepository;
 });
+
+const loadEnvFile = async (content: string, rootEnv = ""): Promise<void> => {
+  envDirectory = await mkdtemp(join(tmpdir(), "shipyard-template-env-"));
+  await mkdir(join(envDirectory, ".shipyard"));
+  await writeFile(join(envDirectory, ".shipyard", ".env"), content);
+  if (rootEnv) await writeFile(join(envDirectory, ".env"), rootEnv);
+  process.chdir(envDirectory);
+  calls.envFileExists = true;
+};
 
 describe("generated issue workflows", () => {
   it.each(["parallel-planner", "parallel-planner-with-review"])(
@@ -436,6 +538,214 @@ describe("generated issue workflows", () => {
       "select",
     ]);
     expect(calls.pendingEdits).toEqual(["42"]);
+  });
+
+  it("simple-loop uses the routine role for triage and implementation", async () => {
+    await loadEnvFile(
+      "SHIPYARD_ROUTINE_MODEL=file-routine\nSHIPYARD_STRONG_MODEL=file-strong\n",
+      "SHIPYARD_ROUTINE_MODEL=root-file-model\n",
+    );
+    process.env.SHIPYARD_ROUTINE_MODEL = "host-routine";
+
+    await import("./templates/simple-loop/main.mts" as string);
+
+    expect(calls.agentInvocations).toEqual([
+      {
+        name: "triage #42",
+        provider: "codex",
+        model: "host-routine",
+        effort: undefined,
+      },
+      {
+        name: "implementer",
+        provider: "codex",
+        model: "host-routine",
+        effort: undefined,
+      },
+    ]);
+  });
+
+  it("sequential-reviewer uses file role values unless the host overrides one", async () => {
+    await loadEnvFile(
+      "SHIPYARD_ROUTINE_MODEL=file-routine\nSHIPYARD_STRONG_MODEL=file-strong\n",
+    );
+    process.env.SHIPYARD_ROUTINE_MODEL = "host-routine";
+
+    await import("./templates/sequential-reviewer/main.mts" as string);
+
+    expect(calls.agentInvocations).toEqual([
+      {
+        name: "triage #42",
+        provider: "codex",
+        model: "host-routine",
+        effort: undefined,
+      },
+      {
+        name: "implementer",
+        provider: "codex",
+        model: "host-routine",
+        effort: undefined,
+      },
+      {
+        name: "reviewer",
+        provider: "codex",
+        model: "file-strong",
+        effort: undefined,
+      },
+    ]);
+  });
+
+  it("runs a generated Claude workflow with its selected provider and model roles", async () => {
+    const generatedRoot = await mkdtemp(
+      join(process.cwd(), "src/.generated-model-workflow-"),
+    );
+    try {
+      await Effect.runPromise(
+        scaffold(generatedRoot, {
+          agent: getAgent("claude-code")!,
+          model: "claude-opus-4-8",
+          templateName: "sequential-reviewer",
+        }).pipe(Effect.provide(NodeFileSystem.layer)),
+      );
+      await writeFile(
+        join(generatedRoot, ".shipyard", ".env"),
+        "SHIPYARD_ROUTINE_MODEL=sonnet\nSHIPYARD_STRONG_MODEL=opus\n",
+      );
+      process.env.SHIPYARD_STRONG_MODEL = "host-review-model";
+      process.chdir(generatedRoot);
+      calls.envFileExists = true;
+
+      await import(
+        pathToFileURL(join(generatedRoot, ".shipyard", "main.mts")).href
+      );
+
+      expect(calls.agentInvocations).toEqual([
+        {
+          name: "triage #42",
+          provider: "claude-code",
+          model: "sonnet",
+          effort: undefined,
+        },
+        {
+          name: "implementer",
+          provider: "claude-code",
+          model: "sonnet",
+          effort: undefined,
+        },
+        {
+          name: "reviewer",
+          provider: "claude-code",
+          model: "host-review-model",
+          effort: undefined,
+        },
+      ]);
+    } finally {
+      process.chdir(initialCwd);
+      await rm(generatedRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not load model values from the repository-root .env", async () => {
+    await loadEnvFile("", "SHIPYARD_ROUTINE_MODEL=root-only-model\n");
+
+    await import("./templates/simple-loop/main.mts" as string);
+
+    expect(
+      calls.agentInvocations.slice(0, 2).map((call) => call.model),
+    ).toEqual(["routine-default", "routine-default"]);
+  });
+
+  it("uses Codex default effort for a new role model unless an effort is set", async () => {
+    process.env.SHIPYARD_ROUTINE_MODEL = "routine-default";
+
+    await import("./templates/simple-loop/main.mts" as string);
+
+    expect(calls.agentInvocations[0]).toEqual({
+      name: "triage #42",
+      provider: "codex",
+      model: "routine-default",
+      effort: undefined,
+    });
+  });
+
+  it("applies an explicitly selected Codex effort to a role model", async () => {
+    process.env.SHIPYARD_ROUTINE_MODEL = "new-routine";
+    process.env.SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT = "high";
+
+    await import("./templates/simple-loop/main.mts" as string);
+
+    expect(calls.agentInvocations[0]).toMatchObject({
+      model: "new-routine",
+      effort: "high",
+    });
+  });
+
+  it("keeps existing Codex role model and effort overrides as fallbacks", async () => {
+    process.env.SHIPYARD_CODEX_ROUTINE_MODEL = "legacy-routine";
+    process.env.SHIPYARD_CODEX_STRONG_MODEL = "legacy-strong";
+    process.env.SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT = "high";
+    process.env.SHIPYARD_CODEX_STRONG_REASONING_EFFORT = "low";
+
+    await import("./templates/sequential-reviewer/main.mts" as string);
+
+    expect(calls.agentInvocations).toEqual([
+      {
+        name: "triage #42",
+        provider: "codex",
+        model: "legacy-routine",
+        effort: "high",
+      },
+      {
+        name: "implementer",
+        provider: "codex",
+        model: "legacy-routine",
+        effort: "high",
+      },
+      {
+        name: "reviewer",
+        provider: "codex",
+        model: "legacy-strong",
+        effort: "low",
+      },
+    ]);
+  });
+
+  it("passes an unknown nonempty model value to the selected provider unchanged", async () => {
+    process.env.SHIPYARD_ROUTINE_MODEL = "future-alias:variant/unknown";
+
+    await import("./templates/simple-loop/main.mts" as string);
+
+    expect(
+      calls.agentInvocations.slice(0, 2).map((call) => call.model),
+    ).toEqual(["future-alias:variant/unknown", "future-alias:variant/unknown"]);
+  });
+
+  it("does not invoke another model after the provider rejects a configured value", async () => {
+    process.env.SHIPYARD_ROUTINE_MODEL = "unavailable-model";
+    calls.providerFailureModel = "unavailable-model";
+
+    await import("./templates/simple-loop/main.mts" as string);
+
+    expect(calls.agentInvocations).toEqual([
+      {
+        name: "triage #42",
+        provider: "codex",
+        model: "unavailable-model",
+        effort: undefined,
+      },
+    ]);
+    expect(calls.blocked[0]?.reason).toContain(
+      "Provider rejected model unavailable-model",
+    );
+  });
+
+  it("rejects an empty configured role before any provider invocation", async () => {
+    await loadEnvFile("SHIPYARD_STRONG_MODEL=   \n");
+
+    await expect(
+      import("./templates/sequential-reviewer/main.mts" as string),
+    ).rejects.toThrow("SHIPYARD_STRONG_MODEL must not be empty");
+    expect(calls.agentInvocations).toEqual([]);
   });
 
   it("marks a failed standalone issue blocked and continues without handoff", async () => {

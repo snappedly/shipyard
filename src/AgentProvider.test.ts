@@ -435,6 +435,14 @@ describe("codex factory", () => {
     expect(command).not.toContain("model_reasoning_effort");
   });
 
+  it("does not inherit a built-in effort for an explicitly selected model", () => {
+    const provider = codex(CODEX_MODELS.routine.model, {
+      effort: null,
+    });
+    const { command } = provider.buildPrintCommand(opts("do something"));
+    expect(command).not.toContain("model_reasoning_effort");
+  });
+
   it("uses the routine role's configured reasoning effort", () => {
     const provider = codex(CODEX_MODELS.routine);
     const { command } = provider.buildPrintCommand(opts("do something"));
