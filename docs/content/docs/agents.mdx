@@ -46,10 +46,13 @@ Required environment variables (one of):
 
 ## Choose models for generated workflows
 
-Generated `simple-loop` and `sequential-reviewer` workflows use
-`SHIPYARD_ROUTINE_MODEL` for factual triage and implementation. The
-`sequential-reviewer` workflow uses `SHIPYARD_STRONG_MODEL` for its independent
-review. The selected provider handles both roles.
+Generated `simple-loop`, `sequential-reviewer`, `parallel-planner`, and
+`parallel-planner-with-review` workflows use `SHIPYARD_ROUTINE_MODEL` for
+factual triage and implementation. Parallel planner workflows use
+`SHIPYARD_STRONG_MODEL` for planning, conflict resolution, and dependency-wave
+integration. `parallel-planner-with-review` also uses it for ticket reviews and
+the final review of the integrated specification. The selected provider handles
+both roles.
 
 Set either variable in `.shipyard/.env`. A host environment value overrides the
 same entry in that file. Shipyard does not load the repository-root `.env`.

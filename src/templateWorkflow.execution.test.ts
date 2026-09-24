@@ -377,10 +377,23 @@ vi.mock("@snappedly-tools/shipyard", () => {
     run: async ({
       name,
       branchStrategy,
+      agent,
     }: {
       name: string;
       branchStrategy?: { branch?: string };
+      agent?: {
+        name: string;
+        model: string;
+        effort?: string;
+      };
     }) => {
+      if (agent)
+        calls.agentInvocations.push({
+          name,
+          provider: agent.name,
+          model: agent.model,
+          effort: agent.effort,
+        });
       calls.events.push(name);
       if (name === "planner") {
         calls.plannerBranches.push(branchStrategy?.branch ?? "");
@@ -457,6 +470,37 @@ const loadEnvFile = async (content: string, rootEnv = ""): Promise<void> => {
   if (rootEnv) await writeFile(join(envDirectory, ".env"), rootEnv);
   process.chdir(envDirectory);
   calls.envFileExists = true;
+};
+
+const runGeneratedWorkflow = async (
+  templateName: string,
+  agentName: "codex" | "claude-code",
+  model: string,
+  modelExplicit: boolean,
+  envContent: string,
+): Promise<void> => {
+  const generatedRoot = await mkdtemp(
+    join(initialCwd, "src/.generated-model-workflow-"),
+  );
+  try {
+    await Effect.runPromise(
+      scaffold(generatedRoot, {
+        agent: getAgent(agentName)!,
+        model,
+        modelExplicit,
+        templateName,
+      }).pipe(Effect.provide(NodeFileSystem.layer)),
+    );
+    await writeFile(join(generatedRoot, ".shipyard", ".env"), envContent);
+    process.chdir(generatedRoot);
+    calls.envFileExists = true;
+    await import(
+      pathToFileURL(join(generatedRoot, ".shipyard", "main.mts")).href
+    );
+  } finally {
+    process.chdir(initialCwd);
+    await rm(generatedRoot, { recursive: true, force: true });
+  }
 };
 
 describe("generated issue workflows", () => {
@@ -805,6 +849,167 @@ describe("generated issue workflows", () => {
     ]);
   });
 
+  it("routes reviewed spec work to the selected model roles", async () => {
+    process.env.SHIPYARD_ROUTINE_MODEL = "routine-choice";
+    process.env.SHIPYARD_STRONG_MODEL = "strong-choice";
+    calls.spec = true;
+
+    await import("./templates/parallel-planner-with-review/main.mts" as string);
+
+    expect(
+      calls.agentInvocations.map(({ name, provider, model }) => [
+        name,
+        provider,
+        model,
+      ]),
+    ).toEqual([
+      ["planner", "codex", "strong-choice"],
+      ["triage #43", "codex", "routine-choice"],
+      ["implementer", "codex", "routine-choice"],
+      ["reviewer", "codex", "strong-choice"],
+      ["spec-integrator", "codex", "strong-choice"],
+      ["triage #44", "codex", "routine-choice"],
+      ["implementer", "codex", "routine-choice"],
+      ["reviewer", "codex", "strong-choice"],
+      ["spec-integrator", "codex", "strong-choice"],
+      ["reviewer", "codex", "strong-choice"],
+      ["merger", "codex", "strong-choice"],
+    ]);
+  });
+
+  it("routes dependency-wave integration to the strong model without reviews", async () => {
+    process.env.SHIPYARD_ROUTINE_MODEL = "routine-choice";
+    process.env.SHIPYARD_STRONG_MODEL = "strong-choice";
+    calls.spec = true;
+
+    await import("./templates/parallel-planner/main.mts" as string);
+
+    expect(
+      calls.agentInvocations.map(({ name, provider, model }) => [
+        name,
+        provider,
+        model,
+      ]),
+    ).toEqual([
+      ["planner", "codex", "strong-choice"],
+      ["triage #43", "codex", "routine-choice"],
+      ["implementer", "codex", "routine-choice"],
+      ["spec-integrator", "codex", "strong-choice"],
+      ["triage #44", "codex", "routine-choice"],
+      ["implementer", "codex", "routine-choice"],
+      ["spec-integrator", "codex", "strong-choice"],
+      ["merger", "codex", "strong-choice"],
+    ]);
+  });
+
+  it("reviews a changed integrated spec with the strong model before handoff", async () => {
+    process.env.SHIPYARD_ROUTINE_MODEL = "routine-choice";
+    process.env.SHIPYARD_STRONG_MODEL = "strong-choice";
+    calls.spec = true;
+    calls.finalChanges = true;
+
+    await import("./templates/parallel-planner-with-review/main.mts" as string);
+
+    const invocations = calls.agentInvocations.map(({ name, model }) => [
+      name,
+      model,
+    ]);
+    expect(invocations.filter(([name]) => name === "reviewer")).toEqual([
+      ["reviewer", "strong-choice"],
+      ["reviewer", "strong-choice"],
+      ["reviewer", "strong-choice"],
+      ["reviewer", "strong-choice"],
+    ]);
+    expect(invocations.slice(-3)).toEqual([
+      ["reviewer", "strong-choice"],
+      ["merger", "strong-choice"],
+      ["reviewer", "strong-choice"],
+    ]);
+    expect(calls.events.lastIndexOf("reviewer")).toBeLessThan(
+      calls.events.indexOf("handoff"),
+    );
+  });
+
+  it.each(["parallel-planner", "parallel-planner-with-review"])(
+    "%s preserves Claude role choices across a spec workflow",
+    async (templateName) => {
+      calls.spec = true;
+      process.env.SHIPYARD_STRONG_MODEL = "host-strong";
+
+      await runGeneratedWorkflow(
+        templateName,
+        "claude-code",
+        "claude-opus-4-8",
+        false,
+        "SHIPYARD_ROUTINE_MODEL=sonnet\nSHIPYARD_STRONG_MODEL=opus\n",
+      );
+
+      expect(calls.agentInvocations.length).toBeGreaterThan(0);
+      for (const invocation of calls.agentInvocations) {
+        expect(invocation.provider).toBe("claude-code");
+        expect(invocation.model).toBe(
+          invocation.name.startsWith("triage #") ||
+            invocation.name === "implementer"
+            ? "sonnet"
+            : "host-strong",
+        );
+      }
+    },
+  );
+
+  it.each(["parallel-planner", "parallel-planner-with-review"])(
+    "%s preserves Codex role overrides and init model fallback",
+    async (templateName) => {
+      calls.spec = true;
+      process.env.SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT = "high";
+
+      await runGeneratedWorkflow(
+        templateName,
+        "codex",
+        "single-model",
+        true,
+        "SHIPYARD_ROUTINE_MODEL=host-routine\n",
+      );
+
+      expect(calls.agentInvocations.length).toBeGreaterThan(0);
+      for (const invocation of calls.agentInvocations) {
+        expect(invocation.provider).toBe("codex");
+        const routine =
+          invocation.name.startsWith("triage #") ||
+          invocation.name === "implementer";
+        expect(invocation.model).toBe(
+          routine ? "host-routine" : "single-model",
+        );
+        if (routine) expect(invocation.effort).toBe("high");
+        else expect(invocation.effort).toBeUndefined();
+      }
+    },
+  );
+
+  it.each(["parallel-planner", "parallel-planner-with-review"])(
+    "%s keeps Codex role overrides when new role models are unset",
+    async (templateName) => {
+      process.env.SHIPYARD_CODEX_ROUTINE_MODEL = "legacy-routine";
+      process.env.SHIPYARD_CODEX_STRONG_MODEL = "legacy-strong";
+      process.env.SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT = "high";
+      process.env.SHIPYARD_CODEX_STRONG_REASONING_EFFORT = "low";
+      calls.spec = true;
+
+      await import(`./templates/${templateName}/main.mts` as string);
+
+      for (const invocation of calls.agentInvocations) {
+        const routine =
+          invocation.name.startsWith("triage #") ||
+          invocation.name === "implementer";
+        expect(invocation.provider).toBe("codex");
+        expect(invocation.model).toBe(
+          routine ? "legacy-routine" : "legacy-strong",
+        );
+        expect(invocation.effort).toBe(routine ? "high" : "low");
+      }
+    },
+  );
+
   it("re-reviews the final standalone commit before handoff", async () => {
     calls.finalChanges = true;
     await import("./templates/parallel-planner-with-review/main.mts" as string);
@@ -983,10 +1188,14 @@ describe("generated issue workflows", () => {
   });
 
   it("resolves a child cherry-pick conflict on the spec branch before handoff", async () => {
+    process.env.SHIPYARD_STRONG_MODEL = "strong-choice";
     calls.spec = true;
     calls.cherryPickSucceeds = false;
     await import("./templates/parallel-planner/main.mts" as string);
     expect(calls.events).toContain("conflict-resolver");
+    expect(
+      calls.agentInvocations.find((call) => call.name === "conflict-resolver"),
+    ).toMatchObject({ provider: "codex", model: "strong-choice" });
     expect(calls.events.indexOf("conflict-resolver")).toBeLessThan(
       calls.events.indexOf("spec-integrator"),
     );

@@ -9,6 +9,31 @@ import { resolvePlannerBranch } from "./planner-branch.mjs";
 
 if (process.loadEnvFile && existsSync(".shipyard/.env"))
   process.loadEnvFile(".shipyard/.env");
+type ModelRole = "routine" | "strong";
+const CODEX_PROVIDER = true;
+const agentFactory = shipyard.codex;
+type AgentModel = Parameters<typeof agentFactory>[0];
+const readRoleModel = (role: ModelRole): string | undefined => {
+  const envName = `SHIPYARD_${role.toUpperCase()}_MODEL`;
+  const model = process.env[envName];
+  if (model !== undefined && model.trim().length === 0)
+    throw new Error(`${envName} must not be empty`);
+  return model;
+};
+const roleModels = {
+  routine: readRoleModel("routine"),
+  strong: readRoleModel("strong"),
+};
+const roleAgent = (role: ModelRole, defaultModel: AgentModel) => {
+  const model = roleModels[role] ?? defaultModel;
+  if (typeof model !== "string") return agentFactory(model);
+  const effortName = `SHIPYARD_CODEX_${role.toUpperCase()}_REASONING_EFFORT`;
+  const effort =
+    CODEX_PROVIDER && process.env[effortName]?.trim()
+      ? shipyard.CODEX_MODELS[role].effort
+      : null;
+  return agentFactory(model, { effort });
+};
 const targetBranch = execFileSync("git", ["branch", "--show-current"], {
   encoding: "utf8",
 }).trim();
@@ -115,7 +140,7 @@ const runWorker = async (scope: Scope, ticket: Ticket) => {
     await sandbox.run({
       name: `triage #${ticket.id}`,
       maxIterations: 1,
-      agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
+      agent: roleAgent("routine", shipyard.CODEX_MODELS.routine),
       promptFile: "./.shipyard/triage-prompt.md",
       promptArgs: { TASK_ID: ticket.id },
     });
@@ -123,7 +148,7 @@ const runWorker = async (scope: Scope, ticket: Ticket) => {
     const implementation = await sandbox.run({
       name: "implementer",
       maxIterations: 100,
-      agent: shipyard.codex(shipyard.CODEX_MODELS.routine),
+      agent: roleAgent("routine", shipyard.CODEX_MODELS.routine),
       promptFile: "./.shipyard/implement-prompt.md",
       promptArgs: {
         TASK_ID: ticket.id,
@@ -158,7 +183,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
     name: "planner",
     branchStrategy: { type: "branch", branch: plannerBranch },
     maxIterations: 1,
-    agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
+    agent: roleAgent("strong", shipyard.CODEX_MODELS.strong),
     promptFile: "./.shipyard/plan-prompt.md",
     output: shipyard.Output.object({ tag: "plan", schema: planSchema }),
   });
@@ -286,7 +311,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
                     const resolution = await wave.run({
                       name: "conflict-resolver",
                       maxIterations: 10,
-                      agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
+                      agent: roleAgent("strong", shipyard.CODEX_MODELS.strong),
                       promptFile: "./.shipyard/conflict-prompt.md",
                       promptArgs: {
                         TASK_ID: ready[index]!.id,
@@ -340,7 +365,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
               const integrated = await wave.run({
                 name: "spec-integrator",
                 maxIterations: 10,
-                agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
+                agent: roleAgent("strong", shipyard.CODEX_MODELS.strong),
                 promptFile: "./.shipyard/spec-wave-prompt.md",
                 promptArgs: {
                   TASK_ID: id,
@@ -380,7 +405,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
             await integration.run({
               name: `triage #${id}`,
               maxIterations: 1,
-              agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
+              agent: roleAgent("routine", shipyard.CODEX_MODELS.routine),
               promptFile: "./.shipyard/triage-prompt.md",
               promptArgs: { TASK_ID: id },
             });
@@ -388,7 +413,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
             const standalone = await integration.run({
               name: "implementer",
               maxIterations: 100,
-              agent: shipyard.codex(shipyard.CODEX_MODELS.routine),
+              agent: roleAgent("routine", shipyard.CODEX_MODELS.routine),
               promptFile: "./.shipyard/implement-prompt.md",
               promptArgs: {
                 TASK_ID: id,
@@ -402,7 +427,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
           const final = await integration.run({
             name: "merger",
             maxIterations: 1,
-            agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
+            agent: roleAgent("strong", shipyard.CODEX_MODELS.strong),
             promptFile: "./.shipyard/merge-prompt.md",
             promptArgs: {
               TASK_ID: id,
