@@ -37,7 +37,9 @@ import {
   type CodexAuthMode,
 } from "./CodexAuth.js";
 import { requireCanonicalConfigDir } from "./runtimeConfig.js";
+import { runEffectPromise } from "./runEffectPromise.js";
 import {
+  installRepositoryRunnerWithReplacement,
   installRepositoryRunner,
   RunnerInstallError,
 } from "./RepositoryRunner.js";
@@ -706,23 +708,25 @@ const initCommand = Command.make(
         }
       }
 
-      const scaffoldResult = yield* d.spinner(
+      const scaffoldResult = yield* d.progress(
         `Scaffolding ${CONFIG_DIR}/ config directory...`,
-        scaffold(cwd, {
-          agent: selectedAgent,
-          model: selectedModel,
-          templateName: selectedTemplate,
-          issueTracker: selectedIssueTracker,
-          sandboxProvider: selectedSandboxProvider,
-          codexAuth: selectedCodexAuth,
-        }).pipe(
-          Effect.mapError(
-            (e) =>
-              new InitError({
-                message: `${e instanceof Error ? e.message : e}`,
-              }),
+        (report) =>
+          scaffold(cwd, {
+            agent: selectedAgent,
+            model: selectedModel,
+            templateName: selectedTemplate,
+            issueTracker: selectedIssueTracker,
+            sandboxProvider: selectedSandboxProvider,
+            codexAuth: selectedCodexAuth,
+            onProgress: report,
+          }).pipe(
+            Effect.mapError(
+              (e) =>
+                new InitError({
+                  message: `${e instanceof Error ? e.message : e}`,
+                }),
+            ),
           ),
-        ),
       );
 
       // Detect the host package manager so the zod offer below and the next
@@ -805,24 +809,35 @@ const initCommand = Command.make(
               return confirmed === true;
             },
             install: () =>
-              Effect.runPromise(
-                d.progress("Installing repository runner", (report) =>
-                  Effect.tryPromise({
-                    try: () =>
-                      installRepositoryRunner({
-                        repoDir: cwd,
-                        onProgress: report,
-                      }),
-                    catch: (error) =>
-                      new InitError({
-                        message:
+              installRepositoryRunnerWithReplacement({
+                repoDir: cwd,
+                interactive: isInteractive,
+                confirmReplacement: async (conflict) => {
+                  const confirmed = await clack.confirm({
+                    message: conflict.confirmationMessage,
+                    initialValue: false,
+                  });
+                  return !clack.isCancel(confirmed) && confirmed === true;
+                },
+                install: () =>
+                  runEffectPromise(
+                    d.progress("Installing repository runner", (report) =>
+                      Effect.tryPromise({
+                        try: () =>
+                          installRepositoryRunner({
+                            repoDir: cwd,
+                            onProgress: report,
+                          }),
+                        catch: (error) =>
                           error instanceof RunnerInstallError
-                            ? error.message
-                            : `Repository runner installation failed: ${error instanceof Error ? error.message : String(error)}`,
+                            ? error
+                            : new InitError({
+                                message: `Repository runner installation failed: ${error instanceof Error ? error.message : String(error)}`,
+                              }),
                       }),
-                  }),
-                ),
-              ),
+                    ),
+                  ),
+              }),
           }),
         catch: (error) =>
           error instanceof InitError

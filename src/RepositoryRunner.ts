@@ -42,7 +42,37 @@ const RELEASES_API =
   "https://api.github.com/repos/actions/runner/releases/latest";
 
 export class RunnerInstallError extends Error {
-  readonly name = "RunnerInstallError";
+  readonly name: string = "RunnerInstallError";
+}
+
+export interface ExistingRepositoryRunnerRegistration {
+  readonly id: number | undefined;
+  readonly name: string;
+  readonly status: string;
+  readonly busy: boolean;
+}
+
+export class RunnerInstallConflictError extends RunnerInstallError {
+  override readonly name = "RunnerInstallConflictError";
+
+  readonly confirmationMessage: string;
+
+  constructor(
+    readonly repository: string,
+    readonly runners: readonly ExistingRepositoryRunnerRegistration[],
+  ) {
+    const names = runners.map(({ name }) => name).join(", ");
+    super(
+      `A repository runner labeled \`${ACTIVATION_LABEL}\` is already registered for ${repository}: ${names}. Remove it before installing another.`,
+    );
+    const details = runners
+      .map(
+        ({ id, name, status, busy }) =>
+          `${name}${id === undefined ? "" : ` (#${id})`} (${status}${busy ? ", busy" : ""})`,
+      )
+      .join(", ");
+    this.confirmationMessage = `GitHub has ${runners.length} repository runner${runners.length === 1 ? "" : "s"} labeled \`${ACTIVATION_LABEL}\` for ${repository}: ${details}. Delete ${runners.length === 1 ? "this registration" : "these registrations"} and install a replacement?`;
+  }
 }
 
 export interface RunnerInstallOptions {
@@ -282,6 +312,128 @@ const reportProgress = (
   message: string,
 ): void => options.onProgress?.({ current, total, message });
 
+const parseExistingRunnerRegistrations = (
+  stdout: string,
+): readonly ExistingRepositoryRunnerRegistration[] => {
+  const lines = stdout.trim().split(/\r?\n/).filter(Boolean);
+  return lines.map((line) => {
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      // Accept the earlier name-only response format from injected adapters.
+      // Such a result can block an install, but cannot be deleted without an ID.
+      return { id: undefined, name: line, status: "unknown", busy: false };
+    }
+    if (typeof value !== "object" || value === null) {
+      throw new RunnerInstallError(
+        "GitHub returned invalid repository runner information.",
+      );
+    }
+    const registration = value as Record<string, unknown>;
+    if (
+      typeof registration.id !== "number" ||
+      !Number.isInteger(registration.id) ||
+      registration.id <= 0 ||
+      typeof registration.name !== "string" ||
+      registration.name.length === 0 ||
+      typeof registration.status !== "string" ||
+      typeof registration.busy !== "boolean"
+    ) {
+      throw new RunnerInstallError(
+        "GitHub returned invalid repository runner information.",
+      );
+    }
+    return {
+      id: registration.id,
+      name: registration.name,
+      status: registration.status,
+      busy: registration.busy,
+    };
+  });
+};
+
+export const removeExistingRepositoryRunnerRegistrations = async (
+  options: {
+    readonly repoDir: string;
+    readonly conflict: RunnerInstallConflictError;
+  },
+  adapters: RunnerInstallAdapters = defaultAdapters,
+): Promise<void> => {
+  if (options.conflict.runners.some(({ id }) => id === undefined)) {
+    throw new RunnerInstallError(
+      "GitHub did not provide runner IDs, so Shipyard cannot safely remove the existing registrations. Remove them in GitHub Settings > Actions > Runners, then retry.",
+    );
+  }
+
+  const environment = adapters.environment();
+  const removed: string[] = [];
+  for (const runner of options.conflict.runners) {
+    try {
+      await adapters.run(
+        "gh",
+        [
+          "api",
+          "--method",
+          "DELETE",
+          `repos/${options.conflict.repository}/actions/runners/${runner.id}`,
+        ],
+        { cwd: options.repoDir, env: environment },
+      );
+      removed.push(runner.name);
+    } catch (error) {
+      const previous =
+        removed.length === 0
+          ? ""
+          : ` Earlier registrations were already removed: ${removed.join(", ")}.`;
+      throw new RunnerInstallError(
+        `${
+          commandFailure(
+            `Removing GitHub runner ${runner.name} (#${runner.id}) from ${options.conflict.repository}`,
+            error,
+          ).message
+        }${previous}`,
+      );
+    }
+  }
+};
+
+export const installRepositoryRunnerWithReplacement = async (
+  options: {
+    readonly repoDir: string;
+    readonly interactive: boolean;
+    readonly install: () => Promise<RunnerInstallResult>;
+    readonly confirmReplacement: (
+      conflict: RunnerInstallConflictError,
+    ) => Promise<boolean>;
+  },
+  adapters: RunnerInstallAdapters = defaultAdapters,
+): Promise<RunnerInstallResult> => {
+  try {
+    return await options.install();
+  } catch (error) {
+    if (
+      !(error instanceof RunnerInstallConflictError) ||
+      !options.interactive
+    ) {
+      throw error;
+    }
+    if (!(await options.confirmReplacement(error))) {
+      throw new RunnerInstallError(
+        `${error.message} Existing runner registrations were left unchanged; installation cancelled.`,
+      );
+    }
+    await removeExistingRepositoryRunnerRegistrations(
+      {
+        repoDir: options.repoDir,
+        conflict: error,
+      },
+      adapters,
+    );
+    return options.install();
+  }
+};
+
 export const installRepositoryRunner = async (
   options: RunnerInstallOptions,
   adapters: RunnerInstallAdapters = defaultAdapters,
@@ -409,7 +561,7 @@ export const installRepositoryRunner = async (
         "--paginate",
         `repos/${repository}/actions/runners`,
         "--jq",
-        `.runners[] | select(any(.labels[]; .name == \"${ACTIVATION_LABEL}\")) | .name`,
+        `.runners[] | select(any(.labels[]; .name == \"${ACTIVATION_LABEL}\")) | {id, name, status, busy}`,
       ],
       { cwd: options.repoDir, env: hostEnv },
     )
@@ -419,10 +571,11 @@ export const installRepositoryRunner = async (
         error,
       );
     });
-  if (existing.stdout.trim().length > 0) {
-    throw new RunnerInstallError(
-      `A repository runner labeled \`${ACTIVATION_LABEL}\` is already registered for ${repository}. Remove it before installing another.`,
-    );
+  const existingRegistrations = parseExistingRunnerRegistrations(
+    existing.stdout,
+  );
+  if (existingRegistrations.length > 0) {
+    throw new RunnerInstallConflictError(repository, existingRegistrations);
   }
   reportProgress(
     options,
