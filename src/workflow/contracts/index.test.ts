@@ -94,6 +94,19 @@ describe("workflow contracts", () => {
     expect(createBrief().hash).toBe(brief.hash);
   });
 
+  it("includes review scope in the brief hash when provided", () => {
+    const brief = createWorkBrief({
+      ...createBrief(),
+      scope: "small",
+      hash: undefined,
+    });
+
+    expect(parseWorkBrief(brief)).toEqual(brief);
+    expect(() => parseWorkBrief({ ...brief, scope: "substantial" })).toThrow(
+      "work brief hash does not match content",
+    );
+  });
+
   it("validates policy budgets and keeps unknown checks explicit", () => {
     expect(parseRepositoryPolicy(policy)).toEqual(policy);
     expect(
@@ -178,35 +191,42 @@ describe("workflow contracts", () => {
   });
 
   it.each([
-    ["routine", "triage", "low"],
-    ["routine", "implementation", "high"],
-    ["routine", "checking", "medium"],
-    ["routine", "repair", "critical"],
-    ["routine", "review", "low"],
-    ["strong", "review", "medium"],
-    ["strong", "review", "critical"],
-    ["strong", "review", undefined],
-    ["strong", "review", "unknown"],
-  ] as const)("selects the %s model for %s at %s risk", (role, phase, risk) => {
-    const selected = resolveAgentSelection(
-      {
-        worker: {
-          provider: "selected-provider",
-          models: { routine: "routine-alias", strong: "strong-alias" },
-          sandbox: "test-isolated",
-          skillRevision: "skills-1",
+    ["routine", "triage", "low", undefined],
+    ["routine", "implementation", "high", "substantial"],
+    ["routine", "checking", "medium", "unknown"],
+    ["routine", "repair", "critical", "small"],
+    ["routine", "review", "low", "small"],
+    ["strong", "review", "low", "substantial"],
+    ["strong", "review", "low", "unknown"],
+    ["strong", "review", "low", undefined],
+    ["strong", "review", "medium", "small"],
+    ["strong", "review", "critical", "small"],
+    ["strong", "review", undefined, "small"],
+    ["strong", "review", "unknown", "small"],
+  ] as const)(
+    "selects the %s model for %s at %s risk with %s scope",
+    (role, phase, risk, scope) => {
+      const selected = resolveAgentSelection(
+        {
+          worker: {
+            provider: "selected-provider",
+            models: { routine: "routine-alias", strong: "strong-alias" },
+            sandbox: "test-isolated",
+            skillRevision: "skills-1",
+          },
         },
-      },
-      phase,
-      risk,
-    );
+        phase,
+        risk,
+        scope,
+      );
 
-    expect(selected).toEqual({
-      provider: "selected-provider",
-      model: role === "routine" ? "routine-alias" : "strong-alias",
-      role,
-    });
-  });
+      expect(selected).toEqual({
+        provider: "selected-provider",
+        model: role === "routine" ? "routine-alias" : "strong-alias",
+        role,
+      });
+    },
+  );
 
   it("uses a legacy model for both agent roles", () => {
     expect(resolveAgentSelection(policy, "triage", "low")).toEqual({
@@ -240,6 +260,38 @@ describe("workflow contracts", () => {
     expect(assignment.agentSelection).toEqual({
       provider: "test",
       model: "fixture",
+      role: "strong",
+    });
+  });
+
+  it("uses the strong model for a substantial low-risk review assignment", () => {
+    const brief = createWorkBrief({
+      ...createBrief(),
+      risk: "low",
+      scope: "substantial",
+      hash: undefined,
+    });
+    const assignment = createAssignment({
+      id: "substantial-low-risk-review",
+      phase: "review",
+      brief,
+      policy: createRepositoryPolicy({
+        ...policy,
+        worker: {
+          provider: "selected-provider",
+          models: { routine: "routine-alias", strong: "strong-alias" },
+          sandbox: "test-isolated",
+          skillRevision: "skills-1",
+        },
+      }),
+      attempt: 1,
+      head: { branch: "shipyard/issue-42", sha: "c".repeat(40) },
+      createdAt: "2026-09-17T12:00:00.000Z",
+    });
+
+    expect(assignment.agentSelection).toEqual({
+      provider: "selected-provider",
+      model: "strong-alias",
       role: "strong",
     });
   });

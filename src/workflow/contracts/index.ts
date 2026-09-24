@@ -8,6 +8,8 @@ export type RiskLevel = "low" | "medium" | "high" | "critical";
 
 export type WorkRisk = RiskLevel | "unknown";
 
+export type WorkScope = "small" | "substantial" | "unknown";
+
 export type WorkflowPhase =
   | "triage"
   | "implementation"
@@ -104,6 +106,7 @@ export interface WorkBrief {
   readonly acceptanceCriteria: readonly string[];
   readonly exclusions: readonly string[];
   readonly risk: WorkRisk;
+  readonly scope?: WorkScope;
   readonly verification: VerificationPlan;
   readonly unresolvedQuestions: readonly string[];
   readonly authorization: Authorization;
@@ -492,6 +495,15 @@ export const createWorkBrief = (input: CreateWorkBriefInput): WorkBrief => {
       ["low", "medium", "high", "critical", "unknown"],
       "risk",
     ),
+    ...(input.scope === undefined
+      ? {}
+      : {
+          scope: enumValue<WorkScope>(
+            input.scope,
+            ["small", "substantial", "unknown"],
+            "scope",
+          ),
+        }),
     verification: parseVerification(input.verification),
     unresolvedQuestions: stringArray(
       input.unresolvedQuestions,
@@ -540,6 +552,15 @@ export const parseWorkBrief = (value: unknown): WorkBrief => {
       ["low", "medium", "high", "critical", "unknown"],
       "risk",
     ),
+    ...(value.scope === undefined
+      ? {}
+      : {
+          scope: enumValue<WorkScope>(
+            value.scope,
+            ["small", "substantial", "unknown"],
+            "scope",
+          ),
+        }),
     verification: parseVerification(value.verification),
     unresolvedQuestions: stringArray(
       value.unresolvedQuestions,
@@ -754,10 +775,13 @@ export const createRepositoryPolicy = (
 export const resolveAgentSelection = (
   policy: Pick<RepositoryPolicy, "worker">,
   phase: WorkflowPhase,
-  risk?: RiskLevel | "unknown",
+  risk?: WorkRisk,
+  scope?: WorkScope,
 ): AgentSelection => {
   const role: AgentRole =
-    phase === "review" && risk !== "low" ? "strong" : "routine";
+    phase === "review" && !(risk === "low" && scope === "small")
+      ? "strong"
+      : "routine";
   const worker = policy.worker;
   const modelPath = worker.models
     ? `policy.worker.models.${role}`
@@ -975,6 +999,7 @@ export const createAssignment = (input: CreateAssignmentInput): Assignment => {
       input.policy,
       input.phase,
       brief.risk,
+      brief.scope,
     ),
     base: brief.base,
     head: input.head,

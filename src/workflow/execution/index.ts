@@ -388,6 +388,7 @@ export const executePhase = async (
     trusted.policy,
     assignment.phase,
     trusted.brief.risk,
+    trusted.brief.scope,
   );
   if (
     assignment.agentSelection !== undefined &&

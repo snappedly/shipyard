@@ -673,7 +673,17 @@ describe("workflow coordinator", () => {
   it("binds checks and reviews to the assigned candidate and routes open findings to repair", async () => {
     const { coordinator } = createCoordinator();
     const received = await coordinator.ingest(
-      event("delivery-review", "2026-09-17T12:00:00.000Z", "a".repeat(40)),
+      event("delivery-review", "2026-09-17T12:00:00.000Z", "a".repeat(40), {
+        brief: brief({ risk: "low", scope: "substantial" }),
+        policy: policy({
+          worker: {
+            provider: "selected-provider",
+            models: { routine: "routine-alias", strong: "strong-alias" },
+            sandbox: "fixture",
+            skillRevision: "skills-1",
+          },
+        }),
+      }),
     );
     const implementation = await coordinator.dispatchNext({
       repository,
@@ -783,6 +793,11 @@ describe("workflow coordinator", () => {
       repository,
       workerId: "worker-a",
       jobId: received.job!.id,
+    });
+    expect(reviewDispatch.assignment?.agentSelection).toEqual({
+      provider: "selected-provider",
+      model: "strong-alias",
+      role: "strong",
     });
     const reviewResult = {
       contractVersion: WORKFLOW_CONTRACT_VERSION,

@@ -178,6 +178,7 @@ provider without checking a Shipyard model list. If the provider rejects a
 model, Shipyard records that phase failure and does not choose another model.
 
 Triage, implementation, focused checks, and repair use the routine model.
-Reviews with low risk use routine. Reviews with medium, high, critical, or
-unknown risk use strong. Older policies with `worker.model` use that model for
-both roles.
+Review uses routine only when the brief has `risk: "low"` and `scope: "small"`.
+All other reviews use strong, including reviews with missing or unknown scope
+or medium-or-higher or unknown risk. Older policies with `worker.model` use
+that model for both roles.

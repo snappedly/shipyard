@@ -668,15 +668,16 @@ describe("workflow execution", () => {
   });
 
   it.each([
-    ["triage", "low", "routine", "routine-alias"],
-    ["implementation", "high", "routine", "routine-alias"],
-    ["checking", "medium", "routine", "routine-alias"],
-    ["repair", "critical", "routine", "routine-alias"],
-    ["review", "low", "routine", "routine-alias"],
-    ["review", "medium", "strong", "strong alias from provider"],
+    ["triage", "low", undefined, "routine", "routine-alias"],
+    ["implementation", "high", undefined, "routine", "routine-alias"],
+    ["checking", "medium", undefined, "routine", "routine-alias"],
+    ["repair", "critical", undefined, "routine", "routine-alias"],
+    ["review", "low", "small", "routine", "routine-alias"],
+    ["review", "low", "substantial", "strong", "strong alias from provider"],
+    ["review", "medium", undefined, "strong", "strong alias from provider"],
   ] as const)(
-    "passes the policy-selected %s model to the provider for %s risk",
-    async (phase, risk, role, model) => {
+    "passes the policy-selected %s model to the provider for %s risk and %s scope",
+    async (phase, risk, scope, role, model) => {
       const rolePolicy = createRepositoryPolicy({
         ...policy,
         worker: {
@@ -689,7 +690,12 @@ describe("workflow execution", () => {
           skillRevision: "skill-1",
         },
       });
-      const roleBrief = createWorkBrief({ ...brief, risk, hash: undefined });
+      const roleBrief = createWorkBrief({
+        ...brief,
+        risk,
+        scope,
+        hash: undefined,
+      });
       const roleAssignment = createAssignment({
         id: `${phase}-assignment`,
         phase,
