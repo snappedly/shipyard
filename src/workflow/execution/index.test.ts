@@ -856,6 +856,33 @@ describe("workflow execution", () => {
     ).rejects.toThrow(
       "Assignment agent selection does not match trusted policy",
     );
+    const highRiskBrief = createWorkBrief({
+      ...brief,
+      risk: "high",
+      hash: undefined,
+    });
+    const highRiskAssignment = createAssignment({
+      id: "high-risk-review",
+      phase: "review",
+      brief: highRiskBrief,
+      policy: rolePolicy,
+      attempt: 1,
+      head: candidateHead,
+      createdAt: "2026-09-17T12:00:00.000Z",
+    });
+    await expect(
+      executePhase(
+        makeOptions({
+          assignment: {
+            ...highRiskAssignment,
+            agentSelection: routineSelection,
+          },
+          trusted: { ...trusted, brief: highRiskBrief },
+        }) as never,
+      ),
+    ).rejects.toThrow(
+      "Assignment agent selection does not match trusted policy",
+    );
   });
 
   it("does not retry with another model when the selected provider rejects it", async () => {
