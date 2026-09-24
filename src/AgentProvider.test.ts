@@ -13,7 +13,7 @@ import { join, posix } from "node:path";
 import { describe, expect, it } from "vitest";
 import { claudeCode, codex } from "./AgentProvider.js";
 import type { AgentCommandOptions } from "./AgentProvider.js";
-import type { BindMountSandboxHandle } from "./SandboxProvider.js";
+import type { SessionTransferHandle } from "./SandboxProvider.js";
 import { CODEX_MODELS, CODEX_REASONING_EFFORTS } from "./modelConfig.js";
 
 /** Shorthand: build options with dangerouslySkipPermissions: true (mirrors existing sandbox callers). */
@@ -841,7 +841,7 @@ describe("captureSessions flag", () => {
 
 describe("sessionStorage", () => {
   /** Bind-mount handle backed by the host filesystem (sandbox path == host path). */
-  const fsBindMountHandle = (): BindMountSandboxHandle => ({
+  const fsBindMountHandle = (): SessionTransferHandle => ({
     worktreePath: "/workspace",
     exec: async (command) => {
       const { exec } = await import("node:child_process");
@@ -1107,7 +1107,7 @@ describe("sessionStorage", () => {
       try {
         // Decorate the fs handle: make copyFileOut fail for the bad subagent.
         const base = fsBindMountHandle();
-        const handle: BindMountSandboxHandle = {
+        const handle: SessionTransferHandle = {
           ...base,
           copyFileOut: async (sandboxPath, destPath) => {
             if (sandboxPath.endsWith("agent-bad.jsonl")) {

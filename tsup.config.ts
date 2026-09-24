@@ -10,8 +10,6 @@ export default defineConfig({
     index: "src/index.ts",
     main: "src/main.ts",
     "sandboxes/docker": "src/sandboxes/docker.ts",
-    "sandboxes/vercel": "src/sandboxes/vercel.ts",
-    "sandboxes/no-sandbox": "src/sandboxes/no-sandbox.ts",
   },
   format: ["esm"],
   outDir: "dist",
@@ -22,7 +20,6 @@ export default defineConfig({
   clean: true,
   dts: true,
   treeshake: true,
-  external: ["@vercel/sandbox"],
   define: {
     __SHIPYARD_VERSION__: JSON.stringify(pkg.version),
   },

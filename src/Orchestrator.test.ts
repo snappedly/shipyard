@@ -29,7 +29,7 @@ import {
   agentStreamEmitterLayer,
   type AgentStreamEvent,
 } from "./AgentStreamEmitter.js";
-import type { BindMountSandboxHandle } from "./SandboxProvider.js";
+import type { SessionTransferHandle } from "./SandboxProvider.js";
 import { CODEX_MODELS } from "./modelConfig.js";
 
 const noOpParserProvider: AgentProvider = {
@@ -2856,7 +2856,7 @@ describe("Orchestrator with codex provider", () => {
 
 describe("Session capture integration", () => {
   /**
-   * Create a test factory that provides a bindMountHandle with copyFileIn/copyFileOut
+   * Create a test factory that provides a sessionTransferHandle with copyFileIn/copyFileOut
    * backed by the filesystem. This allows session capture to work through the
    * sessionStorage.captureToHost / resumeIntoSandbox path.
    */
@@ -2891,7 +2891,7 @@ describe("Session capture integration", () => {
           }),
           (_branchName) => {
             // Create a bind-mount handle backed by filesystem copy
-            const handle: BindMountSandboxHandle = {
+            const handle: SessionTransferHandle = {
               worktreePath: sandboxBaseDir,
               exec: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
               copyFileIn: async (hostPath, sandboxPath) => {
@@ -2936,7 +2936,7 @@ describe("Session capture integration", () => {
                 hostWorktreePath: sandboxBaseDir,
                 sandboxRepoPath: sandboxBaseDir,
                 applyToHost: () => Effect.void,
-                bindMountHandle: handle,
+                sessionTransferHandle: handle,
               },
               sandbox,
             ) as Effect.Effect<A, E | DockerError, R>;
@@ -3058,7 +3058,7 @@ describe("Session capture integration", () => {
     await initRepo(hostDir);
     await commitFile(hostDir, "hello.txt", "hello", "initial commit");
 
-    // Use default factory (no bindMountHandle, no session_id in stream)
+    // Use default factory (no sessionTransferHandle, no session_id in stream)
     const { factoryLayer } = makeTestSandboxFactory(hostDir, (dir) =>
       makeMockAgentLayer(dir, async () => {
         return "Done.";
@@ -3219,7 +3219,7 @@ describe("Session capture integration", () => {
             );
           }),
           () => {
-            const handle: BindMountSandboxHandle = {
+            const handle: SessionTransferHandle = {
               worktreePath: sandboxBaseDir,
               exec: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
               copyFileIn: async (hostPath, sandboxPath) => {
@@ -3288,7 +3288,7 @@ describe("Session capture integration", () => {
                 hostWorktreePath: sandboxBaseDir,
                 sandboxRepoPath: sandboxBaseDir,
                 applyToHost: () => Effect.void,
-                bindMountHandle: handle,
+                sessionTransferHandle: handle,
               },
               sandbox,
             ) as Effect.Effect<A, E | DockerError, R>;

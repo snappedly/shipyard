@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import * as shipyard from "@snappedly-tools/shipyard";
-import { noSandbox } from "@snappedly-tools/shipyard/sandboxes/no-sandbox";
+import { docker } from "@snappedly-tools/shipyard/sandboxes/docker";
 import {
   asRecord,
   asString,
@@ -67,7 +67,7 @@ try {
   const result = await runWithExtraction({
     name: `update-branch-pr-${PR_NUMBER}`,
     agent: strongCodexAgent(),
-    sandbox: noSandbox(),
+    sandbox: docker(),
     logging: { type: "stdout" },
     promptFile: path.join(import.meta.dirname, "prompt.md"),
     promptArgs: {

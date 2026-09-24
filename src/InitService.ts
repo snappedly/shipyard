@@ -227,7 +227,7 @@ RUN apt-get update && apt-get install -y \\
 
 # Build-args for UID/GID alignment: shipyard docker build-image
 # defaults these to the host user's UID/GID so image-built files
-# and bind-mounted files share an owner without runtime chown.
+# and explicit mounted files share an owner without runtime chown.
 ARG AGENT_UID=1000
 ARG AGENT_GID=1000
 
@@ -243,8 +243,8 @@ ENV PATH="/home/agent/.local/bin:$PATH"
 
 WORKDIR /home/agent
 
-# In worktree sandbox mode, Shipyard bind-mounts the git worktree at ${SANDBOX_REPO_DIR}
-# and overrides the working directory to ${SANDBOX_REPO_DIR} at container start.
+# Shipyard syncs Git history into a sandbox-owned repository at ${SANDBOX_REPO_DIR}
+# and runs agent commands from ${SANDBOX_REPO_DIR}.
 # Structure your Dockerfile so that ${SANDBOX_REPO_DIR} can serve as the project root.
 ENTRYPOINT ["sleep", "infinity"]
 `;
@@ -262,7 +262,7 @@ RUN apt-get update && apt-get install -y \\
 
 # Build-args for UID/GID alignment: shipyard docker build-image
 # defaults these to the host user's UID/GID so image-built files
-# and bind-mounted files share an owner without runtime chown.
+# and explicit mounted files share an owner without runtime chown.
 ARG AGENT_UID=1000
 ARG AGENT_GID=1000
 
@@ -276,8 +276,8 @@ USER \${AGENT_UID}:\${AGENT_GID}
 
 WORKDIR /home/agent
 
-# In worktree sandbox mode, Shipyard bind-mounts the git worktree at ${SANDBOX_REPO_DIR}
-# and overrides the working directory to ${SANDBOX_REPO_DIR} at container start.
+# Shipyard syncs Git history into a sandbox-owned repository at ${SANDBOX_REPO_DIR}
+# and runs agent commands from ${SANDBOX_REPO_DIR}.
 # Structure your Dockerfile so that ${SANDBOX_REPO_DIR} can serve as the project root.
 ENTRYPOINT ["sleep", "infinity"]
 `;

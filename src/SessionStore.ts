@@ -11,7 +11,7 @@
 import { access, readdir } from "node:fs/promises";
 import { join, posix, relative } from "node:path";
 import { homedir } from "node:os";
-import type { BindMountSandboxHandle } from "./SandboxProvider.js";
+import type { SessionTransferHandle } from "./SandboxProvider.js";
 import { shellQuote } from "./shellQuote.js";
 
 const SAFE_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/;
@@ -144,7 +144,7 @@ export const claudeSubagentsDirOnHost = (
 export const listClaudeSubagentSessionsInSandbox = async (
   cwd: string,
   id: string,
-  handle: Pick<BindMountSandboxHandle, "exec">,
+  handle: Pick<SessionTransferHandle, "exec">,
   sandboxProjectsDir: string,
 ): Promise<string[]> => {
   assertSafeSessionId(id);
@@ -303,7 +303,7 @@ export const locateCodexHostSession = async (
 
 export const locateCodexSandboxSession = async (
   id: string,
-  handle: Pick<BindMountSandboxHandle, "exec">,
+  handle: Pick<SessionTransferHandle, "exec">,
   sessionsDir: string,
 ): Promise<CodexSessionLocation> => {
   assertSafeSessionId(id);

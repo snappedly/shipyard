@@ -15,8 +15,8 @@ import { describe, expect, it } from "vitest";
 import { createWorktree } from "./createWorktree.js";
 import { claudeCode, codex } from "./AgentProvider.js";
 import {
-  createBindMountSandboxProvider,
-  type BindMountSandboxHandle,
+  createIsolatedSandboxProvider,
+  type IsolatedSandboxHandle,
   type InteractiveExecOptions,
   type ExecResult,
   type SandboxProvider,
@@ -24,6 +24,7 @@ import {
 import { encodeProjectPath } from "./SessionStore.js";
 import { makeLocalSandbox } from "./testSandbox.js";
 import { silenceTerminalOutput } from "./testTerminalOutput.js";
+import { testIsolated } from "./sandboxes/test-isolated.js";
 
 silenceTerminalOutput();
 
@@ -291,26 +292,12 @@ describe("worktree.interactive()", () => {
       opts: InteractiveExecOptions,
     ) => Promise<{ exitCode: number }>,
   ) =>
-    createBindMountSandboxProvider({
+    createIsolatedSandboxProvider({
       name: "test-interactive",
-      create: async (options) => {
-        const handle: BindMountSandboxHandle = {
-          worktreePath: options.worktreePath,
-          exec: async (command) => {
-            const result = execSync(command, {
-              cwd: options.worktreePath,
-              encoding: "utf-8",
-              stdio: ["pipe", "pipe", "pipe"],
-            });
-            return { stdout: result, stderr: "", exitCode: 0 };
-          },
-          interactiveExec: fakeInteractiveExec,
-          copyFileIn: async () => {},
-          copyFileOut: async () => {},
-          close: async () => {},
-        };
-        return handle;
-      },
+      create: async (options) => ({
+        ...(await testIsolated().create(options)),
+        interactiveExec: fakeInteractiveExec,
+      }),
     });
 
   it("runs interactive session and returns result shape", async () => {
@@ -573,11 +560,12 @@ describe("worktree.run()", () => {
     mockAgentBehavior: (cwd: string) => Promise<string> = async () =>
       "mock output",
   ) =>
-    createBindMountSandboxProvider({
+    createIsolatedSandboxProvider({
       name: "test-run",
       create: async (options) => {
-        const handle: BindMountSandboxHandle = {
-          worktreePath: options.worktreePath,
+        const base = await testIsolated().create(options);
+        const handle: IsolatedSandboxHandle = {
+          worktreePath: base.worktreePath,
           exec: async (
             command: string,
             execOptions?: {
@@ -586,7 +574,7 @@ describe("worktree.run()", () => {
               sudo?: boolean;
             },
           ): Promise<ExecResult> => {
-            const cwd = execOptions?.cwd ?? options.worktreePath;
+            const cwd = execOptions?.cwd ?? base.worktreePath;
             // Intercept agent commands
             if (command.startsWith("claude ")) {
               const output = await mockAgentBehavior(cwd);
@@ -612,17 +600,11 @@ describe("worktree.run()", () => {
               }
               return { stdout: streamOutput, stderr: "", exitCode: 0 };
             }
-            // Pass through other commands
-            const result = execSync(command, {
-              cwd,
-              encoding: "utf-8",
-              stdio: ["pipe", "pipe", "pipe"],
-            });
-            return { stdout: result, stderr: "", exitCode: 0 };
+            return base.exec(command, execOptions);
           },
-          copyFileIn: async () => {},
-          copyFileOut: async () => {},
-          close: async () => {},
+          copyIn: base.copyIn,
+          copyFileOut: base.copyFileOut,
+          close: base.close,
         };
         return handle;
       },
@@ -704,17 +686,18 @@ describe("worktree.run()", () => {
     const logPath = join(hostDir, "ctxwin.log");
     const mockSessionId = "wsrun-claude-cap-1";
 
-    // Bind-mount provider whose handle exposes filesystem-backed copyFileIn/
+    // Bind-mount provider whose handle exposes filesystem-backed copyIn/
     // copyFileOut so AgentSessionStorage.captureToHost works. The exec layer
     // intercepts `claude ...`, writes a fake session JSONL into the sandbox's
     // projects directory, and streams a stub session_id.
-    const sandbox = createBindMountSandboxProvider({
+    const sandbox = createIsolatedSandboxProvider({
       name: "test-claude-cap",
       create: async (options) => {
-        const handle: BindMountSandboxHandle = {
-          worktreePath: options.worktreePath,
+        const base = await testIsolated().create(options);
+        const handle: IsolatedSandboxHandle = {
+          worktreePath: base.worktreePath,
           exec: async (command, execOptions) => {
-            const cwd = execOptions?.cwd ?? options.worktreePath;
+            const cwd = execOptions?.cwd ?? base.worktreePath;
             if (command.startsWith("claude ")) {
               const encoded = encodeProjectPath(cwd);
               const sessionsDir = join(sandboxProjectsDir, encoded);
@@ -762,25 +745,9 @@ describe("worktree.run()", () => {
               }
               return { stdout: streamLines, stderr: "", exitCode: 0 };
             }
-            try {
-              const result = execSync(command, {
-                cwd,
-                encoding: "utf-8",
-                stdio: ["pipe", "pipe", "pipe"],
-              });
-              return { stdout: result, stderr: "", exitCode: 0 };
-            } catch (e: any) {
-              return {
-                stdout: e?.stdout?.toString() ?? "",
-                stderr: e?.stderr?.toString() ?? "",
-                exitCode:
-                  typeof e?.status === "number" && e.status !== null
-                    ? e.status
-                    : 1,
-              };
-            }
+            return base.exec(command, execOptions);
           },
-          copyFileIn: async (hostPath, sandboxPath) => {
+          copyIn: async (hostPath, sandboxPath) => {
             await mkdir(dirname(sandboxPath), { recursive: true });
             await copyFile(hostPath, sandboxPath);
           },
@@ -788,7 +755,7 @@ describe("worktree.run()", () => {
             await mkdir(dirname(hostPath), { recursive: true });
             await copyFile(sandboxPath, hostPath);
           },
-          close: async () => {},
+          close: base.close,
         };
         return handle;
       },
@@ -1122,18 +1089,42 @@ describe("worktree.run()", () => {
 });
 
 /** Dummy sandbox provider used to satisfy the required `sandbox` field in test mode. */
-const testSandbox: SandboxProvider = createBindMountSandboxProvider({
-  name: "test",
-  create: async (options) => ({
-    worktreePath: options.worktreePath,
-    exec: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
-    copyFileIn: async () => {},
-    copyFileOut: async () => {},
-    close: async () => {},
-  }),
-});
+const testSandbox: SandboxProvider = testIsolated();
 
 describe("worktree.createSandbox()", () => {
+  it("transfers prepared and per-sandbox files from the worktree", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "ws-sandbox-copy-"));
+    await initRepo(hostDir);
+    await commitFile(hostDir, "init.txt", "init", "initial commit");
+    await writeFile(join(hostDir, "prepared.txt"), "original");
+    await writeFile(join(hostDir, "extra.txt"), "extra");
+
+    const ws = await createWorktree({
+      branchStrategy: { type: "branch", branch: "copy-into-sandbox" },
+      copyToWorktree: ["prepared.txt"],
+      cwd: hostDir,
+    });
+
+    try {
+      await writeFile(join(ws.worktreePath, "prepared.txt"), "worktree edit");
+      const sandbox = await ws.createSandbox({
+        sandbox: testIsolated(),
+        copyToWorktree: ["extra.txt"],
+      });
+      try {
+        expect((await sandbox.exec("cat prepared.txt")).stdout).toBe(
+          "worktree edit",
+        );
+        expect((await sandbox.exec("cat extra.txt")).stdout).toBe("extra");
+      } finally {
+        await sandbox.close();
+      }
+    } finally {
+      await ws.close();
+      await rm(hostDir, { recursive: true, force: true });
+    }
+  });
+
   it("creates a sandbox with branch and worktreePath from the worktree", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "ws-sandbox-"));
     await initRepo(hostDir);

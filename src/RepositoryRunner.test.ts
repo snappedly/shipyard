@@ -124,7 +124,7 @@ describe("installRepositoryRunner", () => {
       runnerDir: join(repoDir, ".shipyard", "runner"),
     });
     expect(writes.get(join(repoDir, ".shipyard", ".gitignore"))).toBe(
-      ".env\nrunner/\nrunner-sandbox-mask/\n",
+      ".env\nrunner/\n",
     );
     expect(writes.has(join(repoDir, ".shipyard", "runner", "runner.tgz"))).toBe(
       false,
@@ -259,7 +259,6 @@ describe("installRepositoryRunner", () => {
     const base = makeAdapters();
     const progress: RunnerInstallProgress[] = [];
     const runnerDir = join(repoDir, ".shipyard", "runner");
-    const maskDir = join(repoDir, ".shipyard", "runner-sandbox-mask");
     const metadataPath = join(runnerDir, ".shipyard-install.json");
     const existingMetadata = {
       schemaVersion: 1,
@@ -274,7 +273,6 @@ describe("installRepositoryRunner", () => {
       exists: async (path) =>
         [
           runnerDir,
-          maskDir,
           metadataPath,
           join(runnerDir, ".credentials"),
           join(runnerDir, "run.sh"),
@@ -489,8 +487,5 @@ describe("installRepositoryRunner", () => {
     expect((error as Error).message).toContain("removed");
     expect((error as Error).message).toContain("orphan registration");
     expect(base.removes).toContain(join(repoDir, ".shipyard", "runner"));
-    expect(base.removes).toContain(
-      join(repoDir, ".shipyard", "runner-sandbox-mask"),
-    );
   });
 });

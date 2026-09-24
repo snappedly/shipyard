@@ -27,8 +27,8 @@ one-time runner registration token into `.shipyard/.env` or this report.
       `.github/workflows/shipyard-wake.yml` was created.
 - [ ] Recreate the test scaffold, accept installation, and confirm a runner named
       `shipyard-{repository}-{mac-name}` appears under GitHub Settings > Actions > Runners with the `shipyard` label.
-- [ ] Confirm `.shipyard/runner/` and `.shipyard/runner-sandbox-mask/` are ignored,
-      mode-protected, and absent from `git status` and sandbox inputs.
+- [ ] Confirm `.shipyard/runner/` is ignored, mode-protected, and absent from
+      `git status` and sandbox inputs.
 - [ ] Commit and push `.github/workflows/shipyard-wake.yml` to the default branch.
 - [ ] Run `npx shipyard runner start` and confirm startup validates Docker,
       GitHub.com access, credentials, lowercase `shipyard`, and the published

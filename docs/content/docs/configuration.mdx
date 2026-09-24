@@ -74,16 +74,16 @@ The mount exposes a ChatGPT credential to the agent, so use it only with
 trusted repositories. API-key mode is the safer choice for unattended or
 untrusted runs.
 
-| Option                  | Default                                                  | Purpose                                                     |
-| ----------------------- | -------------------------------------------------------- | ----------------------------------------------------------- |
-| `agent`                 | Required                                                 | Agent provider and model                                    |
-| `sandbox`               | Required                                                 | Sandbox provider                                            |
-| `promptFile` / `prompt` | Supply one                                               | File template or inline instructions                        |
-| `maxIterations`         | `1`                                                      | Maximum agent invocations                                   |
-| `branchStrategy`        | `merge-to-head` for Docker/Vercel; `head` for no-sandbox | Direct host access, temporary merge, or explicit branch     |
-| `logging`               | File under `.shipyard/logs/YYYY-MM-DD/`                  | File logging or terminal progress with `{ type: "stdout" }` |
-| `completionSignal`      | `<promise>COMPLETE</promise>`                            | Agent output that ends the loop early                       |
-| `cwd`                   | `process.cwd()`                                          | Host repository to operate on                               |
+| Option                  | Default                                 | Purpose                                                     |
+| ----------------------- | --------------------------------------- | ----------------------------------------------------------- |
+| `agent`                 | Required                                | Agent provider and model                                    |
+| `sandbox`               | Required                                | Sandbox provider                                            |
+| `promptFile` / `prompt` | Supply one                              | File template or inline instructions                        |
+| `maxIterations`         | `1`                                     | Maximum agent invocations                                   |
+| `branchStrategy`        | `merge-to-head`                         | Temporary merge or explicit branch                          |
+| `logging`               | File under `.shipyard/logs/YYYY-MM-DD/` | File logging or terminal progress with `{ type: "stdout" }` |
+| `completionSignal`      | `<promise>COMPLETE</promise>`           | Agent output that ends the loop early                       |
+| `cwd`                   | `process.cwd()`                         | Host repository to operate on                               |
 
 `promptFile` is resolved against the calling process's working directory, even
 when `cwd` points at another repository. Runtime files such as `.shipyard/.env`
@@ -107,31 +107,11 @@ malformed directory names, and symlinks are left alone. `shipyard run` performs
 the eight-day purge best-effort before a run, using modification time for
 root-level `.log` files.
 
-Docker and Vercel Sandbox do not support `head` or automatically mount your checkout.
-They start from committed Git history. Use `copyToWorktree` for selected ignored
+Docker starts from committed Git history. Use `copyToWorktree` for selected ignored
 or untracked files; these copy from the original repository. Mounts must stay
 outside `/home/agent/workspace` and its ancestors (for example `/mnt/cache` or
 `~/.codex/auth.json`). This prevents mounts from replacing sandbox-owned Git
 storage. Session capture and resume use file transfer.
-
-### No-sandbox mode
-
-Use no-sandbox mode when you intentionally want the agent to run directly on
-the host:
-
-```ts
-import { CODEX_MODELS, codex, run } from "@snappedly-tools/shipyard";
-import { noSandbox } from "@snappedly-tools/shipyard/sandboxes/no-sandbox";
-
-const result = await run({
-  agent: codex(CODEX_MODELS.routine),
-  sandbox: noSandbox(),
-  promptFile: ".shipyard/prompt.md",
-});
-```
-
-It defaults to the `head` branch strategy and grants the agent the permissions
-of the Shipyard process. Use it only with trusted repositories and prompts.
 
 ## Prompts
 

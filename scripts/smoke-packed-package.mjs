@@ -36,8 +36,6 @@ try {
       [
         'await import("@snappedly-tools/shipyard")',
         'await import("@snappedly-tools/shipyard/sandboxes/docker")',
-        'await import("@snappedly-tools/shipyard/sandboxes/vercel")',
-        'await import("@snappedly-tools/shipyard/sandboxes/no-sandbox")',
       ].join(";"),
     ],
     { cwd: temporaryDirectory, stdio: "inherit" },
@@ -47,9 +45,7 @@ try {
     [
       'import * as shipyard from "@snappedly-tools/shipyard";',
       'import { docker } from "@snappedly-tools/shipyard/sandboxes/docker";',
-      'import { vercel } from "@snappedly-tools/shipyard/sandboxes/vercel";',
-      'import { noSandbox } from "@snappedly-tools/shipyard/sandboxes/no-sandbox";',
-      "void [shipyard, docker, vercel, noSandbox];",
+      "void [shipyard, docker];",
     ].join("\n"),
   );
   await writeFile(
