@@ -311,6 +311,10 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
   it("init --help exposes --model flag", async () => {
     const { stdout } = await runCli("init --help", process.cwd());
     expect(stdout).toContain("--model");
+    expect(stdout).toContain("--routine-model");
+    expect(stdout).toContain("--strong-model");
+    expect(stdout).toContain("--routine-effort");
+    expect(stdout).toContain("--strong-effort");
   });
 
   it("init --help exposes --sandbox flag", async () => {

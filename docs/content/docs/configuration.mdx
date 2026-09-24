@@ -135,14 +135,24 @@ Sandbox environment resolution uses `.shipyard/.env`:
 The repository-root `.env` is not loaded. Provider-level `env` options can also
 supply sandbox variables. Keep `.shipyard/.env` untracked.
 
-## Codex model roles
+## Model roles
 
-Generated scripts use `codex(CODEX_MODELS.routine)`. Use
-`codex(CODEX_MODELS.strong)` for heavier planning or review, or pass your chosen
-model directly: `codex("your-model", { effort: "high" })`.
+Generated issue workflows use `routine` for triage and implementation. They use
+`strong` for planning, review, conflict resolution, and spec integration.
+Routine publication steps run as code. The generated `modelRoles` object in
+`.shipyard/main.ts` or `.shipyard/main.mts` is the place to review and edit both
+role choices. Each role has a model identifier and an optional reasoning effort.
 
-The role defaults live in `src/modelConfig.ts`. Override them in the **host
-process environment before starting your script**:
+Use `shipyard init --routine-model <model> --strong-model <model>` to set
+different models. `--routine-effort` and `--strong-effort` accept `low`,
+`medium`, `high`, `xhigh`, or `max`. Check that the selected model supports the
+effort. `--model` sets both roles to one model; a role-specific option takes
+precedence. A provider or model rejected at runtime stops the run. Shipyard does
+not silently substitute another model.
+
+Codex role defaults live in `src/modelConfig.ts`. Without an explicit model
+choice, override them in the **host process environment before starting your
+script**:
 
 - `SHIPYARD_CODEX_ROUTINE_MODEL`
 - `SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT`
@@ -151,3 +161,26 @@ process environment before starting your script**:
 
 These configure the host-side library at import time; putting them only in
 `.shipyard/.env` does not change the model roles.
+
+Generated workflows append one JSON record per model run to
+`.shipyard/logs/model-usage.jsonl`. Records include the issue, phase, role,
+provider, model, effort, attempt, escalation reason, and reported token counts.
+Planner records list the activated issue IDs as shared work; their token counts
+cannot be assigned to one issue. Generated Codex and Claude Code runs disable
+built-in subagents. The log marks them `disabled` and marks any external process
+an agent starts as `unknown`. Missing token counts remain unknown. If logging fails, Shipyard warns and preserves the run
+outcome. The file is ignored by Git. It does not
+estimate currency cost because API prices, service tiers, and subscription use
+differ. Apply rates from your billing path if you need an estimate.
+
+The host process allows eight strong-model runs per issue by default. Planning
+has a separate limit of 32 strong runs per process, controlled by
+`SHIPYARD_MAX_PLANNER_RUNS`. Set
+`SHIPYARD_MAX_STRONG_RUNS_PER_ISSUE` to a nonnegative integer before starting a
+workflow to change that limit. At the limit, Shipyard blocks the next strong
+phase and records `budget-exhausted` when logging is available; it does not switch models. Set
+`SHIPYARD_ESCALATE_ROUTINE_FAILURES=true` to allow one strong-model attempt
+after a routine implementation ends without its completion signal and supplies
+`Facts`, `Checks`, and `Blocker` in its handoff. The strong run receives a concise
+copy of that evidence and counts against the
+limit. These limits are per host process and control runs, not token spend.

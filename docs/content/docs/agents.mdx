@@ -31,10 +31,12 @@ Codex supports two authentication modes:
 `--codex-auth api-key` is the default. `GH_TOKEN` is for prompts that access
 GitHub, not a requirement of the Codex provider.
 
-Generated Codex runs use `CODEX_MODELS.routine` by default. For heavier
-planning, review, or merge work, use `codex(CODEX_MODELS.strong)`. Each role
-contains a model identifier and its reasoning effort. Defaults are centralized
-in `src/modelConfig.ts`; set overrides in the host process environment before
+Generated Codex issue workflows use separate routine and strong roles. The
+routine role handles initial triage and implementation. High-risk triage is
+reviewed by the strong role before the issue can become ready. The strong role
+also handles planning, review, and difficult integration. Each role contains a model
+identifier and its reasoning effort. Defaults are centralized in
+`src/modelConfig.ts`; set overrides in the host process environment before
 starting the script with
 `SHIPYARD_CODEX_ROUTINE_MODEL`, `SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT`,
 `SHIPYARD_CODEX_STRONG_MODEL`, and `SHIPYARD_CODEX_STRONG_REASONING_EFFORT`.
@@ -51,3 +53,6 @@ Required environment variables (one of):
 | `ANTHROPIC_API_KEY`       | Anthropic API key (alternative to `CLAUDE_CODE_OAUTH_TOKEN`)                                                                                       |
 
 `GH_TOKEN` is also needed when your prompt accesses GitHub.
+
+Generated issue workflows disable built-in subagents for both providers. This
+keeps their model calls within Shipyard's explicit routine and strong phases.

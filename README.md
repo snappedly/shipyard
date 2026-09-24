@@ -90,6 +90,14 @@ branches, limits, and hooks in the generated `.shipyard/main.ts` or
 `.shipyard/main.mts`. See [configuration](docs/content/docs/configuration.mdx)
 and [agent setup](docs/content/docs/agents.mdx).
 
+Generated workflows use separate routine and strong model roles. Set them during
+initialization with `--routine-model` and `--strong-model`, or edit the
+`modelRoles` object in `.shipyard/main.ts` or `.shipyard/main.mts`. `--model`
+sets both roles to one model unless a role-specific option overrides it. Shipyard
+records reported token use by issue and phase in
+`.shipyard/logs/model-usage.jsonl`. Built-in subagents are disabled in generated
+workflows so the selected role controls each model call.
+
 ## Safety and license
 
 Shipyard runs on your machine or infrastructure. Sandbox access depends on the

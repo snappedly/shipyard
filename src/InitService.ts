@@ -482,6 +482,10 @@ const rewriteMainTs = (
   configDir: string,
   agent: AgentEntry,
   model: string,
+  roleOptions: Pick<
+    ScaffoldOptions,
+    "routineModel" | "strongModel" | "routineEffort" | "strongEffort"
+  > & { singleModelOverride?: boolean },
   sandboxProvider: SandboxProviderEntry,
   mainFilename: string,
   codexAuth: CodexAuthMode,
@@ -505,26 +509,37 @@ const rewriteMainTs = (
       new RegExp(`\\b${TEMPLATE_AGENT_FACTORY}\\b`, "g"),
       agent.factoryImport,
     );
-    // Replace model arguments in factory calls. The built-in Codex templates
-    // use CODEX_MODELS references so the central model configuration remains
-    // live in a default Codex scaffold.
-    const factoryCallRe = new RegExp(
-      `${agent.factoryImport}\\(([^)\\n]*)\\)`,
-      "g",
-    );
+    const roleConfig = (role: "routine" | "strong") => {
+      const modelOverride = roleOptions[`${role}Model`];
+      const effortOverride = roleOptions[`${role}Effort`];
+      if (
+        agent.name === "codex" &&
+        model === CODEX_MODELS.routine.model &&
+        !roleOptions.singleModelOverride &&
+        !modelOverride &&
+        !effortOverride
+      ) {
+        return `shipyard.CODEX_MODELS.${role}`;
+      }
+      const modelExpression = modelOverride
+        ? JSON.stringify(modelOverride)
+        : agent.name === "codex" &&
+            model === CODEX_MODELS.routine.model &&
+            !roleOptions.singleModelOverride
+          ? `shipyard.CODEX_MODELS.${role}.model`
+          : JSON.stringify(model);
+      const effort =
+        effortOverride ??
+        (agent.name === "codex"
+          ? `shipyard.CODEX_MODELS.${role}.effort`
+          : "undefined");
+      return `{ model: ${modelExpression}, effort: ${
+        effortOverride ? JSON.stringify(effortOverride) : effort
+      } }`;
+    };
     content = content.replace(
-      factoryCallRe,
-      (match, modelExpression: string) => {
-        const keepsConfiguredModel =
-          agent.name === "codex" &&
-          model === CODEX_MODELS.routine.model &&
-          /^(?:[A-Za-z_$][\w$]*\.)*CODEX_MODELS\.[A-Za-z_$][\w$]*$/.test(
-            modelExpression.trim(),
-          );
-        return keepsConfiguredModel
-          ? match
-          : `${agent.factoryImport}("${model}")`;
-      },
+      "const modelRoles = shipyard.CODEX_MODELS;",
+      `const modelRoles = { routine: ${roleConfig("routine")}, strong: ${roleConfig("strong")} } as const;`,
     );
 
     // ChatGPT subscription auth is stored by the host Codex CLI. Mount the
@@ -619,6 +634,11 @@ const substituteTemplateArgs = (
 export interface ScaffoldOptions {
   agent: AgentEntry;
   model: string;
+  singleModelOverride?: boolean;
+  routineModel?: string;
+  strongModel?: string;
+  routineEffort?: "low" | "medium" | "high" | "xhigh" | "max";
+  strongEffort?: "low" | "medium" | "high" | "xhigh" | "max";
   templateName?: string;
   issueTracker?: IssueTrackerEntry;
   sandboxProvider?: SandboxProviderEntry;
@@ -669,6 +689,11 @@ export const scaffold = (
     const {
       agent,
       model,
+      singleModelOverride,
+      routineModel,
+      strongModel,
+      routineEffort,
+      strongEffort,
       templateName = "simple-loop",
       issueTracker = ISSUE_TRACKER_REGISTRY[0]!, // default: github-issues
       sandboxProvider = SANDBOX_PROVIDER_REGISTRY[0]!, // default: docker
@@ -687,6 +712,26 @@ export const scaffold = (
           "ChatGPT subscription authentication is only supported for Codex.",
         ),
       );
+    }
+    for (const [name, value] of [
+      ["model", model],
+      ["routineModel", routineModel],
+      ["strongModel", strongModel],
+    ] as const) {
+      if (value !== undefined && !value.trim()) {
+        return yield* Effect.fail(new Error(`${name} must not be empty.`));
+      }
+    }
+    for (const [name, value] of [
+      ["routineEffort", routineEffort],
+      ["strongEffort", strongEffort],
+    ] as const) {
+      if (
+        value !== undefined &&
+        !["low", "medium", "high", "xhigh", "max"].includes(value)
+      ) {
+        return yield* Effect.fail(new Error(`${name} is not supported.`));
+      }
     }
     const fs = yield* FileSystem.FileSystem;
     yield* assertConfigDirAvailable(repoDir);
@@ -742,6 +787,13 @@ export const scaffold = (
       configDir,
       agent,
       model,
+      {
+        singleModelOverride,
+        routineModel,
+        strongModel,
+        routineEffort,
+        strongEffort,
+      },
       sandboxProvider,
       mainFilename,
       codexAuth,

@@ -437,6 +437,8 @@ describe("codex factory", () => {
 
   it("uses the routine role's configured reasoning effort", () => {
     const provider = codex(CODEX_MODELS.routine);
+    expect(provider.model).toBe(CODEX_MODELS.routine.model);
+    expect(provider.effort).toBe(CODEX_MODELS.routine.effort);
     const { command } = provider.buildPrintCommand(opts("do something"));
     expect(command).toContain(
       `model_reasoning_effort="${CODEX_MODELS.routine.effort}"`,
@@ -717,6 +719,28 @@ describe("codex factory", () => {
     expect(provider.env).toEqual({});
   });
 });
+describe("nested agent control", () => {
+  it("disables Codex subagents when requested", () => {
+    const provider = codex("routine", { disableSubagents: true });
+    expect(provider.buildPrintCommand(opts("work")).command).toContain(
+      "-c agents.enabled=false",
+    );
+    expect(provider.buildInteractiveArgs!(opts("work"))).toEqual(
+      expect.arrayContaining(["agents.enabled=false"]),
+    );
+  });
+
+  it("denies Claude's Agent tool when requested", () => {
+    const provider = claudeCode("routine", { disableSubagents: true });
+    expect(provider.buildPrintCommand(opts("work")).command).toContain(
+      "--disallowedTools Agent",
+    );
+    expect(provider.buildInteractiveArgs!(opts("work"))).toEqual(
+      expect.arrayContaining(["--disallowedTools", "Agent"]),
+    );
+  });
+});
+
 describe("parseSessionUsage (Claude Code)", () => {
   const provider = claudeCode("claude-opus-4-8");
 

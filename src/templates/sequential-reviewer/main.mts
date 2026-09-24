@@ -1,12 +1,189 @@
 // Sequential Reviewer: one implementation and one independent review per
 // activated issue scope. Publication follows successful review.
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import * as shipyard from "@snappedly-tools/shipyard";
 import { docker } from "@snappedly-tools/shipyard/sandboxes/docker";
 
 if (process.loadEnvFile && existsSync(".shipyard/.env"))
   process.loadEnvFile(".shipyard/.env");
+const modelRoles = shipyard.CODEX_MODELS;
+type ModelRole = "routine" | "strong";
+const maxStrongRunsPerIssue = Number(
+  process.env.SHIPYARD_MAX_STRONG_RUNS_PER_ISSUE ?? "8",
+);
+if (!Number.isSafeInteger(maxStrongRunsPerIssue) || maxStrongRunsPerIssue < 0)
+  throw new Error(
+    "SHIPYARD_MAX_STRONG_RUNS_PER_ISSUE must be a nonnegative integer",
+  );
+const strongRuns = new Map<string, number>();
+const writeUsageRecord = (record: Record<string, unknown>): void => {
+  try {
+    mkdirSync(".shipyard/logs", { recursive: true });
+    appendFileSync(
+      ".shipyard/logs/model-usage.jsonl",
+      JSON.stringify(record) + "\n",
+    );
+  } catch (error) {
+    console.warn(
+      `shipyard: could not record model usage: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+};
+const roleAgent = (role: ModelRole) => ({
+  ...shipyard.codex(modelRoles[role].model, {
+    effort: modelRoles[role].effort,
+    disableSubagents: true,
+  }),
+  role,
+});
+const recordModelRun = async <
+  T extends {
+    completionSignal?: string;
+    iterations?: Array<{ usage?: shipyard.IterationUsage }>;
+  },
+>(
+  issueId: string,
+  phase: string,
+  agent: ReturnType<typeof roleAgent>,
+  operation: Promise<T>,
+  attempt = 1,
+  escalationReason?: string,
+  issueIds: string[] = [issueId],
+): Promise<T> => {
+  let result: T | undefined;
+  let status: "completed" | "returned-without-signal" | "failed" = "failed";
+  try {
+    result = await operation;
+    status = result.completionSignal ? "completed" : "returned-without-signal";
+    return result;
+  } finally {
+    const measured =
+      result?.iterations?.flatMap((iteration) =>
+        iteration.usage ? [iteration.usage] : [],
+      ) ?? [];
+    const usage = measured.length
+      ? measured.reduce(
+          (total, item) => ({
+            inputTokens: total.inputTokens + item.inputTokens,
+            cacheCreationInputTokens:
+              total.cacheCreationInputTokens + item.cacheCreationInputTokens,
+            cacheReadInputTokens:
+              total.cacheReadInputTokens + item.cacheReadInputTokens,
+            outputTokens: total.outputTokens + item.outputTokens,
+          }),
+          {
+            inputTokens: 0,
+            cacheCreationInputTokens: 0,
+            cacheReadInputTokens: 0,
+            outputTokens: 0,
+          },
+        )
+      : null;
+    writeUsageRecord({
+      issueId,
+      issueIds,
+      attempt,
+      escalationReason: escalationReason ?? null,
+      phase,
+      role: agent.role,
+      provider: agent.name,
+      model: agent.model ?? null,
+      effort: agent.effort ?? null,
+      status,
+      iterations: result?.iterations?.length ?? null,
+      measuredIterations: measured.length,
+      usage,
+      childUsage: { builtIn: "disabled", external: "unknown" },
+    });
+  }
+};
+const guardStrongRun = (
+  issueId: string,
+  phase: string,
+  agent: ReturnType<typeof roleAgent>,
+): void => {
+  if (agent.role !== "strong") return;
+  const used = strongRuns.get(issueId) ?? 0;
+  if (used < maxStrongRunsPerIssue) {
+    strongRuns.set(issueId, used + 1);
+    return;
+  }
+  writeUsageRecord({
+    issueId,
+    issueIds: [issueId],
+    attempt: used + 1,
+    escalationReason: null,
+    phase,
+    role: agent.role,
+    provider: agent.name,
+    model: agent.model ?? null,
+    effort: agent.effort ?? null,
+    status: "budget-exhausted",
+    usage: null,
+    childUsage: { builtIn: "disabled", external: "unknown" },
+  });
+  throw new Error(
+    `Issue #${issueId} reached the strong model run limit (${maxStrongRunsPerIssue})`,
+  );
+};
+const trackSandbox = (sandbox: shipyard.Sandbox): void => {
+  const run = sandbox.run.bind(sandbox);
+  sandbox.run = (options) => {
+    const agent = options.agent as ReturnType<typeof roleAgent>;
+    const issueId = String(options.promptArgs?.TASK_ID ?? "selection");
+    const phase = options.name ?? "agent";
+    guardStrongRun(issueId, phase, agent);
+    return recordModelRun(
+      issueId,
+      phase,
+      agent,
+      run(options),
+      phase === "implementer-escalation" ? 2 : 1,
+      phase === "implementer-escalation"
+        ? "routine implementation returned without a completion signal"
+        : undefined,
+    );
+  };
+};
+const escalateRoutineFailures =
+  process.env.SHIPYARD_ESCALATE_ROUTINE_FAILURES === "true";
+const escalatedIssues = new Set<string>();
+const runImplementation = async (
+  sandbox: shipyard.Sandbox,
+  options: shipyard.SandboxRunOptions,
+): Promise<shipyard.SandboxRunResult> => {
+  const result = await sandbox.run(options);
+  const issueId = String(options.promptArgs?.TASK_ID ?? "selection");
+  if (
+    result.completionSignal ||
+    !escalateRoutineFailures ||
+    escalatedIssues.has(issueId)
+  )
+    return result;
+  escalatedIssues.add(issueId);
+  const handoff = [
+    ...result.stdout.matchAll(/<handoff>([\s\S]*?)<\/handoff>/g),
+  ].at(-1)?.[1];
+  const fields = ["Facts", "Checks", "Blocker"].map((field) =>
+    handoff?.match(new RegExp(`^${field}:\\s*(.+)$`, "m"))?.[1]?.trim(),
+  );
+  if (fields.some((field) => !field)) return result;
+  const failureEvidence = ["Facts", "Checks", "Blocker"]
+    .map((field, index) => `${field}: ${fields[index]!.slice(0, 400)}`)
+    .join("\n");
+  return sandbox.run({
+    ...options,
+    name: "implementer-escalation",
+    agent: roleAgent("strong"),
+    maxIterations: 1,
+    promptFile: "./.shipyard/escalation-prompt.md",
+    promptArgs: {
+      ...options.promptArgs,
+      ROUTINE_EVIDENCE: failureEvidence,
+    },
+  });
+};
 const targetBranch = execFileSync("git", ["branch", "--show-current"], {
   encoding: "utf8",
 }).trim();
@@ -50,6 +227,24 @@ const verifyTriage = (ticketId: string) => {
   }
 };
 
+const runTriage = async (sandbox: shipyard.Sandbox, ticketId: string) => {
+  const triage = await sandbox.run({
+    name: `triage #${ticketId}`,
+    agent: roleAgent("routine"),
+    maxIterations: 1,
+    promptFile: "./.shipyard/triage-prompt.md",
+    promptArgs: { TASK_ID: ticketId },
+  });
+  if (triage.stdout.trim().endsWith("<risk>strong-review</risk>"))
+    await sandbox.run({
+      name: `risk-review #${ticketId}`,
+      agent: roleAgent("strong"),
+      maxIterations: 1,
+      promptFile: "./.shipyard/risk-triage-prompt.md",
+      promptArgs: { TASK_ID: ticketId },
+    });
+  verifyTriage(ticketId);
+};
 const handoffEvidence = (stdout: string): string | undefined =>
   [...stdout.matchAll(/<handoff>([\s\S]*?)<\/handoff>/g)].at(-1)?.[1]?.trim();
 const blockScope = (
@@ -129,24 +324,18 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
       sandbox: docker(),
       hooks,
     });
+    trackSandbox(sandbox);
     let evidence: string;
     try {
       for (const ticketId of issue.kind === "spec"
         ? (issue.tickets ?? []).map((ticket) => ticket.id)
         : [issue.id]) {
-        await sandbox.run({
-          name: `triage #${ticketId}`,
-          agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
-          maxIterations: 1,
-          promptFile: "./.shipyard/triage-prompt.md",
-          promptArgs: { TASK_ID: ticketId },
-        });
-        verifyTriage(ticketId);
+        await runTriage(sandbox, ticketId);
       }
-      const implement = await sandbox.run({
+      const implement = await runImplementation(sandbox, {
         name: "implementer",
         maxIterations: 1,
-        agent: shipyard.codex(shipyard.CODEX_MODELS.routine),
+        agent: roleAgent("routine"),
         promptFile: "./.shipyard/implement-prompt.md",
         promptArgs: {
           TASK_ID: issue.id,
@@ -165,7 +354,7 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
       const review = await sandbox.run({
         name: "reviewer",
         maxIterations: 1,
-        agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
+        agent: roleAgent("strong"),
         promptFile: "./.shipyard/review-prompt.md",
         promptArgs: {
           BRANCH: issue.branch,
@@ -193,6 +382,7 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
       branch: issue.branch,
       sandbox: docker(),
     });
+    trackSandbox(publication);
     try {
       publicationUncertain = true;
       const handoff = await publication.exec(

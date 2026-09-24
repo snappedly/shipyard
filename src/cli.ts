@@ -313,8 +313,28 @@ const codexAuthOption = Options.choice("codex-auth", [
 
 const initModelOption = Options.text("model").pipe(
   Options.withDescription(
-    "Model to use for the agent. Defaults to the agent's configured default model",
+    "Model for both roles unless a role-specific model is set",
   ),
+  Options.optional,
+);
+
+const routineModelOption = Options.text("routine-model").pipe(
+  Options.withDescription("Model for routine implementation and checks"),
+  Options.optional,
+);
+const strongModelOption = Options.text("strong-model").pipe(
+  Options.withDescription(
+    "Model for planning, review, and difficult integration",
+  ),
+  Options.optional,
+);
+const effortValues = ["low", "medium", "high", "xhigh", "max"] as const;
+const routineEffortOption = Options.choice("routine-effort", effortValues).pipe(
+  Options.withDescription("Reasoning effort for the routine role"),
+  Options.optional,
+);
+const strongEffortOption = Options.choice("strong-effort", effortValues).pipe(
+  Options.withDescription("Reasoning effort for the strong role"),
   Options.optional,
 );
 
@@ -373,6 +393,10 @@ const initCommand = Command.make(
     agent: agentOption,
     codexAuth: codexAuthOption,
     model: initModelOption,
+    routineModel: routineModelOption,
+    strongModel: strongModelOption,
+    routineEffort: routineEffortOption,
+    strongEffort: strongEffortOption,
     sandbox: sandboxOption,
     issueTracker: issueTrackerOption,
     buildImage: buildImageOption,
@@ -385,6 +409,10 @@ const initCommand = Command.make(
     agent: agentFlag,
     codexAuth: codexAuthFlag,
     model: modelFlag,
+    routineModel: routineModelFlag,
+    strongModel: strongModelFlag,
+    routineEffort: routineEffortFlag,
+    strongEffort: strongEffortFlag,
     sandbox: sandboxFlag,
     issueTracker: issueTrackerFlag,
     buildImage: buildImageFlag,
@@ -691,6 +719,23 @@ const initCommand = Command.make(
           scaffold(cwd, {
             agent: selectedAgent,
             model: selectedModel,
+            singleModelOverride: modelFlag._tag === "Some",
+            routineModel:
+              routineModelFlag._tag === "Some"
+                ? routineModelFlag.value
+                : undefined,
+            strongModel:
+              strongModelFlag._tag === "Some"
+                ? strongModelFlag.value
+                : undefined,
+            routineEffort:
+              routineEffortFlag._tag === "Some"
+                ? routineEffortFlag.value
+                : undefined,
+            strongEffort:
+              strongEffortFlag._tag === "Some"
+                ? strongEffortFlag.value
+                : undefined,
             templateName: selectedTemplate,
             issueTracker: selectedIssueTracker,
             sandboxProvider: selectedSandboxProvider,

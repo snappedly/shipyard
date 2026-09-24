@@ -196,6 +196,9 @@ export interface AgentSessionStorage {
 
 export interface AgentProvider {
   readonly name: string;
+  /** Resolved model and effort for attribution when the provider exposes them. */
+  readonly model?: string;
+  readonly effort?: string;
   /** Environment variables injected by this agent provider. Merged at launch time with env resolver and sandbox provider env. */
   readonly env: Record<string, string>;
   /** Set only when this provider enforces `AgentCommandOptions.toolAllowlist`. */
@@ -517,6 +520,8 @@ const parseCodexStreamLine = (line: string): ParsedStreamEvent[] => {
 /** Options for the codex agent provider. */
 export interface CodexOptions {
   readonly effort?: CodexReasoningEffort;
+  /** Disable nested agent tools for a bounded single-agent run. */
+  readonly disableSubagents?: boolean;
   /** Environment variables injected by this agent provider. */
   readonly env?: Record<string, string>;
   /** When false, session capture is disabled. Default: true. */
@@ -553,6 +558,8 @@ export const codex = (
   // callers can still override it through CodexOptions.
   return {
     name: "codex",
+    model: modelId,
+    effort,
     env: options?.env ?? {},
     captureSessions: options?.captureSessions ?? true,
     sessionStorage: makeCodexSessionStorage(options),
@@ -564,6 +571,9 @@ export const codex = (
     }: AgentCommandOptions): PrintCommand {
       const effortFlag = effort
         ? ` -c ${shellQuote(`model_reasoning_effort="${effort}"`)}`
+        : "";
+      const subagentFlag = options?.disableSubagents
+        ? " -c agents.enabled=false"
         : "";
       // auto_review only fires on interactive approvals, so the bypass flag is
       // dropped in favour of `-a on-request`. `-s danger-full-access` disables
@@ -586,7 +596,7 @@ export const codex = (
       }
       const stdinArg = resumeSession ? " -" : "";
       return {
-        command: `${base} --json${approvalsFlags} -m ${shellQuote(modelId)}${effortFlag}${stdinArg}`,
+        command: `${base} --json${approvalsFlags} -m ${shellQuote(modelId)}${effortFlag}${subagentFlag}${stdinArg}`,
         stdin: prompt,
       };
     },
@@ -596,6 +606,7 @@ export const codex = (
       if (effort) {
         args.push("-c", `model_reasoning_effort="${effort}"`);
       }
+      if (options?.disableSubagents) args.push("-c", "agents.enabled=false");
       if (prompt) args.push(prompt);
       return args;
     },
@@ -612,6 +623,8 @@ export const codex = (
 
 export interface ClaudeCodeOptions {
   readonly effort?: "low" | "medium" | "high" | "xhigh" | "max";
+  /** Deny the Agent tool for a bounded single-agent run. */
+  readonly disableSubagents?: boolean;
   /** Environment variables injected by this agent provider. */
   readonly env?: Record<string, string>;
   /** When false, session capture is disabled. Default: true. */
@@ -641,6 +654,8 @@ export const claudeCode = (
   options?: ClaudeCodeOptions,
 ): AgentProvider & { readonly sessionStorage: AgentSessionStorage } => ({
   name: "claude-code",
+  model,
+  effort: options?.effort,
   env: options?.env ?? {},
   captureSessions: options?.captureSessions ?? true,
   sessionStorage: makeClaudeSessionStorage(options),
@@ -660,6 +675,9 @@ export const claudeCode = (
         ? " --dangerously-skip-permissions"
         : "";
     const effortFlag = options?.effort ? ` --effort ${options.effort}` : "";
+    const subagentFlag = options?.disableSubagents
+      ? " --disallowedTools Agent"
+      : "";
     const resumeFlag = resumeSession
       ? ` --resume ${shellQuote(resumeSession)}`
       : "";
@@ -668,7 +686,7 @@ export const claudeCode = (
     // resumed one. See ADR 0018.
     const forkFlag = resumeSession && forkSession ? " --fork-session" : "";
     return {
-      command: `claude --print --verbose${permissionFlag} --output-format stream-json --model ${shellQuote(model)}${effortFlag}${resumeFlag}${forkFlag} -p -`,
+      command: `claude --print --verbose${permissionFlag} --output-format stream-json --model ${shellQuote(model)}${effortFlag}${subagentFlag}${resumeFlag}${forkFlag} -p -`,
       stdin: prompt,
     };
   },
@@ -685,6 +703,7 @@ export const claudeCode = (
     }
     args.push("--model", model);
     if (options?.effort) args.push("--effort", options.effort);
+    if (options?.disableSubagents) args.push("--disallowedTools", "Agent");
     if (prompt) args.push(prompt);
     return args;
   },

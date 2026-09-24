@@ -1,0 +1,1 @@
+../shared/risk-triage-prompt.md

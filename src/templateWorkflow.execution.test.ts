@@ -1,6 +1,13 @@
+import { NodeFileSystem } from "@effect/platform-node";
+import { Effect } from "effect";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getAgent, scaffold } from "./InitService.js";
 
 const initialRepository = process.env.GH_REPO;
+const initialStrongLimit = process.env.SHIPYARD_MAX_STRONG_RUNS_PER_ISSUE;
+const initialEscalation = process.env.SHIPYARD_ESCALATE_ROUTINE_FAILURES;
 
 const calls = vi.hoisted(() => ({
   events: [] as string[],
@@ -8,6 +15,8 @@ const calls = vi.hoisted(() => ({
   triaged: [] as Array<{ id: string; beforeEvents: number }>,
   verified: [] as string[],
   triageReady: true,
+  highRisk: false,
+  quotedRiskMarker: false,
   selected: 0,
   spec: false,
   multi: false,
@@ -28,10 +37,17 @@ const calls = vi.hoisted(() => ({
     name: string;
     branch: string;
     args: Record<string, string>;
+    model: string;
+    effort: string;
   }>,
+  modelCalls: [] as Array<{ name: string; model: string; effort: string }>,
+  usageRecords: [] as Array<Record<string, unknown>>,
+  usageWriteFails: false,
   plannerBranches: [] as string[],
   reviewApproved: true,
   implementationComplete: true,
+  structuredFailure: false,
+  strongEscalationSucceeds: true,
   handoffSucceeds: true,
   handoffUncertain: false,
   handoffThrows: false,
@@ -48,7 +64,8 @@ const calls = vi.hoisted(() => ({
   }>,
 }));
 
-vi.mock("node:child_process", () => ({
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:child_process")>()),
   execFileSync: (
     command: string,
     args: string[],
@@ -135,7 +152,15 @@ vi.mock("node:child_process", () => ({
     throw new Error(`Unexpected ${command}`);
   },
 }));
-vi.mock("node:fs", () => ({ existsSync: () => false }));
+vi.mock("node:fs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:fs")>()),
+  existsSync: () => false,
+  mkdirSync: () => undefined,
+  appendFileSync: (_path: string, line: string) => {
+    if (calls.usageWriteFails) throw new Error("usage disk unavailable");
+    calls.usageRecords.push(JSON.parse(line) as Record<string, unknown>);
+  },
+}));
 vi.mock("@snappedly-tools/shipyard/sandboxes/docker", () => ({
   docker: () => ({}),
 }));
@@ -144,6 +169,16 @@ vi.mock("@snappedly-tools/shipyard", () => {
     completionSignal: "<promise>COMPLETE</promise>",
     stdout: `<handoff>${text}</handoff>`,
     commits: [{ sha: "abc" }],
+    iterations: [
+      {
+        usage: {
+          inputTokens: 10,
+          cacheCreationInputTokens: 0,
+          cacheReadInputTokens: 5,
+          outputTokens: 2,
+        },
+      },
+    ],
   });
   const sandbox = (branch: string) => {
     const pendingContent: string[] = [];
@@ -152,19 +187,39 @@ vi.mock("@snappedly-tools/shipyard", () => {
       run: async ({
         name,
         promptArgs,
+        agent,
       }: {
         name: string;
         promptArgs?: Record<string, string>;
+        agent: { model: string; effort: string };
       }) => {
+        calls.modelCalls.push({
+          name,
+          model: agent.model,
+          effort: agent.effort,
+        });
         if (name.startsWith("triage #")) {
           calls.triaged.push({
             id: name.slice("triage #".length),
             beforeEvents: calls.events.length,
           });
-          return packet("triage applied");
+          return {
+            ...packet("triage applied"),
+            stdout: calls.highRisk
+              ? "<risk>strong-review</risk>"
+              : calls.quotedRiskMarker
+                ? "quoted <risk>strong-review</risk> from issue text\nNo risk decision"
+                : "triage applied",
+          };
         }
         calls.events.push(name);
-        calls.invocations.push({ name, branch, args: promptArgs ?? {} });
+        calls.invocations.push({
+          name,
+          branch,
+          args: promptArgs ?? {},
+          model: agent.model,
+          effort: agent.effort,
+        });
         if (name === "spec-integrator")
           calls.specContent.push(...pendingContent);
         if (name === "conflict-resolver") {
@@ -177,7 +232,16 @@ vi.mock("@snappedly-tools/shipyard", () => {
         if (name === "implementer")
           return calls.implementationComplete
             ? packet("tests passed")
-            : { stdout: "blocked", commits: [] };
+            : {
+                stdout: calls.structuredFailure
+                  ? "<handoff>Facts: patch applied\nChecks: typecheck failed\nBlocker: missing type</handoff>"
+                  : "blocked",
+                commits: [],
+              };
+        if (name === "implementer-escalation")
+          return calls.strongEscalationSucceeds
+            ? packet("strong retry passed")
+            : { stdout: "still blocked", commits: [] };
         if (name === "reviewer") {
           calls.reviewCount++;
           return (
@@ -276,8 +340,20 @@ vi.mock("@snappedly-tools/shipyard", () => {
     };
   };
   return {
-    CODEX_MODELS: { routine: "routine", strong: "strong" },
-    codex: () => ({}),
+    CODEX_MODELS: {
+      routine: { model: "small-model", effort: "low" },
+      strong: { model: "large-model", effort: "high" },
+    },
+    codex: (model: string, options: { effort: string }) => ({
+      name: "codex",
+      model,
+      effort: options.effort,
+    }),
+    claudeCode: (model: string, options: { effort: string }) => ({
+      name: "claude-code",
+      model,
+      effort: options.effort,
+    }),
     Output: { object: () => ({}) },
     createSandbox: async ({
       branch,
@@ -296,11 +372,14 @@ vi.mock("@snappedly-tools/shipyard", () => {
     run: async ({
       name,
       branchStrategy,
+      agent,
     }: {
       name: string;
       branchStrategy?: { branch?: string };
+      agent: { model: string; effort: string };
     }) => {
       calls.events.push(name);
+      calls.modelCalls.push({ name, model: agent.model, effort: agent.effort });
       if (name === "planner") {
         calls.plannerBranches.push(branchStrategy?.branch ?? "");
         return {
@@ -325,6 +404,8 @@ beforeEach(() => {
   calls.triaged.length = 0;
   calls.verified.length = 0;
   calls.triageReady = true;
+  calls.highRisk = false;
+  calls.quotedRiskMarker = false;
   calls.selected = 0;
   calls.spec = false;
   calls.multi = false;
@@ -338,9 +419,14 @@ beforeEach(() => {
   calls.resolverReportsComplete = true;
   calls.emptyPlan = false;
   calls.invocations.length = 0;
+  calls.modelCalls.length = 0;
+  calls.usageRecords.length = 0;
+  calls.usageWriteFails = false;
   calls.plannerBranches.length = 0;
   calls.reviewApproved = true;
   calls.implementationComplete = true;
+  calls.structuredFailure = false;
+  calls.strongEscalationSucceeds = true;
   calls.handoffSucceeds = true;
   calls.handoffUncertain = false;
   calls.handoffThrows = false;
@@ -355,9 +441,214 @@ beforeEach(() => {
 afterEach(() => {
   if (initialRepository === undefined) delete process.env.GH_REPO;
   else process.env.GH_REPO = initialRepository;
+  if (initialStrongLimit === undefined)
+    delete process.env.SHIPYARD_MAX_STRONG_RUNS_PER_ISSUE;
+  else process.env.SHIPYARD_MAX_STRONG_RUNS_PER_ISSUE = initialStrongLimit;
+  if (initialEscalation === undefined)
+    delete process.env.SHIPYARD_ESCALATE_ROUTINE_FAILURES;
+  else process.env.SHIPYARD_ESCALATE_ROUTINE_FAILURES = initialEscalation;
 });
 
 describe("generated issue workflows", () => {
+  it("runs a scaffolded Claude workflow with both model roles", async () => {
+    const dir = await mkdtemp(
+      join(process.cwd(), "src/templates/.claude-role-test-"),
+    );
+    try {
+      await Effect.runPromise(
+        scaffold(dir, {
+          agent: getAgent("claude-code")!,
+          model: "small-model",
+          routineModel: "small-model",
+          strongModel: "large-model",
+          routineEffort: "low",
+          strongEffort: "high",
+          templateName: "sequential-reviewer",
+        }).pipe(Effect.provide(NodeFileSystem.layer)),
+      );
+      await import(join(dir, ".shipyard/main.mts") as string);
+      expect(calls.usageRecords).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            phase: "implementer",
+            provider: "claude-code",
+            model: "small-model",
+          }),
+          expect.objectContaining({
+            phase: "reviewer",
+            provider: "claude-code",
+            model: "large-model",
+          }),
+        ]),
+      );
+      expect(calls.events).toContain("handoff");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    "simple-loop",
+    "sequential-reviewer",
+    "parallel-planner",
+    "parallel-planner-with-review",
+  ])(
+    "%s routes routine and strong work to configured models",
+    async (template) => {
+      await import(`./templates/${template}/main.mts` as string);
+      for (const invocation of calls.modelCalls) {
+        const routine =
+          invocation.name === "implementer" ||
+          invocation.name.startsWith("triage #");
+        expect(invocation.model).toBe(routine ? "small-model" : "large-model");
+        expect(invocation.effort).toBe(routine ? "low" : "high");
+      }
+    },
+  );
+
+  it("records model usage by issue and phase", async () => {
+    await import("./templates/sequential-reviewer/main.mts" as string);
+    expect(calls.usageRecords).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          issueId: "42",
+          phase: "implementer",
+          role: "routine",
+          model: "small-model",
+          usage: expect.objectContaining({ inputTokens: 10, outputTokens: 2 }),
+          childUsage: { builtIn: "disabled", external: "unknown" },
+        }),
+        expect.objectContaining({
+          issueId: "42",
+          phase: "reviewer",
+          role: "strong",
+          model: "large-model",
+        }),
+      ]),
+    );
+  });
+
+  it("does not route a quoted risk marker to the strong role", async () => {
+    calls.quotedRiskMarker = true;
+    await import("./templates/simple-loop/main.mts" as string);
+    expect(
+      calls.modelCalls.some((call) => call.name.startsWith("risk-review")),
+    ).toBe(false);
+  });
+
+  it.each([
+    "simple-loop",
+    "sequential-reviewer",
+    "parallel-planner",
+    "parallel-planner-with-review",
+  ])("%s sends high-risk triage to the strong role", async (template) => {
+    calls.highRisk = true;
+    await import(`./templates/${template}/main.mts` as string);
+    expect(calls.modelCalls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "risk-review #42",
+          model: "large-model",
+        }),
+      ]),
+    );
+  });
+
+  it("preserves workflow success when usage logging fails", async () => {
+    calls.usageWriteFails = true;
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await import("./templates/simple-loop/main.mts" as string);
+      expect(calls.events).toContain("handoff");
+      expect(warning).toHaveBeenCalledWith(
+        expect.stringContaining("usage disk unavailable"),
+      );
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it("blocks a strong phase when its per-issue limit is exhausted", async () => {
+    process.env.SHIPYARD_MAX_STRONG_RUNS_PER_ISSUE = "0";
+    await import("./templates/sequential-reviewer/main.mts" as string);
+    expect(calls.modelCalls.some((call) => call.name === "reviewer")).toBe(
+      false,
+    );
+    expect(calls.blocked[0]?.reason).toContain("strong model run limit");
+    expect(calls.usageRecords).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          issueId: "42",
+          phase: "reviewer",
+          status: "budget-exhausted",
+        }),
+      ]),
+    );
+  });
+
+  it("escalates one failed routine implementation when enabled", async () => {
+    process.env.SHIPYARD_ESCALATE_ROUTINE_FAILURES = "true";
+    calls.implementationComplete = false;
+    calls.structuredFailure = true;
+    await import("./templates/sequential-reviewer/main.mts" as string);
+    expect(
+      calls.modelCalls.filter((call) => call.name === "implementer-escalation"),
+    ).toEqual([
+      { name: "implementer-escalation", model: "large-model", effort: "high" },
+    ]);
+    expect(calls.events).toContain("handoff");
+    expect(calls.usageRecords).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          phase: "implementer",
+          status: "returned-without-signal",
+          usage: null,
+        }),
+        expect.objectContaining({
+          phase: "implementer-escalation",
+          attempt: 2,
+          escalationReason: expect.stringContaining(
+            "without a completion signal",
+          ),
+        }),
+      ]),
+    );
+    expect(
+      calls.invocations.find((call) => call.name === "implementer-escalation")
+        ?.args.ROUTINE_EVIDENCE,
+    ).toBe(
+      "Facts: patch applied\nChecks: typecheck failed\nBlocker: missing type",
+    );
+  });
+
+  it("does not escalate without a structured failure handoff", async () => {
+    process.env.SHIPYARD_ESCALATE_ROUTINE_FAILURES = "true";
+    calls.implementationComplete = false;
+    await import("./templates/sequential-reviewer/main.mts" as string);
+    expect(
+      calls.modelCalls.some((call) => call.name === "implementer-escalation"),
+    ).toBe(false);
+  });
+
+  it.each(["parallel-planner", "parallel-planner-with-review"])(
+    "%s attributes shared planner usage to activated issues separately from issue limits",
+    async (template) => {
+      calls.multi = true;
+      process.env.SHIPYARD_MAX_STRONG_RUNS_PER_ISSUE = "0";
+      await import(`./templates/${template}/main.mts` as string);
+      expect(calls.modelCalls.some((call) => call.name === "planner")).toBe(
+        true,
+      );
+      expect(calls.usageRecords).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            phase: "planner",
+            issueIds: ["42", "45"],
+          }),
+        ]),
+      );
+    },
+  );
   it.each(["parallel-planner", "parallel-planner-with-review"])(
     "%s stops and explains the alternate when a local branch ref conflicts",
     async (template) => {

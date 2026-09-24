@@ -243,9 +243,10 @@ describe("InitService scaffold", () => {
     await runScaffold(dir, { model: "claude-sonnet-4-6" });
 
     const mainTs = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
-    expect(mainTs).toContain('claudeCode("claude-sonnet-4-6")');
+    expect(mainTs).toContain('model: "claude-sonnet-4-6"');
+    expect(mainTs).toContain("shipyard.claudeCode(modelRoles[role].model");
     // Should not contain the template's original model
-    expect(mainTs).not.toContain('claudeCode("claude-opus-4-8")');
+    expect(mainTs).not.toContain('model: "claude-opus-4-8"');
   });
 
   it("scaffolds main.mts with default model when using agent default", async () => {
@@ -253,7 +254,69 @@ describe("InitService scaffold", () => {
     await runScaffold(dir);
 
     const mainTs = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
-    expect(mainTs).toContain('claudeCode("claude-opus-4-8")');
+    expect(mainTs).toContain('model: "claude-opus-4-8"');
+  });
+
+  it.each(["claude-code", "codex"])(
+    "keeps separate model roles in a generated %s workflow",
+    async (agentName) => {
+      const dir = await makeDir();
+      await runScaffold(dir, {
+        agent: getAgent(agentName)!,
+        model: getAgent(agentName)!.defaultModel,
+        routineModel: "small-model",
+        strongModel: "large-model",
+        routineEffort: "low",
+        strongEffort: "high",
+        templateName: "parallel-planner-with-review",
+      });
+
+      const main = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
+      expect(main).toContain(
+        'routine: { model: "small-model", effort: "low" }',
+      );
+      expect(main).toContain(
+        'strong: { model: "large-model", effort: "high" }',
+      );
+      expect(main).toContain('roleAgent("routine")');
+      expect(main).toContain('roleAgent("strong")');
+    },
+  );
+
+  it("keeps a single-model override while a role-specific model takes precedence", async () => {
+    const dir = await makeDir();
+    await runScaffold(dir, {
+      agent: codexAgent,
+      model: CODEX_MODELS.routine.model,
+      singleModelOverride: true,
+      strongModel: "review-model",
+    });
+    const main = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
+    expect(main).toContain(`routine: { model: "${CODEX_MODELS.routine.model}"`);
+    expect(main).toContain('strong: { model: "review-model"');
+  });
+
+  it("rejects an invalid effort before writing configuration", async () => {
+    const dir = await makeDir();
+    await expect(
+      runScaffold(dir, { routineEffort: "none" as "low" }),
+    ).rejects.toThrow("routineEffort is not supported");
+    await expect(
+      readFile(join(dir, ".shipyard", "main.mts")),
+    ).rejects.toThrow();
+  });
+
+  it("keeps the strong Codex default when only its effort changes", async () => {
+    const dir = await makeDir();
+    await runScaffold(dir, {
+      agent: codexAgent,
+      model: CODEX_MODELS.routine.model,
+      strongEffort: "high",
+    });
+    const main = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
+    expect(main).toContain(
+      "strong: { model: shipyard.CODEX_MODELS.strong.model",
+    );
   });
 
   // --- Template-specific tests ---
@@ -397,7 +460,7 @@ describe("InitService scaffold", () => {
     });
 
     const mainTs = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
-    expect(mainTs).toContain("shipyard.codex(shipyard.CODEX_MODELS.routine)");
+    expect(mainTs).toContain("shipyard.codex(modelRoles[role].model");
     expect(mainTs).not.toContain("claudeCode");
   });
 
@@ -462,6 +525,14 @@ describe("InitService scaffold", () => {
         join(configDir, "triage-prompt.md"),
         "utf-8",
       );
+      const riskTriage = await readFile(
+        join(configDir, "risk-triage-prompt.md"),
+        "utf-8",
+      );
+      const escalation = await readFile(
+        join(configDir, "escalation-prompt.md"),
+        "utf-8",
+      );
       const triageGate = await readFile(
         join(configDir, "verify-triage.sh"),
         "utf-8",
@@ -474,6 +545,8 @@ describe("InitService scaffold", () => {
       expect(setup).toContain("snappedly/skills.git");
       expect(setup).toContain("for skill in triage implement");
       expect(triage).toContain("Follow `/triage`");
+      expect(riskTriage).toContain("strong model");
+      expect(escalation).toContain("{{ROUTINE_EVIDENCE}}");
       expect(triageGate).toContain("ready-for-agent");
       expect(handoff).toContain("gh pr create");
       expect(handoff).not.toContain("gh pr merge");
@@ -900,7 +973,7 @@ describe("InitService scaffold", () => {
         "utf-8",
       );
       expect(mainContent).toContain("@snappedly-tools/shipyard");
-      expect(mainContent).toContain('claudeCode("claude-opus-4-8")');
+      expect(mainContent).toContain('model: "claude-opus-4-8"');
     });
 
     it("main.ts scaffolded with type: module rewrites the Codex factory correctly", async () => {
@@ -918,9 +991,7 @@ describe("InitService scaffold", () => {
         join(dir, ".shipyard", "main.ts"),
         "utf-8",
       );
-      expect(mainContent).toContain(
-        "shipyard.codex(shipyard.CODEX_MODELS.routine)",
-      );
+      expect(mainContent).toContain("shipyard.codex(modelRoles[role].model");
       expect(mainContent).not.toContain("claudeCode");
     });
 
