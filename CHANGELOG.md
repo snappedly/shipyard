@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.0
+
+### Minor Changes
+
+- 0a7542c: Run bundled standalone and spec issue workflows with Snappedly skills in Docker. Provision GitHub workflow labels, mark selected tickets pending until completion or a block, and integrate their work into one spec pull request. Derive spec and PR status from child tickets, include tickets linked through the PR, block invalid selected relationships, allow a cleared blocked ticket to retry independently, and avoid rerunning completed standalone issues.
+- 5a2b8be: Run triage when Shipyard takes an activated ticket, require both activation and agent-ready labels before implementation, and block non-ready triage outcomes.
+
+### Patch Changes
+
+- cf9001f: Document the Snappedly skills setup prerequisite in the README.
+
 ## 0.5.0
 
 ### Minor Changes
