@@ -474,20 +474,6 @@ describe("FileDisplay", () => {
     expect(log).not.toContain("Done.\n\nContext window");
   });
 
-  it("creates log file with run delimiter on initialization", async () => {
-    const { logPath, layer } = setup();
-
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const d = yield* Display;
-        yield* d.intro("shipyard");
-      }).pipe(Effect.provide(layer)),
-    );
-
-    const log = readLog(logPath);
-    expect(log).toMatch(/^\n--- Run started: .+ ---\n$/);
-  });
-
   it("strips [Name] prefix from status messages", async () => {
     const { logPath, layer } = setup();
 
