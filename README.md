@@ -24,60 +24,44 @@ a commit or pull request you can inspect.
 ## Try it on one task
 
 You need **Node.js 20.18.1+**, **Git**, **Docker running**, and **Codex or Claude
-Code** with a login or API key. Start with a clean Git repository you want
-Shipyard to change. If it is on GitHub, sign in with the
-[GitHub CLI](https://cli.github.com/) (`gh auth login`) before `init`; Shipyard
-creates its issue labels there.
+** Code ** with a subscription login or API key.
 
 Run:
 
 ```sh
-git switch -c try-shipyard
 npx skills add snappedly/skills
+```
+Ask your coding agent to run `setup-snappedly-skills` in that repository.
+
+```sh
 npm install --save-dev @snappedly-tools/shipyard
 npx shipyard init
 ```
 
-Ask your coding agent to run `setup-snappedly-skills` in that repository. During
-`shipyard init`, choose your agent, **Docker**, and the **blank** template. Follow
-the authentication prompts. You can skip the optional repository runner for
-this first task.
+During `shipyard init`, choose your agent, **Docker**, the template you want, and install the optional 
+[repository runner](docs/content/docs/repository-runner.mdx). Follow
+the authentication prompts.
 
-Open `.shipyard/prompt.md` and describe a small change. For example:
+On a local Mac, the repository runner automatically wakes Shipyard when you label an issue. 
+It runs as long as its terminal stays open.
 
-```md
-# Task
+See the [getting started guide](docs/content/docs/index.mdx) for authentication and
+branch options.
 
-Document how to run this project locally using commands already in the repo.
-Run the relevant checks and commit the change.
+Fill in any credentials required in `.shipyard/.env`.
+`GH_TOKEN` in `.shipyard/.env` to a GH token with Contents, Issues, and Pull
+Requests read/write access and Metadata read access.
 
-# Done
-
-Output <promise>COMPLETE</promise> when finished.
-```
-
-Fill in any credentials requested in `.shipyard/.env`. Commit the setup and
-prompt so the sandbox can read them. The generated Git ignore file keeps
+Commit the setup and prompt so the sandbox can read them. Make sure the Git ignore file keeps
 `.shipyard/.env` out of the commit.
 
 ```sh
-git add .
-git commit -m "Set up Shipyard"
 npx shipyard run
-git show --stat HEAD
 ```
-
-Shipyard builds the Docker image, runs the agent, and returns its commit to your
-current branch. `git show` lets you inspect what changed. See the
-[getting started guide](docs/content/docs/index.mdx) for authentication and
-branch options.
 
 ## Turn GitHub issues into pull requests
 
-For a repository you want to automate from GitHub Issues, choose
-**sequential-reviewer** instead of **blank** during `shipyard init`. Set
-`GH_TOKEN` in `.shipyard/.env` to a token with Contents, Issues, and Pull
-requests read/write access and Metadata read access. Then:
+Then:
 
 1. Write an issue with a clear goal and add the `shipyard` and
    `ready-for-agent` labels.
@@ -85,16 +69,11 @@ requests read/write access and Metadata read access. Then:
    reviews the work, and opens a pull request.
 3. Inspect the pull request and merge it when you are happy with the result.
 
-On an Apple Silicon Mac, the optional [repository runner](docs/content/docs/repository-runner.mdx)
-can wake Shipyard when you label an issue. It runs while its terminal stays open.
-The guide covers installation, retries, and issue status labels.
-
 ## Choose a workflow
 
 | Template                       | What it does                                       |
 | ------------------------------ | -------------------------------------------------- |
-| `blank`                        | Runs your own task and prompt.                     |
-| `simple-loop`                  | Works through labelled issues one at a time.       |
+| `simple-loop`                  | Works through labeled issues one at a time.       |
 | `sequential-reviewer`          | Implements and reviews issues before PR handoff.   |
 | `parallel-planner`             | Plans and works on independent issues in parallel. |
 | `parallel-planner-with-review` | Adds review to the parallel workflow.              |
