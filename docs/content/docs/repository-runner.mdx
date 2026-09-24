@@ -47,6 +47,14 @@ workflow on the default branch. It validates the platform, repository,
 installation, local Shipyard package, Docker, GitHub access, activation label,
 credentials, and published workflow.
 
+If an interactive install finds one or more existing repository runners with
+the `shipyard` label, Shipyard shows their names and status and asks whether to
+remove those GitHub registrations. Confirming removes the listed registrations
+and retries installation; declining leaves them in place. Removal unregisters
+the runners from GitHub but does not delete files on another machine. A
+non-interactive install stops with the conflict details and never removes a
+registration automatically.
+
 ## Wake and drain behavior
 
 Only the exact lowercase GitHub issue label `shipyard` is eligible. Adding it

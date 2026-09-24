@@ -1,10 +1,12 @@
 import { Command, Options } from "@effect/cli";
 import { Effect } from "effect";
+import * as clack from "@clack/prompts";
 import { Display } from "./Display.js";
 import { InitError } from "./errors.js";
 import { purgeRunLogs } from "./LogRetention.js";
 import { requireCanonicalConfigDir } from "./runtimeConfig.js";
 import {
+  installRepositoryRunnerWithReplacement,
   installRepositoryRunner,
   RunnerInstallError,
 } from "./RepositoryRunner.js";
@@ -18,6 +20,7 @@ import {
   removeRepositoryRunner,
   RunnerLifecycleError,
 } from "./RepositoryRunnerLifecycle.js";
+import { runEffectPromise } from "./runEffectPromise.js";
 
 const registrationTokenOption = Options.text("registration-token").pipe(
   Options.withDescription(
@@ -32,28 +35,50 @@ const installRunnerCommand = Command.make(
   ({ registrationToken }) =>
     Effect.gen(function* () {
       const display = yield* Display;
-      const result = yield* display.progress(
-        "Installing repository runner",
-        (report) =>
-          Effect.tryPromise({
-            try: () =>
-              installRepositoryRunner({
-                repoDir: process.cwd(),
-                registrationToken:
-                  registrationToken._tag === "Some"
-                    ? registrationToken.value
-                    : undefined,
-                onProgress: report,
-              }),
-            catch: (error) =>
-              new InitError({
-                message:
-                  error instanceof RunnerInstallError
-                    ? error.message
-                    : `Repository runner installation failed: ${error instanceof Error ? error.message : String(error)}`,
-              }),
+      const repoDir = process.cwd();
+      const result = yield* Effect.tryPromise({
+        try: () =>
+          installRepositoryRunnerWithReplacement({
+            repoDir,
+            interactive: process.stdin.isTTY === true,
+            confirmReplacement: async (conflict) => {
+              const confirmed = await clack.confirm({
+                message: conflict.confirmationMessage,
+                initialValue: false,
+              });
+              return !clack.isCancel(confirmed) && confirmed === true;
+            },
+            install: () =>
+              runEffectPromise(
+                display.progress("Installing repository runner", (report) =>
+                  Effect.tryPromise({
+                    try: () =>
+                      installRepositoryRunner({
+                        repoDir,
+                        registrationToken:
+                          registrationToken._tag === "Some"
+                            ? registrationToken.value
+                            : undefined,
+                        onProgress: report,
+                      }),
+                    catch: (error) =>
+                      error instanceof RunnerInstallError
+                        ? error
+                        : new InitError({
+                            message: `Repository runner installation failed: ${error instanceof Error ? error.message : String(error)}`,
+                          }),
+                  }),
+                ),
+              ),
           }),
-      );
+        catch: (error) =>
+          new InitError({
+            message:
+              error instanceof RunnerInstallError
+                ? error.message
+                : `Repository runner installation failed: ${error instanceof Error ? error.message : String(error)}`,
+          }),
+      });
       yield* display.status(
         `Installed ${result.name} for ${result.repository}.`,
         "success",

@@ -641,6 +641,13 @@ export interface ScaffoldOptions {
   issueTracker?: IssueTrackerEntry;
   sandboxProvider?: SandboxProviderEntry;
   codexAuth?: CodexAuthMode;
+  onProgress?: (update: ScaffoldProgressUpdate) => void;
+}
+
+export interface ScaffoldProgressUpdate {
+  readonly current: number;
+  readonly total: number;
+  readonly message: string;
 }
 
 export interface ScaffoldResult {
@@ -685,6 +692,13 @@ export const scaffold = (
       sandboxProvider = SANDBOX_PROVIDER_REGISTRY[0]!, // default: docker
       codexAuth = "api-key",
     } = options;
+    const totalProgressSteps = 5;
+    const reportProgress = (current: number, message: string): void =>
+      options.onProgress?.({
+        current,
+        total: totalProgressSteps,
+        message,
+      });
     if (codexAuth === "chatgpt" && agent.name !== "codex") {
       return yield* Effect.fail(
         new Error(
@@ -697,12 +711,14 @@ export const scaffold = (
     const configDir = join(repoDir, CONFIG_DIR);
 
     const mainFilename = yield* detectMainFilename(repoDir);
+    reportProgress(1, "Validated repository and configuration");
 
     yield* fs
       .makeDirectory(configDir, { recursive: false })
       .pipe(Effect.mapError((e) => new Error(e.message)));
 
     const templateDir = yield* getTemplateDir(templateName);
+    reportProgress(2, `Prepared ${CONFIG_DIR}/ directory`);
 
     // Build .env.example from agent + issue tracker env blocks
     const envExampleParts = [
@@ -737,6 +753,7 @@ export const scaffold = (
       ],
       { concurrency: "unbounded" },
     );
+    reportProgress(3, "Wrote configuration and template files");
 
     // Rewrite main file with the selected agent factory, model, and sandbox provider
     yield* rewriteMainTs(
@@ -747,9 +764,11 @@ export const scaffold = (
       mainFilename,
       codexAuth,
     );
+    reportProgress(4, "Configured selected agent and sandbox");
 
     // Replace issue tracker template arguments in all text files.
     yield* substituteTemplateArgs(configDir, issueTracker);
+    reportProgress(5, "Applied issue tracker settings");
 
     return { mainFilename };
   });
