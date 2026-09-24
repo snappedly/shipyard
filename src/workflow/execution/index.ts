@@ -377,6 +377,14 @@ const cancelledResult = (
   }),
 });
 
+const sameAgentSelection = (
+  left: AgentSelection,
+  right: AgentSelection,
+): boolean =>
+  left.provider === right.provider &&
+  left.model === right.model &&
+  left.role === right.role;
+
 export const executePhase = async (
   options: ExecutePhaseOptions,
 ): Promise<PhaseExecutionResult> => {
@@ -384,20 +392,30 @@ export const executePhase = async (
   const trusted = deepFreeze(structuredClone(options.trusted));
   const untrusted = deepFreeze(structuredClone(options.untrusted));
   const controls = deepFreeze(structuredClone(options.controls));
-  const agentSelection = resolveAgentSelection(
+  const resolvedSelection = resolveAgentSelection(
     trusted.policy,
     assignment.phase,
     trusted.brief.risk,
     trusted.brief.scope,
   );
+  const allowedSelections =
+    assignment.phase === "review"
+      ? [
+          resolveAgentSelection(trusted.policy, "review", "low", "small"),
+          resolveAgentSelection(trusted.policy, "review", "medium"),
+        ]
+      : [resolvedSelection];
+  const persistedSelection = assignment.agentSelection;
   if (
-    assignment.agentSelection !== undefined &&
-    (assignment.agentSelection.provider !== agentSelection.provider ||
-      assignment.agentSelection.model !== agentSelection.model ||
-      assignment.agentSelection.role !== agentSelection.role)
+    persistedSelection !== undefined &&
+    !allowedSelections.some((selection) =>
+      sameAgentSelection(selection, persistedSelection),
+    )
   ) {
     throw new Error("Assignment agent selection does not match trusted policy");
   }
+  // Keep a persisted phase-attempt selection across role-routing changes.
+  const agentSelection = persistedSelection ?? resolvedSelection;
   const secretValues = new Set<string>();
   const controller = new AbortController();
   let timedOut = false;

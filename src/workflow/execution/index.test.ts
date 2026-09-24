@@ -772,6 +772,92 @@ describe("workflow execution", () => {
     },
   );
 
+  it("honors a persisted low-risk review selection after scope routing changes", async () => {
+    const rolePolicy = createRepositoryPolicy({
+      ...policy,
+      worker: {
+        provider: "selected-provider",
+        models: { routine: "routine-alias", strong: "strong-alias" },
+        sandbox: "fixture-sandbox",
+        skillRevision: "skill-1",
+      },
+    });
+    const roleBrief = createWorkBrief({
+      ...brief,
+      risk: "low",
+      hash: undefined,
+    });
+    const candidateHead = {
+      branch: "shipyard/issue-10",
+      sha: "d".repeat(40),
+    };
+    const roleAssignment = createAssignment({
+      id: "persisted-low-risk-review",
+      phase: "review",
+      brief: roleBrief,
+      policy: rolePolicy,
+      attempt: 1,
+      head: candidateHead,
+      createdAt: "2026-09-17T12:00:00.000Z",
+    });
+    const routineSelection: AgentSelection = {
+      provider: "selected-provider",
+      model: "routine-alias",
+      role: "routine",
+    };
+    const persistedAssignment = {
+      ...roleAssignment,
+      agentSelection: routineSelection,
+    };
+    let selected: AgentSelection | undefined;
+    const response = completedResponse();
+    const adapter = createFakePhaseEngineAdapter({
+      respond: async (request) => {
+        selected = request.agentSelection;
+        return {
+          ...response,
+          branch: candidateHead.branch,
+          headSha: candidateHead.sha,
+          commits: [],
+          report: {
+            ...response.report,
+            commits: [],
+            reviewAxes: ["standards", "spec"],
+          },
+        };
+      },
+    });
+    const trusted = {
+      brief: roleBrief,
+      policy: rolePolicy,
+      skill: { revision: "skill-1", content: "Use the pinned skill." },
+    };
+
+    const result = await executePhase(
+      makeOptions({
+        assignment: persistedAssignment,
+        trusted,
+        adapter,
+      }) as never,
+    );
+
+    expect(result.status).toBe("completed");
+    expect(selected).toEqual(routineSelection);
+    await expect(
+      executePhase(
+        makeOptions({
+          assignment: {
+            ...persistedAssignment,
+            agentSelection: { ...routineSelection, model: "unlisted-model" },
+          },
+          trusted,
+        }) as never,
+      ),
+    ).rejects.toThrow(
+      "Assignment agent selection does not match trusted policy",
+    );
+  });
+
   it("does not retry with another model when the selected provider rejects it", async () => {
     const rolePolicy = createRepositoryPolicy({
       ...policy,
