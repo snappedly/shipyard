@@ -23,14 +23,15 @@ a commit or pull request you can inspect.
 
 ## Try it on one task
 
-You need **Node.js 20.18.1+**, **Git**, **Docker running**, and **Codex or Claude
-** Code ** with a subscription login or API key.
+You need **Node.js 20.18.1+**, **Git**, **Docker running**, and **Codex or Claude Code**
+with a subscription login or API key.
 
 Run:
 
 ```sh
 npx skills add snappedly/skills
 ```
+
 Ask your coding agent to run `setup-snappedly-skills` in that repository.
 
 ```sh
@@ -38,11 +39,11 @@ npm install --save-dev @snappedly-tools/shipyard
 npx shipyard init
 ```
 
-During `shipyard init`, choose your agent, **Docker**, the template you want, and install the optional 
+During `shipyard init`, choose your agent, **Docker**, the template you want, and install the optional
 [repository runner](docs/content/docs/repository-runner.mdx). Follow
 the authentication prompts.
 
-On a local Mac, the repository runner automatically wakes Shipyard when you label an issue. 
+On a local Mac, the repository runner automatically wakes Shipyard when you label an issue.
 It runs as long as its terminal stays open.
 
 See the [getting started guide](docs/content/docs/index.mdx) for authentication and
@@ -79,7 +80,7 @@ Then:
 
 | Template                       | What it does                                       |
 | ------------------------------ | -------------------------------------------------- |
-| `simple-loop`                  | Works through labeled issues one at a time.       |
+| `simple-loop`                  | Works through labeled issues one at a time.        |
 | `sequential-reviewer`          | Implements and reviews issues before PR handoff.   |
 | `parallel-planner`             | Plans and works on independent issues in parallel. |
 | `parallel-planner-with-review` | Adds review to the parallel workflow.              |
