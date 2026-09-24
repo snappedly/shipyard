@@ -543,6 +543,47 @@ describe("InitService scaffold", () => {
     },
   );
 
+  it.each([
+    {
+      templateName: "parallel-planner",
+      agent: claudeCodeAgent,
+      expectedModelExample: "SHIPYARD_ROUTINE_MODEL=sonnet",
+    },
+    {
+      templateName: "parallel-planner",
+      agent: codexAgent,
+      expectedModelExample: "SHIPYARD_ROUTINE_MODEL=gpt-6-luna",
+    },
+    {
+      templateName: "parallel-planner-with-review",
+      agent: claudeCodeAgent,
+      expectedModelExample: "SHIPYARD_ROUTINE_MODEL=sonnet",
+    },
+    {
+      templateName: "parallel-planner-with-review",
+      agent: codexAgent,
+      expectedModelExample: "SHIPYARD_ROUTINE_MODEL=gpt-6-luna",
+    },
+  ])(
+    "$templateName generates model role settings for $agent.name",
+    async ({ templateName, agent, expectedModelExample }) => {
+      const dir = await makeDir();
+      await runScaffold(dir, {
+        templateName,
+        agent,
+        model: agent.defaultModel,
+      });
+
+      const envExample = await readFile(
+        join(dir, ".shipyard", ".env.example"),
+        "utf-8",
+      );
+      expect(envExample).toContain("SHIPYARD_ROUTINE_MODEL=");
+      expect(envExample).toContain("SHIPYARD_STRONG_MODEL=");
+      expect(envExample).toContain(expectedModelExample);
+    },
+  );
+
   describe("parallel-planner template", () => {
     it("produces main.mts, plan-prompt.md, implement-prompt.md, merge-prompt.md", async () => {
       const dir = await makeDir();

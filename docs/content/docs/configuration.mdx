@@ -149,12 +149,12 @@ environment when the module loads:
 - `SHIPYARD_CODEX_STRONG_MODEL`
 - `SHIPYARD_CODEX_STRONG_REASONING_EFFORT`
 
-Generated `simple-loop` and `sequential-reviewer` workflows also support the
-provider-independent `SHIPYARD_ROUTINE_MODEL` and `SHIPYARD_STRONG_MODEL`
-variables in `.shipyard/.env`. The generated workflow loads that file before it
-resolves model roles. A host value overrides the same file entry. The
-repository-root `.env` is not loaded. See [agent setup](agents.mdx) for provider
-examples, model catalogs, and precedence.
+All generated workflows support the provider-independent
+`SHIPYARD_ROUTINE_MODEL` and `SHIPYARD_STRONG_MODEL` variables in
+`.shipyard/.env`. The generated workflow loads that file before it resolves
+model roles. A host value overrides the same file entry. The repository-root
+`.env` is not loaded. See [agent setup](agents.mdx) for provider examples, model
+catalogs, and precedence.
 
 ## Workflow repository policy models
 

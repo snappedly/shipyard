@@ -40,12 +40,12 @@ const CODEX_CHATGPT_AUTH_OPTIONS = `{
 
 const roleModelEnvExample = (agentName: string): string =>
   agentName === "codex"
-    ? `# Optional model choices for simple-loop and sequential-reviewer workflows.
+    ? `# Optional model choices for Shipyard workflows.
 # Choose models available to your Codex CLI account: https://learn.chatgpt.com/docs/models
 # The provider must support each value. Aliases can change their target over time.
 # SHIPYARD_ROUTINE_MODEL=gpt-6-luna
 # SHIPYARD_STRONG_MODEL=gpt-6-sol`
-    : `# Optional model choices for simple-loop and sequential-reviewer workflows.
+    : `# Optional model choices for Shipyard workflows.
 # Choose aliases or model IDs available to your Claude Code provider: https://code.claude.com/docs/en/model-config
 # The provider must support each value. Aliases can change their target over time.
 # SHIPYARD_ROUTINE_MODEL=sonnet
@@ -736,11 +736,7 @@ export const scaffold = (
         ? CODEX_CHATGPT_ENV_EXAMPLE
         : agent.envExample,
     ];
-    if (
-      templateName === "simple-loop" ||
-      templateName === "sequential-reviewer"
-    )
-      envExampleParts.push(roleModelEnvExample(agent.name));
+    envExampleParts.push(roleModelEnvExample(agent.name));
     if (issueTracker.envExample) {
       envExampleParts.push(issueTracker.envExample);
     }
