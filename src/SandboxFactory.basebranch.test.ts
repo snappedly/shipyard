@@ -12,7 +12,6 @@ import { testIsolated } from "./sandboxes/test-isolated.js";
 import {
   SandboxConfig,
   SandboxFactory,
-  SANDBOX_REPO_DIR,
   WorktreeDockerSandboxFactory,
 } from "./SandboxFactory.js";
 

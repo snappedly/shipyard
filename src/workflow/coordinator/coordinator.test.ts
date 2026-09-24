@@ -783,7 +783,7 @@ describe("workflow coordinator", () => {
 
   it("cancels active work when the source closes and does not dispatch planning specs", async () => {
     const { coordinator } = createCoordinator();
-    const received = await coordinator.ingest(
+    await coordinator.ingest(
       event("delivery-open", "2026-09-17T12:00:00.000Z", "a".repeat(40)),
     );
     await expect(

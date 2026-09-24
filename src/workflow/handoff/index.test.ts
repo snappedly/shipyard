@@ -285,7 +285,6 @@ describe("handoff gates", () => {
   });
 
   it("returns a changes-requested decision to repair on the same PR", async () => {
-    const currentJob = await job();
     const requestRepair = vi.fn(async () => undefined);
     const result = await processHumanReviewDecision({
       candidate: { base, head, briefHash: brief.hash },

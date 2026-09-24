@@ -4,7 +4,6 @@ import {
   parseWorkBrief,
   type Assignment,
   type PhaseResult,
-  type RepositoryPolicy,
   type WorkIdentity,
   type WorkflowPhase,
 } from "../contracts/index.js";
@@ -115,15 +114,6 @@ const optionalRow = <T extends Record<string, unknown>>(
   result: PostgresQueryResult<T>,
 ): T | undefined => result.rows[0];
 
-const keyToString = (key: WorkKey): string =>
-  [
-    key.repository,
-    key.itemId,
-    String(key.briefRevision),
-    key.phase,
-    key.relevantRevision,
-  ].join("\u0000");
-
 const sameIdentity = (left: WorkIdentity, right: WorkIdentity): boolean =>
   left.repository === right.repository &&
   left.itemId === right.itemId &&
@@ -147,7 +137,6 @@ const parseAssignment = (value: unknown): Assignment => {
   if (typeof base !== "object" || base === null || Array.isArray(base)) {
     throw new Error("Stored assignment base must be an object");
   }
-  const baseRecord = base as Record<string, unknown>;
   const head = candidate.head;
   const revision = (value: unknown, path: string) => {
     if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -451,13 +440,6 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
     path: string,
   ): Promise<T> {
     return row(await this.client.query<T>(text, values), path);
-  }
-
-  private async optional<T extends Record<string, unknown>>(
-    text: string,
-    values: readonly unknown[],
-  ): Promise<T | undefined> {
-    return optionalRow(await this.client.query<T>(text, values));
   }
 
   async insertEventIfAbsent(event: StoredEvent) {

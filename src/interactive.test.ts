@@ -12,7 +12,6 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { interactive, type InteractiveOptions } from "./interactive.js";
 import {
   createIsolatedSandboxProvider,
-  type IsolatedSandboxHandle,
   type InteractiveExecOptions,
 } from "./SandboxProvider.js";
 import { claudeCode, codex } from "./AgentProvider.js";
@@ -639,7 +638,7 @@ describe("interactive()", () => {
     let worktreeCwd: string | undefined;
 
     const provider = makeTestProvider(
-      async (_args, opts) => {
+      async (_args) => {
         return { exitCode: 0 };
       },
       (path) => {
@@ -664,7 +663,7 @@ describe("interactive()", () => {
     let worktreeCwd: string | undefined;
 
     const provider = makeTestProvider(
-      async (_args, opts) => {
+      async (_args) => {
         return { exitCode: 0 };
       },
       (path) => {

@@ -1,6 +1,5 @@
 import { toSessionTransferHandle } from "./SandboxProvider.js";
 import { NodeContext, NodeFileSystem } from "@effect/platform-node";
-import { join } from "node:path";
 import { Effect, Layer, Ref } from "effect";
 import type { AgentProvider } from "./AgentProvider.js";
 import {
@@ -36,11 +35,7 @@ import {
   runHostHooks,
   type SandboxHooks,
 } from "./SandboxLifecycle.js";
-import {
-  type SandboxService,
-  SandboxFactory,
-  makeSandboxFromHandle,
-} from "./SandboxFactory.js";
+import { type SandboxService, SandboxFactory } from "./SandboxFactory.js";
 import type {
   SandboxProvider,
   SessionTransferHandle,
@@ -53,7 +48,6 @@ import { validateMaxIterations } from "./validateMaxIterations.js";
 import { startSandbox } from "./startSandbox.js";
 import { syncOut } from "./syncOut.js";
 import * as WorktreeManager from "./WorktreeManager.js";
-import { copyToWorktree } from "./CopyToWorktree.js";
 import { shellQuote } from "./shellQuote.js";
 import { assertNoSymlinkComponents } from "./pathSecurity.js";
 import { resolveCwd } from "./resolveCwd.js";

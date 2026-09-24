@@ -1,5 +1,4 @@
 import { NodeContext, NodeFileSystem } from "@effect/platform-node";
-import { join } from "node:path";
 import * as clack from "@clack/prompts";
 import { Effect } from "effect";
 import type { AgentProvider } from "./AgentProvider.js";

@@ -3,7 +3,6 @@ import {
   lstat,
   mkdir,
   mkdtemp,
-  readdir,
   rm,
   symlink,
   utimes,

@@ -13,7 +13,7 @@ import {
   getIssueTracker,
   getSandboxProvider,
 } from "./InitService.js";
-import type { AgentEntry, ScaffoldOptions } from "./InitService.js";
+import type { ScaffoldOptions } from "./InitService.js";
 import { SANDBOX_REPO_DIR } from "./SandboxFactory.js";
 import { CODEX_MODELS } from "./modelConfig.js";
 

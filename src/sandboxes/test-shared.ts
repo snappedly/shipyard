@@ -112,11 +112,10 @@ export interface StubProviderRecord {
 }
 
 /**
- * Create a no-op isolated sandbox provider that records `create`/`close` calls.
- * For tests that verify call contracts without exercising filesystem behaviour.
+ * Create a filesystem-backed provider that records `create`/`close` calls.
  */
 export const testStubProvider = (
-  options: { name?: string; worktreePath?: string } = {},
+  options: { name?: string } = {},
 ): StubProviderRecord => {
   const createCalls: unknown[] = [];
   const closeCalls = { count: 0 };

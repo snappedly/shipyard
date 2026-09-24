@@ -685,7 +685,7 @@ const initCommand = Command.make(
         }
       }
 
-      const scaffoldResult = yield* d.progress(
+      yield* d.progress(
         `Scaffolding ${CONFIG_DIR}/ config directory...`,
         (report) =>
           scaffold(cwd, {

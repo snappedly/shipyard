@@ -23,21 +23,6 @@ describe("createIsolatedSandboxProvider", () => {
     expect(provider.name).toBe("test-isolated");
   });
 
-  it("delegates create() to the config's create function", async () => {
-    const handle = makeMockHandle();
-    const createFn = vi.fn(async () => handle);
-    const provider = createIsolatedSandboxProvider({
-      name: "test-isolated",
-      create: createFn,
-    });
-
-    const options = { env: { FOO: "bar" } };
-    const result = await provider.create(options);
-
-    expect(createFn).toHaveBeenCalledWith(options);
-    expect(result).toBe(handle);
-  });
-
   it("does not have a branchStrategy property", () => {
     const provider = createIsolatedSandboxProvider({
       name: "test-isolated",

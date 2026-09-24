@@ -1,6 +1,6 @@
 import { Duration, Effect, Exit, TestClock, TestContext } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { exec } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,7 +9,6 @@ import {
   createIsolatedSandboxProvider,
   type IsolatedSandboxHandle,
 } from "./SandboxProvider.js";
-import { SANDBOX_REPO_DIR } from "./SandboxFactory.js";
 import { startSandbox, COPY_PATHS_TIMEOUT_MS } from "./startSandbox.js";
 import { testIsolated } from "./sandboxes/test-isolated.js";
 import { CopyToWorktreeTimeoutError } from "./errors.js";

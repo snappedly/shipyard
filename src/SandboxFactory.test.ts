@@ -21,7 +21,6 @@ import {
   SandboxFactory,
   SandboxConfig,
   WorktreeDockerSandboxFactory,
-  SANDBOX_REPO_DIR,
 } from "./SandboxFactory.js";
 
 const execAsync = promisify(exec);
@@ -68,7 +67,7 @@ const branchAt = async (dir: string): Promise<string> => {
   return stdout.trim();
 };
 
-/** Create a mock sandbox provider that records calls and delegates to a no-op handle. */
+/** Create a mock sandbox provider that records calls. */
 const makeMockProvider = (): {
   provider: SandboxProvider;
   createCalls: any[];
@@ -76,7 +75,6 @@ const makeMockProvider = (): {
 } => {
   const stub = testStubProvider({
     name: "test-provider",
-    worktreePath: SANDBOX_REPO_DIR,
   });
   return {
     provider: stub.provider,

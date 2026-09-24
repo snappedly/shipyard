@@ -4,7 +4,6 @@ import type {
   RevisionReference,
   RiskLevel,
   WorkBrief,
-  WorkflowPhase,
 } from "../../workflow/contracts/index.js";
 import type {
   BranchLease,
