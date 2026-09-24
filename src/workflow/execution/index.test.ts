@@ -357,7 +357,7 @@ describe("workflow execution", () => {
     let aborted = false;
     const fake = createFakePhaseEngineAdapter({
       respond: (request) =>
-        new Promise<PhaseEngineResponse>((resolve, reject) => {
+        new Promise<PhaseEngineResponse>((_resolve, reject) => {
           request.signal.addEventListener(
             "abort",
             () => {
@@ -384,7 +384,7 @@ describe("workflow execution", () => {
     let aborted = false;
     const fake = createFakePhaseEngineAdapter({
       respond: (request) =>
-        new Promise<PhaseEngineResponse>((resolve, reject) => {
+        new Promise<PhaseEngineResponse>((_resolve, reject) => {
           request.signal.addEventListener(
             "abort",
             () => {

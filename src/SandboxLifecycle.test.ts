@@ -1,4 +1,4 @@
-import { Effect, Layer, Ref } from "effect";
+import { Effect, Ref } from "effect";
 import { exec } from "node:child_process";
 import {
   mkdir,
@@ -14,7 +14,7 @@ import { describe, expect, it } from "vitest";
 import { type DisplayEntry, SilentDisplay } from "./Display.js";
 import { type SandboxService } from "./SandboxFactory.js";
 import { makeLocalSandbox } from "./testSandbox.js";
-import { ExecError, SyncError } from "./errors.js";
+import { SyncError } from "./errors.js";
 import { withSandboxLifecycle, runHostHooks } from "./SandboxLifecycle.js";
 
 /**
@@ -44,23 +44,6 @@ const makePathTranslatingSandbox = (
 
 const execAsync = promisify(exec);
 
-const initRepo = async (dir: string) => {
-  await execAsync("git init -b main", { cwd: dir });
-  await execAsync('git config user.email "test@test.com"', { cwd: dir });
-  await execAsync('git config user.name "Test"', { cwd: dir });
-};
-
-const commitFile = async (
-  dir: string,
-  name: string,
-  content: string,
-  message: string,
-) => {
-  await writeFile(join(dir, name), content);
-  await execAsync(`git add "${name}"`, { cwd: dir });
-  await execAsync(`git commit -m "${message}"`, { cwd: dir });
-};
-
 const getHead = async (dir: string) => {
   const { stdout } = await execAsync("git rev-parse HEAD", { cwd: dir });
   return stdout.trim();
@@ -69,14 +52,6 @@ const getHead = async (dir: string) => {
 const testDisplayLayer = SilentDisplay.layer(
   Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([]),
 );
-
-const setup = async () => {
-  const hostDir = await mkdtemp(join(tmpdir(), "host-"));
-  const sandboxDir = await mkdtemp(join(tmpdir(), "sandbox-"));
-  const sandboxRepoDir = join(sandboxDir, "repo");
-  const sandbox = makeLocalSandbox(sandboxDir);
-  return { hostDir, sandboxDir, sandboxRepoDir, sandbox };
-};
 
 describe("withSandboxLifecycle (worktree mode)", () => {
   const setupWorktree = async () => {
@@ -249,7 +224,7 @@ describe("withSandboxLifecycle (worktree mode)", () => {
     const events: string[] = [];
 
     const sandbox: SandboxService = {
-      exec: (command, options) => {
+      exec: (command) => {
         if (command === "slow-hook-a" || command === "slow-hook-b") {
           events.push(`start:${command}`);
           return Effect.gen(function* () {

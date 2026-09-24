@@ -14,14 +14,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import { Display, type DisplayEntry, SilentDisplay } from "./Display.js";
+import { type DisplayEntry, SilentDisplay } from "./Display.js";
 import { makeLocalSandbox } from "./testSandbox.js";
 import { orchestrate } from "./Orchestrator.js";
 import { substitutePromptArgs } from "./PromptArgumentSubstitution.js";
 import { claudeCode, codex as codexFactory } from "./AgentProvider.js";
 import type { AgentProvider } from "./AgentProvider.js";
 import type { SandboxService } from "./SandboxFactory.js";
-import type { DockerError, SandboxError } from "./errors.js";
+import type { DockerError } from "./errors.js";
 import { AgentError, AgentIdleTimeoutError } from "./errors.js";
 import { SandboxFactory } from "./SandboxFactory.js";
 import { encodeProjectPath } from "./SessionStore.js";
@@ -536,7 +536,6 @@ describe("Orchestrator", () => {
     expect(result.completionSignal).toBeUndefined();
 
     // Host should still be at the original commit
-    const hostHead = await getHead(hostDir);
     const { stdout } = await execAsync("git log --oneline", { cwd: hostDir });
     expect(stdout.trim().split("\n")).toHaveLength(1);
   });

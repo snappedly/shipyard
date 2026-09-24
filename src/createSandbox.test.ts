@@ -1,5 +1,5 @@
 import { exec } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync } from "node:fs";
 import {
   copyFile,
   mkdir,
@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { Effect, Layer } from "effect";
+import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import { claudeCode, codex } from "./AgentProvider.js";
 import {
@@ -23,7 +23,6 @@ import {
 import type { SandboxService } from "./SandboxFactory.js";
 import {
   createIsolatedSandboxProvider,
-  type IsolatedSandboxHandle,
   type SessionTransferHandle,
 } from "./SandboxProvider.js";
 import { encodeProjectPath } from "./SessionStore.js";
@@ -885,14 +884,6 @@ describe("createSandbox", () => {
     await initRepo(hostDir);
     await commitFile(hostDir, "init.txt", "init", "initial commit");
 
-    const gitTmpDir = mkdtempSync(join(tmpdir(), "test-gitconfig-"));
-    const globalConfigPath = join(gitTmpDir, ".gitconfig");
-    writeFileSync(globalConfigPath, "");
-    const isolatedEnv = {
-      ...process.env,
-      GIT_CONFIG_GLOBAL: globalConfigPath,
-    };
-
     let userExecCmd: string | undefined;
     let userExecCwd: string | undefined;
     let sandboxRepoPath: string | undefined;
@@ -917,7 +908,6 @@ describe("createSandbox", () => {
                 exitCode: 0,
               };
             }
-            const cwd = execOpts?.cwd ?? base.worktreePath;
             return base.exec(cmd, execOpts);
           },
           copyIn: base.copyIn,
@@ -942,7 +932,6 @@ describe("createSandbox", () => {
     } finally {
       await sandbox.close();
       await rm(hostDir, { recursive: true, force: true });
-      await rm(gitTmpDir, { recursive: true, force: true });
     }
   });
 
@@ -1340,15 +1329,6 @@ describe("createSandbox", () => {
     let createCallCount = 0;
     let closeCallCount = 0;
 
-    // Isolated git config so global writes don't pollute developer config
-    const gitTmpDir = mkdtempSync(join(tmpdir(), "test-gitconfig-"));
-    const globalConfigPath = join(gitTmpDir, ".gitconfig");
-    writeFileSync(globalConfigPath, "");
-    const isolatedEnv = {
-      ...process.env,
-      GIT_CONFIG_GLOBAL: globalConfigPath,
-    };
-
     const spyProvider = createIsolatedSandboxProvider({
       name: "spy",
       create: async (opts) => {
@@ -1359,7 +1339,6 @@ describe("createSandbox", () => {
           ...base,
           worktreePath: workDir,
           exec: async (cmd, execOpts) => {
-            const cwd = execOpts?.cwd ?? workDir;
             if (cmd.startsWith("claude ") && execOpts?.onLine) {
               const onLine = execOpts.onLine;
               const output = toStreamJson("mock output");
@@ -1407,7 +1386,6 @@ describe("createSandbox", () => {
       await sandbox.close();
       expect(closeCallCount).toBe(1);
       await rm(hostDir, { recursive: true, force: true });
-      await rm(gitTmpDir, { recursive: true, force: true });
     }
   });
 
@@ -1418,14 +1396,6 @@ describe("createSandbox", () => {
 
     let providerClosed = false;
 
-    const gitTmpDir = mkdtempSync(join(tmpdir(), "test-gitconfig-"));
-    const globalConfigPath = join(gitTmpDir, ".gitconfig");
-    writeFileSync(globalConfigPath, "");
-    const isolatedEnv = {
-      ...process.env,
-      GIT_CONFIG_GLOBAL: globalConfigPath,
-    };
-
     const spyProvider = createIsolatedSandboxProvider({
       name: "spy-close",
       create: async (opts) => {
@@ -1434,7 +1404,6 @@ describe("createSandbox", () => {
           ...base,
           worktreePath: base.worktreePath,
           exec: async (cmd, execOpts) => {
-            const cwd = execOpts?.cwd ?? base.worktreePath;
             if (cmd.startsWith("claude ") && execOpts?.onLine) {
               const onLine = execOpts.onLine;
               const output = toStreamJson("mock");
@@ -1466,7 +1435,6 @@ describe("createSandbox", () => {
     expect(providerClosed).toBe(true);
 
     await rm(hostDir, { recursive: true, force: true });
-    await rm(gitTmpDir, { recursive: true, force: true });
   });
 
   it("state persists between runs — file created in run 1 exists in run 2", async () => {
@@ -1667,7 +1635,6 @@ describe("createSandbox", () => {
           ...base,
           worktreePath: base.worktreePath,
           exec: async (cmd, execOpts) => {
-            const cwd = execOpts?.cwd ?? base.worktreePath;
             return base.exec(cmd, execOpts);
           },
           interactiveExec: async (args, _opts) => {
@@ -1718,7 +1685,6 @@ describe("createSandbox", () => {
           ...base,
           worktreePath: base.worktreePath,
           exec: async (cmd, execOpts) => {
-            const cwd = execOpts?.cwd ?? base.worktreePath;
             return base.exec(cmd, execOpts);
           },
           interactiveExec: async () => ({ exitCode: 0 }),
@@ -1766,7 +1732,6 @@ describe("createSandbox", () => {
           ...base,
           worktreePath: base.worktreePath,
           exec: async (cmd, execOpts) => {
-            const cwd = execOpts?.cwd ?? base.worktreePath;
             return base.exec(cmd, execOpts);
           },
           interactiveExec: async (_args, opts) => {
@@ -1821,7 +1786,6 @@ describe("createSandbox", () => {
           ...base,
           worktreePath: base.worktreePath,
           exec: async (cmd, execOpts) => {
-            const cwd = execOpts?.cwd ?? base.worktreePath;
             return base.exec(cmd, execOpts);
           },
           copyIn: base.copyIn,
@@ -1865,7 +1829,6 @@ describe("createSandbox", () => {
           ...base,
           worktreePath: base.worktreePath,
           exec: async (cmd, execOpts) => {
-            const cwd = execOpts?.cwd ?? base.worktreePath;
             return base.exec(cmd, execOpts);
           },
           interactiveExec: async (args, _opts) => {
@@ -2051,7 +2014,6 @@ describe("createSandbox", () => {
           ...base,
           worktreePath: base.worktreePath,
           exec: async (cmd, execOpts) => {
-            const cwd = execOpts?.cwd ?? base.worktreePath;
             return base.exec(cmd, execOpts);
           },
           interactiveExec: async () => ({ exitCode: 0 }),
@@ -2094,7 +2056,6 @@ describe("createSandbox", () => {
           ...base,
           worktreePath: base.worktreePath,
           exec: async (cmd, execOpts) => {
-            const cwd = execOpts?.cwd ?? base.worktreePath;
             return base.exec(cmd, execOpts);
           },
           interactiveExec: async () => ({ exitCode: 0 }),

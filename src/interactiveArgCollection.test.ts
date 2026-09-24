@@ -16,7 +16,6 @@ vi.mock("@clack/prompts", async (importOriginal) => {
 import { interactive } from "./interactive.js";
 import {
   createIsolatedSandboxProvider,
-  type IsolatedSandboxHandle,
   type InteractiveExecOptions,
 } from "./SandboxProvider.js";
 import { claudeCode } from "./AgentProvider.js";

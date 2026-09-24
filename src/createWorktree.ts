@@ -16,7 +16,6 @@ import type {
   SandboxProvider,
   MergeToHeadBranchStrategy,
   NamedBranchStrategy,
-  IsolatedSandboxHandle,
 } from "./SandboxProvider.js";
 import type { CloseResult, Sandbox } from "./createSandbox.js";
 import { createSandboxFromWorktree } from "./createSandbox.js";
