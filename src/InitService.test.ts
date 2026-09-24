@@ -486,10 +486,23 @@ describe("InitService scaffold", () => {
         join(configDir, "block-scope.sh"),
         "utf-8",
       );
+      const triage = await readFile(
+        join(configDir, "triage-prompt.md"),
+        "utf-8",
+      );
+      const triageGate = await readFile(
+        join(configDir, "verify-triage.sh"),
+        "utf-8",
+      );
       expect(main).toContain("handoff.sh");
       expect(main).toContain("setup.sh");
+      expect(main).toContain("triage-prompt.md");
+      expect(main).toContain("verify-triage.sh");
       expect(selector).toMatch(/"--label",\s*"shipyard"/);
       expect(setup).toContain("snappedly/skills.git");
+      expect(setup).toContain("for skill in triage implement");
+      expect(triage).toContain("Follow `/triage`");
+      expect(triageGate).toContain("ready-for-agent");
       expect(handoff).toContain("gh pr create");
       expect(handoff).not.toContain("gh pr merge");
       expect(blocked).toContain("shipyard:blocked");

@@ -85,10 +85,16 @@ wake-ups, and stops when it makes no progress. Restarting it recovers work
 labelled while the host was offline.
 GitHub-backed `shipyard init` provisions `shipyard`, `shipyard:blocked`,
 `shipyard:pending`, `shipyard:complete`, and `shipyard:outstanding-tasks` in the repository.
+It also provisions the `bug`, `enhancement`, and five triage state labels.
 For a connected repository, init reports an error if any label cannot be created.
 
 The bundled issue workflows install Snappedly skills and the candidate's
-dependencies in Docker. A standalone issue runs through `/implement`. Activating
+dependencies in Docker. When Shipyard takes an activated ticket, it runs
+`/triage` first and checks the current GitHub labels. Implementation requires
+both `shipyard` and `ready-for-agent`, with no conflicting triage state. Other
+triage outcomes follow the normal blocked flow: Shipyard adds
+`shipyard:blocked`, removes `shipyard`, and records the reason on the ticket.
+A standalone ready issue then runs through `/implement`. Activating
 a planning spec or a linked executable child resolves the parent and only
 linked tickets labelled `shipyard` into one `/implement-spec` scope. The sequential
 templates deliver selected tickets on one branch; the parallel templates assign

@@ -5,6 +5,9 @@ const initialRepository = process.env.GH_REPO;
 const calls = vi.hoisted(() => ({
   events: [] as string[],
   pendingEdits: [] as string[],
+  triaged: [] as Array<{ id: string; beforeEvents: number }>,
+  verified: [] as string[],
+  triageReady: true,
   selected: 0,
   spec: false,
   multi: false,
@@ -64,6 +67,14 @@ vi.mock("node:child_process", () => ({
         scope: args[4]!,
         reason: options?.input ?? "",
       });
+      return "";
+    }
+    if (command === "bash" && args[0] === ".shipyard/verify-triage.sh") {
+      calls.verified.push(args[1]!);
+      if (!calls.triageReady)
+        throw Object.assign(new Error("Triage gate failed"), {
+          stderr: "Issue cannot be implemented: triage state is needs-info",
+        });
       return "";
     }
     if (command === "node" && args[0] === ".shipyard/select-issues.mjs") {
@@ -141,6 +152,13 @@ vi.mock("@snappedly-tools/shipyard", () => {
         name: string;
         promptArgs?: Record<string, string>;
       }) => {
+        if (name.startsWith("triage #")) {
+          calls.triaged.push({
+            id: name.slice("triage #".length),
+            beforeEvents: calls.events.length,
+          });
+          return packet("triage applied");
+        }
         calls.events.push(name);
         calls.invocations.push({ name, branch, args: promptArgs ?? {} });
         if (name === "spec-integrator")
@@ -292,6 +310,9 @@ beforeEach(() => {
   vi.resetModules();
   calls.events.length = 0;
   calls.pendingEdits.length = 0;
+  calls.triaged.length = 0;
+  calls.verified.length = 0;
+  calls.triageReady = true;
   calls.selected = 0;
   calls.spec = false;
   calls.multi = false;
@@ -323,6 +344,48 @@ afterEach(() => {
 });
 
 describe("generated issue workflows", () => {
+  it.each([
+    "simple-loop",
+    "sequential-reviewer",
+    "parallel-planner",
+    "parallel-planner-with-review",
+  ])("%s blocks a non-ready ticket after triage", async (template) => {
+    calls.triageReady = false;
+    await import(`./templates/${template}/main.mts` as string);
+    expect(calls.triaged.map((item) => item.id)).toEqual(["42"]);
+    expect(calls.verified).toEqual(["42"]);
+    expect(calls.events).not.toContain("implementer");
+    expect(calls.events).not.toContain("handoff");
+    expect(calls.blocked[0]).toMatchObject({ root: "42", failed: "42" });
+    expect(calls.blocked[0]?.reason).toContain("needs-info");
+  });
+
+  it.each([
+    "simple-loop",
+    "sequential-reviewer",
+    "parallel-planner",
+    "parallel-planner-with-review",
+  ])("%s triages and verifies before implementing", async (template) => {
+    await import(`./templates/${template}/main.mts` as string);
+    expect(calls.triaged).toEqual([
+      { id: "42", beforeEvents: expect.any(Number) },
+    ]);
+    expect(calls.verified).toEqual(["42"]);
+    expect(calls.triaged[0]!.beforeEvents).toBe(
+      calls.events.indexOf("implementer"),
+    );
+  });
+
+  it("blocks a non-ready spec child before starting a ticket worker", async () => {
+    calls.spec = true;
+    calls.triageReady = false;
+    await import("./templates/parallel-planner/main.mts" as string);
+    expect(calls.triaged.map((item) => item.id)).toEqual(["43"]);
+    expect(calls.verified).toEqual(["43"]);
+    expect(calls.events).not.toContain("implementer");
+    expect(calls.blocked[0]).toMatchObject({ root: "42", failed: "43" });
+  });
+
   it("simple-loop handles one issue at a time and publishes after implementation", async () => {
     await import("./templates/simple-loop/main.mts" as string);
     expect(calls.events).toEqual([

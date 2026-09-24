@@ -43,6 +43,35 @@ const run = (
   });
 
 describe("issue workflow scripts", () => {
+  it("requires activation and the sole ready triage state before implementation", async () => {
+    const { dir, bin } = await fixture();
+    await executable(
+      join(bin, "gh"),
+      `const labels = process.env.ISSUE_LABELS.split(",");
+if (process.argv.includes("--json")) console.log(JSON.stringify({state:process.env.ISSUE_STATE || "OPEN",labels:labels.map((name) => ({name}))}));
+else process.exit(2);`,
+    );
+    const verify = (labels: string, state = "OPEN") =>
+      run("bash", [script("verify-triage.sh"), "42", "owner/repo"], dir, bin, {
+        ISSUE_LABELS: labels,
+        ISSUE_STATE: state,
+      });
+    expect(verify("shipyard,ready-for-agent").status).toBe(0);
+    for (const labels of [
+      "shipyard",
+      "ready-for-agent",
+      "shipyard,needs-info",
+      "shipyard,ready-for-agent,needs-triage",
+      "shipyard,ready-for-agent,ready-for-human",
+      "shipyard,ready-for-agent,wontfix",
+    ]) {
+      const result = verify(labels);
+      expect(result.status, labels).not.toBe(0);
+      expect(result.stderr).toContain("cannot be implemented");
+    }
+    expect(verify("shipyard,ready-for-agent", "CLOSED").status).not.toBe(0);
+  });
+
   it("resolves activated parent and child into one dependency ordered spec scope", async () => {
     const { dir, bin } = await fixture();
     const log = join(dir, "gh.log");
@@ -507,7 +536,7 @@ fs.appendFileSync(process.env.INSTALL_LOG, "git " + process.argv.slice(2).join("
 if (process.argv[2] === "remote") process.exit(0);
 if (process.env.FAIL_CLONE) process.exit(1);
 const root = process.argv.at(-1);
-for (const name of ["implement","implement-spec","code-cleanup","code-review","tdd"]) {
+for (const name of ["triage","implement","implement-spec","code-cleanup","code-review","tdd"]) {
   const dir = path.join(root,"skills","tools",name);
   fs.mkdirSync(dir,{recursive:true}); fs.writeFileSync(path.join(dir,"SKILL.md"), name); fs.writeFileSync(path.join(dir,"guidance.md"), "linked guidance");
 }

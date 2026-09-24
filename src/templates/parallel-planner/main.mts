@@ -36,6 +36,18 @@ const closeClean = async (sandbox: {
   if (preservedWorktreePath)
     throw new Error(`Sandbox has uncommitted work at ${preservedWorktreePath}`);
 };
+const verifyTriage = (ticketId: string) => {
+  try {
+    execFileSync("bash", [".shipyard/verify-triage.sh", ticketId, repository], {
+      encoding: "utf8",
+    });
+  } catch (error) {
+    const detail = (error as { stderr?: string | Buffer }).stderr
+      ?.toString()
+      .trim();
+    throw new Error(detail || `Could not verify triage for #${ticketId}`);
+  }
+};
 const planSchema = z.object({ issues: z.array(z.object({ id: z.string() })) });
 type Ticket = {
   id: string;
@@ -99,6 +111,14 @@ const runWorker = async (scope: Scope, ticket: Ticket) => {
     hooks,
   });
   try {
+    await sandbox.run({
+      name: `triage #${ticket.id}`,
+      maxIterations: 1,
+      agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
+      promptFile: "./.shipyard/triage-prompt.md",
+      promptArgs: { TASK_ID: ticket.id },
+    });
+    verifyTriage(ticket.id);
     const implementation = await sandbox.run({
       name: "implementer",
       maxIterations: 100,
@@ -348,6 +368,14 @@ for (let iteration = 0; iteration < 10; iteration++) {
         let handoffEvidence: string;
         try {
           if (scope.kind === "standalone") {
+            await integration.run({
+              name: `triage #${id}`,
+              maxIterations: 1,
+              agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
+              promptFile: "./.shipyard/triage-prompt.md",
+              promptArgs: { TASK_ID: id },
+            });
+            verifyTriage(id);
             const standalone = await integration.run({
               name: "implementer",
               maxIterations: 100,

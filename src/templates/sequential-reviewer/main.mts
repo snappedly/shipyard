@@ -37,6 +37,18 @@ const closeClean = async (sandbox: {
   if (preservedWorktreePath)
     throw new Error(`Sandbox has uncommitted work at ${preservedWorktreePath}`);
 };
+const verifyTriage = (ticketId: string) => {
+  try {
+    execFileSync("bash", [".shipyard/verify-triage.sh", ticketId, repository], {
+      encoding: "utf8",
+    });
+  } catch (error) {
+    const detail = (error as { stderr?: string | Buffer }).stderr
+      ?.toString()
+      .trim();
+    throw new Error(detail || `Could not verify triage for #${ticketId}`);
+  }
+};
 
 const handoffEvidence = (stdout: string): string | undefined =>
   [...stdout.matchAll(/<handoff>([\s\S]*?)<\/handoff>/g)].at(-1)?.[1]?.trim();
@@ -119,6 +131,18 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
     });
     let evidence: string;
     try {
+      for (const ticketId of issue.kind === "spec"
+        ? (issue.tickets ?? []).map((ticket) => ticket.id)
+        : [issue.id]) {
+        await sandbox.run({
+          name: `triage #${ticketId}`,
+          agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
+          maxIterations: 1,
+          promptFile: "./.shipyard/triage-prompt.md",
+          promptArgs: { TASK_ID: ticketId },
+        });
+        verifyTriage(ticketId);
+      }
       const implement = await sandbox.run({
         name: "implementer",
         maxIterations: 1,
