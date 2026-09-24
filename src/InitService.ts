@@ -530,28 +530,6 @@ const rewriteMainTs = (
         modelLiteral,
       );
     }
-    // Replace model arguments in factory calls. The built-in Codex templates
-    // use CODEX_MODELS references so the central model configuration remains
-    // live in a default Codex scaffold.
-    const factoryCallRe = new RegExp(
-      `${agent.factoryImport}\\(([^)\\n]*)\\)`,
-      "g",
-    );
-    content = content.replace(
-      factoryCallRe,
-      (match, modelExpression: string) => {
-        const keepsConfiguredModel =
-          agent.name === "codex" &&
-          model === CODEX_MODELS.routine.model &&
-          /^(?:[A-Za-z_$][\w$]*\.)*CODEX_MODELS\.[A-Za-z_$][\w$]*$/.test(
-            modelExpression.trim(),
-          );
-        return keepsConfiguredModel
-          ? match
-          : `${agent.factoryImport}(${JSON.stringify(model)})`;
-      },
-    );
-
     // ChatGPT subscription auth is stored by the host Codex CLI. Mount the
     // file into the sandbox read-only so Codex can use it without exposing an
     // API key through the generated .env file.

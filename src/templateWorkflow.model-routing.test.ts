@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getCalls,
+  importTemplate,
   loadEnvFile,
   runGeneratedWorkflow,
 } from "./templateWorkflow.test-support.js";
@@ -15,7 +16,7 @@ describe("generated workflow model routing", () => {
     );
     process.env.SHIPYARD_ROUTINE_MODEL = "host-routine";
 
-    await import("./templates/simple-loop/main.mts" as string);
+    await importTemplate("simple-loop");
 
     expect(calls.agentInvocations).toEqual([
       {
@@ -39,7 +40,7 @@ describe("generated workflow model routing", () => {
     );
     process.env.SHIPYARD_ROUTINE_MODEL = "host-routine";
 
-    await import("./templates/sequential-reviewer/main.mts" as string);
+    await importTemplate("sequential-reviewer");
 
     expect(calls.agentInvocations).toEqual([
       {
@@ -99,7 +100,7 @@ describe("generated workflow model routing", () => {
   it("does not load model values from the repository-root .env", async () => {
     await loadEnvFile("", "SHIPYARD_ROUTINE_MODEL=root-only-model\n");
 
-    await import("./templates/simple-loop/main.mts" as string);
+    await importTemplate("simple-loop");
 
     expect(
       calls.agentInvocations.slice(0, 2).map((call) => call.model),
@@ -109,7 +110,7 @@ describe("generated workflow model routing", () => {
   it("uses Codex default effort for a new role model unless an effort is set", async () => {
     process.env.SHIPYARD_ROUTINE_MODEL = "routine-default";
 
-    await import("./templates/simple-loop/main.mts" as string);
+    await importTemplate("simple-loop");
 
     expect(calls.agentInvocations[0]).toEqual({
       name: "triage #42",
@@ -123,7 +124,7 @@ describe("generated workflow model routing", () => {
     process.env.SHIPYARD_ROUTINE_MODEL = "new-routine";
     process.env.SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT = "high";
 
-    await import("./templates/simple-loop/main.mts" as string);
+    await importTemplate("simple-loop");
 
     expect(calls.agentInvocations[0]).toMatchObject({
       model: "new-routine",
@@ -131,13 +132,63 @@ describe("generated workflow model routing", () => {
     });
   });
 
+  it("uses the Codex effort loaded from .shipyard/.env", async () => {
+    await loadEnvFile("SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT=high\n");
+
+    await importTemplate("simple-loop");
+
+    expect(calls.agentInvocations[0]).toMatchObject({
+      model: "routine-default",
+      effort: "high",
+    });
+  });
+
+  it("uses the legacy Codex role model loaded from .shipyard/.env", async () => {
+    await loadEnvFile("SHIPYARD_CODEX_ROUTINE_MODEL=file-codex-routine\n");
+
+    await importTemplate("simple-loop");
+
+    expect(calls.agentInvocations[0]).toMatchObject({
+      model: "file-codex-routine",
+      effort: "max",
+    });
+  });
+
+  it("applies a .shipyard/.env Codex effort to a selected role model", async () => {
+    await loadEnvFile(
+      "SHIPYARD_ROUTINE_MODEL=file-routine\nSHIPYARD_CODEX_ROUTINE_REASONING_EFFORT=high\n",
+    );
+
+    await importTemplate("simple-loop");
+
+    expect(calls.agentInvocations[0]).toMatchObject({
+      model: "file-routine",
+      effort: "high",
+    });
+  });
+
+  it.each(["routine", "strong"] as const)(
+    "rejects an invalid %s Codex effort loaded from .shipyard/.env",
+    async (role) => {
+      await loadEnvFile(
+        `SHIPYARD_CODEX_${role.toUpperCase()}_REASONING_EFFORT=invalid\n`,
+      );
+
+      await expect(importTemplate("simple-loop")).rejects.toThrow(
+        `SHIPYARD_CODEX_${role.toUpperCase()}_REASONING_EFFORT must be one of`,
+      );
+
+      expect(calls.agentInvocations).toEqual([]);
+    },
+  );
+
   it("keeps existing Codex role model and effort overrides as fallbacks", async () => {
     process.env.SHIPYARD_CODEX_ROUTINE_MODEL = "legacy-routine";
     process.env.SHIPYARD_CODEX_STRONG_MODEL = "legacy-strong";
     process.env.SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT = "high";
     process.env.SHIPYARD_CODEX_STRONG_REASONING_EFFORT = "low";
 
-    await import("./templates/sequential-reviewer/main.mts" as string);
+    await importTemplate("sequential-reviewer");
 
     expect(calls.agentInvocations).toEqual([
       {
@@ -164,7 +215,7 @@ describe("generated workflow model routing", () => {
   it("passes an unknown nonempty model value to the selected provider unchanged", async () => {
     process.env.SHIPYARD_ROUTINE_MODEL = "future-alias:variant/unknown";
 
-    await import("./templates/simple-loop/main.mts" as string);
+    await importTemplate("simple-loop");
 
     expect(
       calls.agentInvocations.slice(0, 2).map((call) => call.model),
@@ -175,7 +226,7 @@ describe("generated workflow model routing", () => {
     process.env.SHIPYARD_ROUTINE_MODEL = "unavailable-model";
     calls.providerFailureModel = "unavailable-model";
 
-    await import("./templates/simple-loop/main.mts" as string);
+    await importTemplate("simple-loop");
 
     expect(calls.agentInvocations).toEqual([
       {
@@ -193,9 +244,9 @@ describe("generated workflow model routing", () => {
   it("rejects an empty configured role before any provider invocation", async () => {
     await loadEnvFile("SHIPYARD_STRONG_MODEL=   \n");
 
-    await expect(
-      import("./templates/sequential-reviewer/main.mts" as string),
-    ).rejects.toThrow("SHIPYARD_STRONG_MODEL must not be empty");
+    await expect(importTemplate("sequential-reviewer")).rejects.toThrow(
+      "SHIPYARD_STRONG_MODEL must not be empty",
+    );
     expect(calls.agentInvocations).toEqual([]);
   });
 
@@ -204,7 +255,7 @@ describe("generated workflow model routing", () => {
     process.env.SHIPYARD_STRONG_MODEL = "strong-choice";
     calls.spec = true;
 
-    await import("./templates/parallel-planner-with-review/main.mts" as string);
+    await importTemplate("parallel-planner-with-review");
 
     expect(
       calls.agentInvocations.map(({ name, provider, model }) => [
@@ -232,7 +283,7 @@ describe("generated workflow model routing", () => {
     process.env.SHIPYARD_STRONG_MODEL = "strong-choice";
     calls.spec = true;
 
-    await import("./templates/parallel-planner/main.mts" as string);
+    await importTemplate("parallel-planner");
 
     expect(
       calls.agentInvocations.map(({ name, provider, model }) => [
@@ -258,7 +309,7 @@ describe("generated workflow model routing", () => {
     calls.spec = true;
     calls.finalChanges = true;
 
-    await import("./templates/parallel-planner-with-review/main.mts" as string);
+    await importTemplate("parallel-planner-with-review");
 
     const invocations = calls.agentInvocations.map(({ name, model }) => [
       name,

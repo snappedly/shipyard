@@ -48,14 +48,15 @@ Required environment variables (one of):
 
 Generated `simple-loop`, `sequential-reviewer`, `parallel-planner`, and
 `parallel-planner-with-review` workflows use `SHIPYARD_ROUTINE_MODEL` for
-factual triage and implementation. Parallel planner workflows use
-`SHIPYARD_STRONG_MODEL` for planning, conflict resolution, and dependency-wave
-integration. `parallel-planner-with-review` also uses it for ticket reviews and
-the final review of the integrated specification. The selected provider handles
-both roles.
+factual triage and implementation. `simple-loop` has no strong role.
+`sequential-reviewer` uses `SHIPYARD_STRONG_MODEL` for issue reviews. Parallel
+planner workflows use the strong model for planning, conflict resolution, and
+dependency-wave integration. `parallel-planner-with-review` also uses it for
+ticket reviews and the final review of the integrated specification. The
+selected provider handles both roles.
 
-Set either variable in `.shipyard/.env`. A host environment value overrides the
-same entry in that file. Shipyard does not load the repository-root `.env`.
+Set the role values in `.shipyard/.env`. A host environment value overrides
+the same entry in that file. Shipyard does not load the repository-root `.env`.
 `shipyard init --model <model>` supplies each role that has no
 `SHIPYARD_ROUTINE_MODEL` or `SHIPYARD_STRONG_MODEL` value.
 
@@ -72,6 +73,8 @@ role overrides: `SHIPYARD_CODEX_ROUTINE_MODEL`,
 `SHIPYARD_CODEX_STRONG_MODEL`, `SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT`, and
 `SHIPYARD_CODEX_STRONG_REASONING_EFFORT`. A newly selected Codex model uses the
 provider's default reasoning effort unless you set the matching effort variable.
+Codex effort values are `low`, `medium`, `high`, `xhigh`, and `max`; invalid
+values stop the workflow with a configuration error.
 
 Direct library calls such as `codex(CODEX_MODELS.routine)` and
 `claudeCode("sonnet")` remain available for custom workflows.

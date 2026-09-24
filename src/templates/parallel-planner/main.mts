@@ -24,15 +24,39 @@ const roleModels = {
   routine: readRoleModel("routine"),
   strong: readRoleModel("strong"),
 };
+const CODEX_REASONING_EFFORTS = shipyard.CODEX_REASONING_EFFORTS;
+type CodexReasoningEffort = shipyard.CodexReasoningEffort;
+const readCodexReasoningEffort = (
+  role: ModelRole,
+): CodexReasoningEffort | undefined => {
+  if (!CODEX_PROVIDER) return undefined;
+  const envName = `SHIPYARD_CODEX_${role.toUpperCase()}_REASONING_EFFORT`;
+  const effort = process.env[envName]?.trim();
+  if (!effort) return undefined;
+  if (!(CODEX_REASONING_EFFORTS as readonly string[]).includes(effort))
+    throw new Error(
+      `${envName} must be one of ${CODEX_REASONING_EFFORTS.join(", ")}; received "${effort}"`,
+    );
+  return effort as CodexReasoningEffort;
+};
+const roleEfforts = {
+  routine: readCodexReasoningEffort("routine"),
+  strong: readCodexReasoningEffort("strong"),
+};
+const readCodexRoleModel = (role: ModelRole, defaultModel: AgentModel) => {
+  if (!CODEX_PROVIDER || typeof defaultModel === "string") return defaultModel;
+  const envName = `SHIPYARD_CODEX_${role.toUpperCase()}_MODEL`;
+  const model = process.env[envName]?.trim();
+  return model ? { ...defaultModel, model } : defaultModel;
+};
 const roleAgent = (role: ModelRole, defaultModel: AgentModel) => {
-  const model = roleModels[role] ?? defaultModel;
-  if (typeof model !== "string") return agentFactory(model);
-  const effortName = `SHIPYARD_CODEX_${role.toUpperCase()}_REASONING_EFFORT`;
-  const effort =
-    CODEX_PROVIDER && process.env[effortName]?.trim()
-      ? shipyard.CODEX_MODELS[role].effort
-      : null;
-  return agentFactory(model, { effort });
+  const model = roleModels[role] ?? readCodexRoleModel(role, defaultModel);
+  const effort = roleEfforts[role];
+  if (typeof model !== "string")
+    return effort === undefined
+      ? agentFactory(model)
+      : agentFactory(model, { effort });
+  return agentFactory(model, { effort: effort ?? null });
 };
 const targetBranch = execFileSync("git", ["branch", "--show-current"], {
   encoding: "utf8",

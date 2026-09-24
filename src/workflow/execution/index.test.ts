@@ -772,7 +772,7 @@ describe("workflow execution", () => {
     },
   );
 
-  it("honors a persisted low-risk review selection after scope routing changes", async () => {
+  it("rejects a persisted low-risk review selection when scope is absent", async () => {
     const rolePolicy = createRepositoryPolicy({
       ...policy,
       worker: {
@@ -805,44 +805,26 @@ describe("workflow execution", () => {
       model: "routine-alias",
       role: "routine",
     };
-    const persistedAssignment = {
-      ...roleAssignment,
-      agentSelection: routineSelection,
-    };
-    let selected: AgentSelection | undefined;
-    const response = completedResponse();
-    const adapter = createFakePhaseEngineAdapter({
-      respond: async (request) => {
-        selected = request.agentSelection;
-        return {
-          ...response,
-          branch: candidateHead.branch,
-          headSha: candidateHead.sha,
-          commits: [],
-          report: {
-            ...response.report,
-            commits: [],
-            reviewAxes: ["standards", "spec"],
-          },
-        };
-      },
-    });
     const trusted = {
       brief: roleBrief,
       policy: rolePolicy,
       skill: { revision: "skill-1", content: "Use the pinned skill." },
     };
+    const persistedAssignment = {
+      ...roleAssignment,
+      agentSelection: routineSelection,
+    };
 
-    const result = await executePhase(
-      makeOptions({
-        assignment: persistedAssignment,
-        trusted,
-        adapter,
-      }) as never,
+    await expect(
+      executePhase(
+        makeOptions({
+          assignment: persistedAssignment,
+          trusted,
+        }) as never,
+      ),
+    ).rejects.toThrow(
+      "Assignment agent selection does not match trusted policy",
     );
-
-    expect(result.status).toBe("completed");
-    expect(selected).toEqual(routineSelection);
     await expect(
       executePhase(
         makeOptions({
@@ -856,6 +838,7 @@ describe("workflow execution", () => {
     ).rejects.toThrow(
       "Assignment agent selection does not match trusted policy",
     );
+
     const highRiskBrief = createWorkBrief({
       ...brief,
       risk: "high",

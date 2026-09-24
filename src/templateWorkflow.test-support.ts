@@ -30,6 +30,12 @@ const calls = vi.hoisted(() => ({
   triageReady: true,
   envFileExists: false,
   providerFailureModel: "",
+  codexModelsSnapshot: undefined as
+    | {
+        routine: { model: string; effort: string };
+        strong: { model: string; effort: string };
+      }
+    | undefined,
   agentInvocations: [] as Array<{
     name: string;
     provider: string;
@@ -323,14 +329,24 @@ vi.mock("@snappedly-tools/shipyard", () => {
     };
   };
   const codexModel = (role: "routine" | "strong") => ({
-    model:
-      process.env[`SHIPYARD_CODEX_${role.toUpperCase()}_MODEL`]?.trim() ||
-      `${role}-default`,
-    effort:
-      process.env[
-        `SHIPYARD_CODEX_${role.toUpperCase()}_REASONING_EFFORT`
-      ]?.trim() || "max",
+    ...((calls.codexModelsSnapshot ?? {})[role] ?? {
+      model:
+        process.env[`SHIPYARD_CODEX_${role.toUpperCase()}_MODEL`]?.trim() ||
+        `${role}-default`,
+      effort:
+        process.env[
+          `SHIPYARD_CODEX_${role.toUpperCase()}_REASONING_EFFORT`
+        ]?.trim() || "max",
+    }),
   });
+  const codexModels = {
+    get routine() {
+      return codexModel("routine");
+    },
+    get strong() {
+      return codexModel("strong");
+    },
+  };
   const makeAgent = (
     name: string,
     model: string | { model: string; effort: string },
@@ -345,14 +361,8 @@ vi.mock("@snappedly-tools/shipyard", () => {
           (typeof model === "string" ? undefined : model.effort)),
   });
   return {
-    CODEX_MODELS: {
-      get routine() {
-        return codexModel("routine");
-      },
-      get strong() {
-        return codexModel("strong");
-      },
-    },
+    CODEX_REASONING_EFFORTS: ["low", "medium", "high", "xhigh", "max"],
+    CODEX_MODELS: codexModels,
     codex: (
       model: string | { model: string; effort: string },
       options?: { effort?: string | null },
@@ -425,6 +435,7 @@ beforeEach(() => {
   calls.triageReady = true;
   calls.envFileExists = false;
   calls.providerFailureModel = "";
+  calls.codexModelsSnapshot = undefined;
   calls.agentInvocations.length = 0;
   calls.selected = 0;
   calls.spec = false;
@@ -477,6 +488,31 @@ export const loadEnvFile = async (
   calls.envFileExists = true;
 };
 
+const captureCodexModels = () => {
+  const modelFor = (role: "routine" | "strong") => {
+    const prefix = `SHIPYARD_CODEX_${role.toUpperCase()}`;
+    return {
+      model: process.env[`${prefix}_MODEL`]?.trim() || `${role}-default`,
+      effort: process.env[`${prefix}_REASONING_EFFORT`]?.trim() || "max",
+    };
+  };
+  calls.codexModelsSnapshot = {
+    routine: modelFor("routine"),
+    strong: modelFor("strong"),
+  };
+};
+
+export const importTemplate = async (
+  templateName:
+    | "simple-loop"
+    | "sequential-reviewer"
+    | "parallel-planner"
+    | "parallel-planner-with-review",
+): Promise<void> => {
+  captureCodexModels();
+  await import(`./templates/${templateName}/main.mts` as string);
+};
+
 export const runGeneratedWorkflow = async (
   templateName: string,
   agentName: "codex" | "claude-code",
@@ -499,6 +535,7 @@ export const runGeneratedWorkflow = async (
     await writeFile(join(generatedRoot, ".shipyard", ".env"), envContent);
     process.chdir(generatedRoot);
     calls.envFileExists = true;
+    captureCodexModels();
     await import(
       pathToFileURL(join(generatedRoot, ".shipyard", "main.mts")).href
     );

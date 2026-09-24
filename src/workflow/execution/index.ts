@@ -399,21 +399,12 @@ export const executePhase = async (
     trusted.brief.scope,
   );
   const persistedSelection = assignment.agentSelection;
-  const legacyLowRiskReviewSelection =
-    assignment.phase === "review" &&
-    trusted.brief.risk === "low" &&
-    trusted.brief.scope === undefined
-      ? resolveAgentSelection(trusted.policy, "review", "low", "small")
-      : undefined;
   if (
     persistedSelection !== undefined &&
-    !sameAgentSelection(persistedSelection, resolvedSelection) &&
-    (legacyLowRiskReviewSelection === undefined ||
-      !sameAgentSelection(persistedSelection, legacyLowRiskReviewSelection))
+    !sameAgentSelection(persistedSelection, resolvedSelection)
   ) {
     throw new Error("Assignment agent selection does not match trusted policy");
   }
-  // Keep the pre-scope low-risk review selection for assignments already persisted.
   const agentSelection = persistedSelection ?? resolvedSelection;
   const secretValues = new Set<string>();
   const controller = new AbortController();

@@ -53,11 +53,11 @@ Fill in any credentials required in `.shipyard/.env`.
 `GH_TOKEN` in `.shipyard/.env` to a GH token with Contents, Issues, and Pull
 Requests read/write access and Metadata read access.
 Set `SHIPYARD_ROUTINE_MODEL` and `SHIPYARD_STRONG_MODEL` in `.shipyard/.env`
-for `simple-loop`, `sequential-reviewer`, `parallel-planner`, and
-`parallel-planner-with-review`. Parallel planner templates use the routine
-model for factual ticket triage and implementation, and the strong model for
-planning, conflict resolution, and integration. The review-enabled planner
-also uses it for ticket and final specification reviews. See
+for the roles your template uses. `simple-loop` uses routine for triage and
+implementation. `sequential-reviewer` also uses strong for issue reviews.
+Parallel planner templates use routine for ticket work and strong for planning,
+conflict resolution, and integration. The review-enabled planner also uses
+strong for ticket and final specification reviews. See
 [agent setup](docs/content/docs/agents.mdx).
 
 Commit the setup and prompt so the sandbox can read them. Make sure the Git ignore file keeps
