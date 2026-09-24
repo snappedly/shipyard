@@ -520,6 +520,23 @@ describe("InitService scaffold", () => {
     ).rejects.toThrow("nonexistent");
   });
 
+  it.each(["parallel-planner", "parallel-planner-with-review"])(
+    "%s scaffolds the planner branch conflict helper",
+    async (templateName) => {
+      const dir = await makeDir();
+      await runScaffold(dir, { templateName });
+
+      const configDir = join(dir, ".shipyard");
+      const main = await readFile(join(configDir, "main.mts"), "utf-8");
+      const helper = await readFile(
+        join(configDir, "planner-branch.mts"),
+        "utf-8",
+      );
+      expect(main).toContain("./planner-branch.mjs");
+      expect(helper).toContain("resolvePlannerBranch");
+    },
+  );
+
   describe("parallel-planner template", () => {
     it("produces main.mts, plan-prompt.md, implement-prompt.md, merge-prompt.md", async () => {
       const dir = await makeDir();

@@ -12,6 +12,7 @@ const calls = vi.hoisted(() => ({
   spec: false,
   multi: false,
   commands: [] as string[],
+  localBranches: [] as string[],
   creates: [] as Array<{
     branch: string;
     baseBranch?: string;
@@ -28,6 +29,7 @@ const calls = vi.hoisted(() => ({
     branch: string;
     args: Record<string, string>;
   }>,
+  plannerBranches: [] as string[],
   reviewApproved: true,
   implementationComplete: true,
   handoffSucceeds: true,
@@ -52,6 +54,8 @@ vi.mock("node:child_process", () => ({
     args: string[],
     options?: { input?: string },
   ) => {
+    if (command === "git" && args[0] === "for-each-ref")
+      return calls.localBranches.join("\n");
     if (command === "git") return "staging\n";
     if (command === "gh" && args[0] === "repo") return "owner/repo\n";
     if (command === "gh" && args[0] === "label") return "";
@@ -289,9 +293,16 @@ vi.mock("@snappedly-tools/shipyard", () => {
       });
       return sandbox(branch);
     },
-    run: async ({ name }: { name: string }) => {
+    run: async ({
+      name,
+      branchStrategy,
+    }: {
+      name: string;
+      branchStrategy?: { branch?: string };
+    }) => {
       calls.events.push(name);
-      if (name === "planner")
+      if (name === "planner") {
+        calls.plannerBranches.push(branchStrategy?.branch ?? "");
         return {
           output: {
             issues: calls.emptyPlan
@@ -299,6 +310,7 @@ vi.mock("@snappedly-tools/shipyard", () => {
               : [{ id: "42" }, ...(calls.multi ? [{ id: "45" }] : [])],
           },
         };
+      }
       return calls.implementationComplete
         ? packet("tests passed")
         : { stdout: "blocked", commits: [] };
@@ -317,6 +329,7 @@ beforeEach(() => {
   calls.spec = false;
   calls.multi = false;
   calls.commands.length = 0;
+  calls.localBranches.length = 0;
   calls.creates.length = 0;
   calls.specContent.length = 0;
   calls.cherryPickSucceeds = true;
@@ -325,6 +338,7 @@ beforeEach(() => {
   calls.resolverReportsComplete = true;
   calls.emptyPlan = false;
   calls.invocations.length = 0;
+  calls.plannerBranches.length = 0;
   calls.reviewApproved = true;
   calls.implementationComplete = true;
   calls.handoffSucceeds = true;
@@ -344,6 +358,31 @@ afterEach(() => {
 });
 
 describe("generated issue workflows", () => {
+  it.each(["parallel-planner", "parallel-planner-with-review"])(
+    "%s stops and explains the alternate when a local branch ref conflicts",
+    async (template) => {
+      calls.localBranches.push("shipyard/planner/20260920-210724-7707b7");
+
+      await expect(
+        import(`./templates/${template}/main.mts` as string),
+      ).rejects.toThrow(/interactive terminal.*'shipyard\/planner-2'/);
+      expect(calls.plannerBranches).toEqual([]);
+    },
+  );
+
+  it.each(["parallel-planner", "parallel-planner-with-review"])(
+    "%s reuses the selected conflict-free planner branch",
+    async (template) => {
+      calls.localBranches.push(
+        "shipyard/planner/20260920-210724-7707b7",
+        "shipyard/planner-2",
+      );
+
+      await import(`./templates/${template}/main.mts` as string);
+      expect(calls.plannerBranches).toEqual(["shipyard/planner-2"]);
+    },
+  );
+
   it.each([
     "simple-loop",
     "sequential-reviewer",

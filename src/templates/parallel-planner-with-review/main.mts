@@ -5,6 +5,7 @@ import { existsSync } from "node:fs";
 import * as shipyard from "@snappedly-tools/shipyard";
 import { docker } from "@snappedly-tools/shipyard/sandboxes/docker";
 import { z } from "zod";
+import { resolvePlannerBranch } from "./planner-branch.mjs";
 
 if (process.loadEnvFile && existsSync(".shipyard/.env"))
   process.loadEnvFile(".shipyard/.env");
@@ -166,11 +167,19 @@ for (let iteration = 0; iteration < 10; iteration++) {
     execFileSync("node", [".shipyard/select-issues.mjs"], { encoding: "utf8" }),
   ) as Scope[];
   if (!scopes.length) break;
+  const localBranches = execFileSync(
+    "git",
+    ["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+    { encoding: "utf8" },
+  )
+    .split(/\r?\n/)
+    .filter(Boolean);
+  const plannerBranch = await resolvePlannerBranch(localBranches);
   const plan = await shipyard.run({
     hooks,
     sandbox: docker(),
     name: "planner",
-    branchStrategy: { type: "branch", branch: "shipyard/planner" },
+    branchStrategy: { type: "branch", branch: plannerBranch },
     maxIterations: 1,
     agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
     promptFile: "./.shipyard/plan-prompt.md",
