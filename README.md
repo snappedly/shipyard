@@ -8,201 +8,107 @@
 
 [![CI](https://github.com/snappedly/shipyard/actions/workflows/ci.yml/badge.svg)](https://github.com/snappedly/shipyard/actions/workflows/ci.yml)
 
-Give Shipyard a backlog and a policy. It plans dependencies, runs AI coding
-agents in isolated sandboxes, reviews their work, and returns reviewable
-commits—without babysitting.
+Give Shipyard a task or a GitHub issue. It runs Codex or Claude Code in an
+isolated sandbox, can plan and review larger jobs, and brings the result back as
+a commit or pull request you can inspect.
 
 ## The Shipyard advantage
 
-Most agent setups launch a CLI and hope for the best. Shipyard is the control
-plane around the agent:
+- **Isolated work.** Docker keeps the agent's files and Git work inside a
+  sandbox while it runs.
+- **Built for real projects.** Shipyard can sort issue dependencies, work on
+  independent tasks in parallel, and review the combined result.
+- **You stay in control.** Runs have limits and logs. Issue workflows return a
+  pull request for you to review and merge.
 
-- **Protected execution:** Run Codex or Claude Code in an isolated Docker-backed
-  sandbox with explicit mounts, credentials, and network access.
-- **Real orchestration:** Plan dependencies, parallelize safe work, leave
-  blocked work alone, review each branch, and merge completed work.
-- **Failure-aware by design:** Use finite budgets, no-progress detection,
-  cancellation, logs, and recovery artifacts instead of runaway loops.
-- **Reviewable output:** Runs preserve branches, worktrees, logs, and evidence;
-  completed work comes back as commits. You keep control of the repository and
-  the final release.
+## Try it on one task
 
-## Install and run
+You need **Node.js 20.18.1+**, **Git**, **Docker running**, and **Codex or Claude
+Code** with a login or API key. Start with a clean Git repository you want
+Shipyard to change. If it is on GitHub, sign in with the
+[GitHub CLI](https://cli.github.com/) (`gh auth login`) before `init`; Shipyard
+creates its issue labels there.
 
-Before running Shipyard, install the [Snappedly skills](https://github.com/snappedly/skills)
-and run `setup-snapedly-skills` in the target repository.
-
-Requirements: Node.js 20.18.1+, Git, Docker, and credentials for your chosen
-agent. Run these commands in the repository Shipyard should change:
+Run:
 
 ```sh
+git switch -c try-shipyard
+npx skills add snappedly/skills
 npm install --save-dev @snappedly-tools/shipyard
 npx shipyard init
 ```
 
-`init` asks for the agent, authentication, sandbox, issue tracker, and workflow
-template, then creates `.shipyard/`. For the first run, choose Docker and
-`blank` or `sequential-reviewer`.
+Ask your coding agent to run `setup-snappedly-skills` in that repository. During
+`shipyard init`, choose your agent, **Docker**, and the **blank** template. Follow
+the authentication prompts. You can skip the optional repository runner for
+this first task.
 
-Add the requested credentials to `.shipyard/.env`, write a task in
-`.shipyard/prompt.md` when using the `blank` template, then run:
+Open `.shipyard/prompt.md` and describe a small change. For example:
+
+```md
+# Task
+
+Document how to run this project locally using commands already in the repo.
+Run the relevant checks and commit the change.
+
+# Done
+
+Output <promise>COMPLETE</promise> when finished.
+```
+
+Fill in any credentials requested in `.shipyard/.env`. Commit the setup and
+prompt so the sandbox can read them. The generated Git ignore file keeps
+`.shipyard/.env` out of the commit.
 
 ```sh
+git add .
+git commit -m "Set up Shipyard"
 npx shipyard run
+git show --stat HEAD
 ```
 
-The first run builds the Docker image automatically. Reuse it when the
-Dockerfile has not changed:
+Shipyard builds the Docker image, runs the agent, and returns its commit to your
+current branch. `git show` lets you inspect what changed. See the
+[getting started guide](docs/content/docs/index.mdx) for authentication and
+branch options.
 
-```sh
-npx shipyard run --skip-build
-```
+## Turn GitHub issues into pull requests
 
-For Codex, `init` can sign in with a ChatGPT subscription or configure an OpenAI
-API key. Claude Code supports a subscription token or an Anthropic API key. See
-the [agent guide](docs/content/docs/agents.mdx) for authentication details.
+For a repository you want to automate from GitHub Issues, choose
+**sequential-reviewer** instead of **blank** during `shipyard init`. Set
+`GH_TOKEN` in `.shipyard/.env` to a token with Contents, Issues, and Pull
+requests read/write access and Metadata read access. Then:
 
-## Pick the workflow you need
+1. Write an issue with a clear goal and add the `shipyard` and
+   `ready-for-agent` labels.
+2. Run `npx shipyard run`. Shipyard checks the issue, implements it in Docker,
+   reviews the work, and opens a pull request.
+3. Inspect the pull request and merge it when you are happy with the result.
 
-| Template                       | Best for              | Built-in flow                                 |
-| ------------------------------ | --------------------- | --------------------------------------------- |
-| `blank`                        | One custom task       | One agent run                                 |
-| `simple-loop`                  | A small issue backlog | Implement issues sequentially → review PRs    |
-| `sequential-reviewer`          | Safer issue delivery  | Implement → review → review PR                |
-| `parallel-planner`             | Independent issues    | Plan → implement in parallel → review PRs     |
-| `parallel-planner-with-review` | Maximum autonomy      | Plan → implement and review in parallel → PRs |
+On an Apple Silicon Mac, the optional [repository runner](docs/content/docs/repository-runner.mdx)
+can wake Shipyard when you label an issue. It runs while its terminal stays open.
+The guide covers installation, retries, and issue status labels.
 
-All templates are generated TypeScript. Adjust prompts, models, iteration
-limits, branch strategy, hooks, and checks in `.shipyard/main.ts` or
-`.shipyard/main.mts`.
+## Choose a workflow
 
-## Keep a repository running
+| Template                       | What it does                                       |
+| ------------------------------ | -------------------------------------------------- |
+| `blank`                        | Runs your own task and prompt.                     |
+| `simple-loop`                  | Works through labelled issues one at a time.       |
+| `sequential-reviewer`          | Implements and reviews issues before PR handoff.   |
+| `parallel-planner`             | Plans and works on independent issues in parallel. |
+| `parallel-planner-with-review` | Adds review to the parallel workflow.              |
 
-On Apple Silicon macOS, the optional repository runner keeps a foreground
-Shipyard controller ready for GitHub Issues. Label an issue `shipyard`; the
-controller wakes, drains a finite batch of eligible work, coalesces duplicate
-wake-ups, and stops when it makes no progress. Restarting it recovers work
-labelled while the host was offline.
-GitHub-backed `shipyard init` provisions `shipyard`, `shipyard:blocked`,
-`shipyard:pending`, `shipyard:complete`, and `shipyard:outstanding-tasks` in the repository.
-It also provisions the `bug`, `enhancement`, and five triage state labels.
-For a connected repository, init reports an error if any label cannot be created.
+Shipyard also exports TypeScript APIs for custom workflows. Configure prompts,
+branches, limits, and hooks in the generated `.shipyard/main.ts` or
+`.shipyard/main.mts`. See [configuration](docs/content/docs/configuration.mdx)
+and [agent setup](docs/content/docs/agents.mdx).
 
-The bundled issue workflows install Snappedly skills and the candidate's
-dependencies in Docker. When Shipyard takes an activated ticket, it runs
-`/triage` first and checks the current GitHub labels. Implementation requires
-both `shipyard` and `ready-for-agent`, with no conflicting triage state. Other
-triage outcomes follow the normal blocked flow: Shipyard adds
-`shipyard:blocked`, removes `shipyard`, and records the reason on the ticket.
-A standalone ready issue then runs through `/implement`. Activating
-a planning spec or a linked executable child resolves the parent and only
-linked tickets labelled `shipyard` into one `/implement-spec` scope. The sequential
-templates deliver selected tickets on one branch; the parallel templates assign
-ready tickets to `/implement` workers, integrate dependency waves, resolve ticket
-merge conflicts on the spec branch, and review the integrated change. One
-non-draft PR per spec awaits human merge. Later selected tickets update that PR.
-Shipyard also recognizes a ticket added to an open verified spec PR's `Source
-issues:` line as belonging to that spec, even without a GitHub sub-issue or
-`## Parent` link. Conflicting links block the selected ticket for correction.
-Selected tickets receive `shipyard:pending` while Shipyard works on them.
-Successful handoff replaces it with `shipyard:complete` and removes `shipyard`.
-The parent spec and PR show `shipyard:blocked` if an unfinished child is blocked,
-`shipyard:outstanding-tasks` if children remain, or `shipyard:complete` when all
-linked tickets are complete. Spec labels report child state; they never prevent
-a reactivated child from running. The issues remain open under the target
-repository's closure policy.
-With no labelled tickets yet, Shipyard marks the parent outstanding and waits
-to create the PR until a ticket is selected.
-If an attempted issue cannot be completed, Shipyard comments with the reason,
-marks the attempted tickets `shipyard:blocked`, clears `shipyard:pending`, and
-removes `shipyard` from the scope. The parent spec and any existing PR show
-`shipyard:blocked` while an unfinished child remains blocked. It does not
-publish a new PR for failed work. Resolve the problem, remove
-`shipyard:blocked` from a ticket, then add `shipyard` to retry that ticket;
-the parent spec's status label needs no manual change. Missing or ambiguous
-relationships block the affected selected issue and record the reason. If GitHub cannot confirm whether a
-PR became ready, Shipyard leaves the issue active for reconciliation. The GitHub token
-needs Contents, Issues, and Pull requests read/write permission plus Metadata
-read permission. Keep the Mac and foreground controller running for wake-ups.
-If GitHub rejects a failure comment, Shipyard keeps a local pending report for
-replay. A fresh `shipyard` activation on an unblocked ticket supersedes that
-report. Spec and PR status label failures are logged without stopping ticket
-work; retained activation lets the next invocation recalculate their labels.
+## Safety and license
 
-Accept runner installation during `init`, or install it later:
+Shipyard runs on your machine or infrastructure. Sandbox access depends on the
+mounts, credentials, and network settings you choose. Read the
+[security guide](docs/security-evaluation.md) before using untrusted code.
 
-```sh
-npx shipyard runner install
-git add .shipyard .github/workflows/shipyard-wake.yml
-git commit -m "Add Shipyard wake workflow"
-git push
-npx shipyard runner start
-```
-
-Run `npx shipyard runner purge` to remove every dated run-log folder and
-root-level `.log` file under `.shipyard/logs/`. Shipyard automatically removes
-entries older than eight days before `shipyard run`, at runner startup, and
-daily while the runner stays active. Use a path outside `.shipyard/logs/` for
-logs that must be retained separately.
-
-See the [repository runner guide](docs/content/docs/repository-runner.mdx) for
-requirements, lifecycle commands, and the security model.
-
-## Build your own coordinator
-
-Shipyard is also a TypeScript library. Compose your own workflow with
-`run()`, `createSandbox()`, and `createWorktree()` while reusing its agent,
-sandbox, branch, prompt, logging, cancellation, and session primitives.
-
-```ts
-import { CODEX_MODELS, codex, run } from "@snappedly-tools/shipyard";
-import { docker } from "@snappedly-tools/shipyard/sandboxes/docker";
-
-await run({
-  agent: codex(CODEX_MODELS.routine),
-  sandbox: docker(),
-  promptFile: ".shipyard/prompt.md",
-});
-```
-
-Docker is the default path. Vercel Sandbox is available for isolated cloud
-execution; `noSandbox()` is available only for trusted repositories and prompts.
-
-## What gets created
-
-```text
-.shipyard/
-├── main.ts or main.mts   # workflow configuration
-├── prompt.md              # task or issue instructions
-├── Dockerfile             # sandbox image definition
-├── .env                   # untracked credentials
-├── logs/                  # run logs
-├── worktrees/             # isolated branch worktrees
-└── patches/               # recovery artifacts
-```
-
-## Security and control
-
-Docker keeps the agent's repository and Git storage inside the sandbox by
-default. It is not a magic security boundary: mounts, credentials, devices,
-network access, host hooks, and `noSandbox()` can expand what an agent can do.
-Use least-privilege credentials and review generated configuration before
-running untrusted code. Read the [security evaluation](docs/security-evaluation.md)
-and [SECURITY.md](SECURITY.md).
-
-Shipyard runs in your infrastructure. There is no required hosted control
-plane; you control the host, Docker, model access, logs, and release policy.
-
-## Learn more
-
-- [Getting started](docs/content/docs/index.mdx)
-- [Configuration](docs/content/docs/configuration.mdx)
-- [Repository runner operations](docs/runbooks/repository-runner-macos-validation.md)
-- [Contributing](CONTRIBUTING.md)
-
-## License
-
-Shipyard is source-available under the
-[PolyForm Strict License 1.0.0](LICENSE). It is available for permitted
-noncommercial use; the license does not permit redistribution, modification, or
-derivative works. Contact Snappedly to request a commercial license.
+Shipyard is source-available under the [PolyForm Strict License 1.0.0](LICENSE)
+for permitted noncommercial use. Contact Snappedly for a commercial license.
