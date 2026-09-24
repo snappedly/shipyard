@@ -2,6 +2,7 @@ import {
   parsePhaseResult,
   parseRepositoryPolicy,
   parseWorkBrief,
+  type AgentSelection,
   type Assignment,
   type PhaseResult,
   type WorkIdentity,
@@ -138,6 +139,29 @@ const parseAssignment = (value: unknown): Assignment => {
     throw new Error("Stored assignment base must be an object");
   }
   const head = candidate.head;
+  const agentSelection = candidate.agentSelection;
+  let parsedAgentSelection: AgentSelection | undefined;
+  if (agentSelection !== undefined) {
+    if (
+      typeof agentSelection !== "object" ||
+      agentSelection === null ||
+      Array.isArray(agentSelection)
+    ) {
+      throw new Error("Stored assignment agent selection must be an object");
+    }
+    const selection = agentSelection as Record<string, unknown>;
+    if (selection.role !== "routine" && selection.role !== "strong") {
+      throw new Error("Stored assignment agent selection role is invalid");
+    }
+    parsedAgentSelection = {
+      provider: requiredString(
+        selection.provider,
+        "assignment.agentSelection.provider",
+      ),
+      model: requiredString(selection.model, "assignment.agentSelection.model"),
+      role: selection.role,
+    };
+  }
   const revision = (value: unknown, path: string) => {
     if (typeof value !== "object" || value === null || Array.isArray(value)) {
       throw new Error(`${path} must be an object`);
@@ -184,6 +208,9 @@ const parseAssignment = (value: unknown): Assignment => {
       candidate.skillRevision,
       "assignment.skillRevision",
     ),
+    ...(parsedAgentSelection === undefined
+      ? {}
+      : { agentSelection: parsedAgentSelection }),
     base: revision(base, "assignment.base"),
     head: head === undefined ? undefined : revision(head, "assignment.head"),
     createdAt: requiredString(candidate.createdAt, "assignment.createdAt"),

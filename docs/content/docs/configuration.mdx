@@ -155,3 +155,29 @@ variables in `.shipyard/.env`. The generated workflow loads that file before it
 resolves model roles. A host value overrides the same file entry. The
 repository-root `.env` is not loaded. See [agent setup](agents.mdx) for provider
 examples, model catalogs, and precedence.
+
+## Workflow repository policy models
+
+A repository policy's `worker` entry can select two models for one provider:
+
+```json
+{
+  "provider": "codex",
+  "models": {
+    "routine": "provider-supported-routine-id",
+    "strong": "provider-supported-strong-id"
+  },
+  "sandbox": "docker",
+  "skillRevision": "skills/main"
+}
+```
+
+The provider stays the same for both models. Shipyard accepts any nonempty model
+identifier or provider-supported alias. It passes the value to the selected
+provider without checking a Shipyard model list. If the provider rejects a
+model, Shipyard records that phase failure and does not choose another model.
+
+Triage, implementation, focused checks, and repair use the routine model.
+Reviews with low risk use routine. Reviews with medium, high, critical, or
+unknown risk use strong. Older policies with `worker.model` use that model for
+both roles.

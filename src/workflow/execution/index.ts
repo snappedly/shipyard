@@ -10,6 +10,8 @@ import type {
 import type { SandboxProvider } from "../../SandboxProvider.js";
 import {
   parsePhaseResult,
+  resolveAgentSelection,
+  type AgentSelection,
   type Assignment,
   type CheckEvidence,
   type Finding,
@@ -72,6 +74,7 @@ export interface PhaseCheckout {
 
 export interface PhaseEngineRequest {
   readonly assignment: Assignment;
+  readonly agentSelection: AgentSelection;
   readonly trusted: TrustedPhaseInputs;
   readonly untrusted: UntrustedPhaseInputs;
   readonly controls: PhaseControls;
@@ -381,6 +384,19 @@ export const executePhase = async (
   const trusted = deepFreeze(structuredClone(options.trusted));
   const untrusted = deepFreeze(structuredClone(options.untrusted));
   const controls = deepFreeze(structuredClone(options.controls));
+  const agentSelection = resolveAgentSelection(
+    trusted.policy,
+    assignment.phase,
+    trusted.brief.risk,
+  );
+  if (
+    assignment.agentSelection !== undefined &&
+    (assignment.agentSelection.provider !== agentSelection.provider ||
+      assignment.agentSelection.model !== agentSelection.model ||
+      assignment.agentSelection.role !== agentSelection.role)
+  ) {
+    throw new Error("Assignment agent selection does not match trusted policy");
+  }
   const secretValues = new Set<string>();
   const controller = new AbortController();
   let timedOut = false;
@@ -395,6 +411,7 @@ export const executePhase = async (
   }, options.controls.timeoutSeconds * 1000);
   const request: PhaseEngineRequest = {
     assignment,
+    agentSelection,
     trusted,
     untrusted,
     controls,
@@ -663,13 +680,46 @@ export const executePhase = async (
 };
 
 export interface RunPhaseEngineAdapterOptions {
-  readonly agent: AgentProvider;
+  /** Pre-resolved provider for legacy single-model policies. */
+  readonly agent?: AgentProvider;
+  /** Creates the provider selected by the assignment's trusted policy. */
+  readonly resolveAgent?: (selection: AgentSelection) => AgentProvider;
   readonly sandbox: SandboxProvider;
   readonly cwd?: string;
   readonly run: (
     options: RunOptions,
   ) => Promise<RunResult & { output?: unknown }>;
 }
+
+const resolvePhaseAgent = (
+  options: {
+    readonly agent?: AgentProvider;
+    readonly resolveAgent?: (selection: AgentSelection) => AgentProvider;
+  },
+  request: PhaseEngineRequest,
+): AgentProvider => {
+  if (
+    options.resolveAgent === undefined &&
+    request.trusted.policy.worker.models !== undefined
+  ) {
+    throw new Error(
+      "An agent resolver is required when repository policy defines worker models",
+    );
+  }
+  const agent =
+    options.resolveAgent === undefined
+      ? options.agent
+      : options.resolveAgent(request.agentSelection);
+  if (agent === undefined) {
+    throw new Error("The phase engine has no agent for the selected model");
+  }
+  if (agent.name !== request.agentSelection.provider) {
+    throw new Error(
+      `Resolved agent provider "${agent.name}" does not match repository policy provider "${request.agentSelection.provider}"`,
+    );
+  }
+  return agent;
+};
 
 const runResultToResponse = (
   result: RunResult & { output?: unknown },
@@ -701,13 +751,14 @@ export const createRunPhaseEngineAdapter = (
   options: RunPhaseEngineAdapterOptions,
 ): PhaseEngineAdapter => ({
   execute: async (request) => {
-    assertToolAllowlistSupport(options.agent);
+    const agent = resolvePhaseAgent(options, request);
+    assertToolAllowlistSupport(agent);
     const branch = request.checkout.branch;
     const baseBranch = request.checkout.immutable
       ? (request.checkout.candidate?.sha ?? request.assignment.base.sha)
       : request.assignment.base.sha;
     const result = await options.run({
-      agent: options.agent,
+      agent,
       sandbox: options.sandbox,
       cwd: options.cwd,
       prompt: buildPrompt(request),
@@ -726,7 +777,10 @@ export const createRunPhaseEngineAdapter = (
 });
 
 export interface CreateSandboxPhaseEngineAdapterOptions {
-  readonly agent: AgentProvider;
+  /** Pre-resolved provider for legacy single-model policies. */
+  readonly agent?: AgentProvider;
+  /** Creates the provider selected by the assignment's trusted policy. */
+  readonly resolveAgent?: (selection: AgentSelection) => AgentProvider;
   readonly sandbox: SandboxProvider;
   readonly cwd?: string;
   readonly createSandbox: (options: CreateSandboxOptions) => Promise<Sandbox>;
@@ -759,7 +813,8 @@ export const createCreateSandboxPhaseEngineAdapter = (
   options: CreateSandboxPhaseEngineAdapterOptions,
 ): PhaseEngineAdapter => ({
   execute: async (request) => {
-    assertToolAllowlistSupport(options.agent);
+    const agent = resolvePhaseAgent(options, request);
+    assertToolAllowlistSupport(agent);
     const branch = request.checkout.branch;
     const baseBranch = request.checkout.immutable
       ? (request.checkout.candidate?.sha ?? request.assignment.base.sha)
@@ -772,7 +827,7 @@ export const createCreateSandboxPhaseEngineAdapter = (
     });
     try {
       const result = await sandbox.run({
-        agent: options.agent,
+        agent,
         prompt: buildPrompt(request),
         toolAllowlist: request.controls.toolAllowlist,
         maxIterations: request.controls.maxIterations,

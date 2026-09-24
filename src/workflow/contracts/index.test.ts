@@ -9,6 +9,7 @@ import {
   parsePhaseResult,
   parseRepositoryPolicy,
   parseWorkBrief,
+  resolveAgentSelection,
   requireTransition,
   type CheckEvidence,
   type RepositoryPolicy,
@@ -110,6 +111,114 @@ describe("workflow contracts", () => {
         },
       }),
     ).toThrow("positive integer");
+  });
+
+  it("accepts nonempty routine and strong model identifiers", () => {
+    const input = {
+      ...policy,
+      worker: {
+        provider: "custom-provider",
+        models: {
+          routine: "provider-specific-routine-alias",
+          strong: "provider-specific-strong-alias",
+        },
+        sandbox: "test-isolated",
+        skillRevision: "skills-1",
+      },
+    };
+
+    expect(parseRepositoryPolicy(input)).toMatchObject({
+      worker: {
+        provider: "custom-provider",
+        models: {
+          routine: "provider-specific-routine-alias",
+          strong: "provider-specific-strong-alias",
+        },
+      },
+    });
+  });
+
+  it.each([
+    ["routine", ""],
+    ["routine", "  "],
+    ["strong", ""],
+    ["strong", "  "],
+  ])("rejects an empty %s model", (role, model) => {
+    const input = {
+      ...policy,
+      worker: {
+        provider: "custom-provider",
+        models: {
+          routine: "routine-alias",
+          strong: "strong-alias",
+          [role]: model,
+        },
+        sandbox: "test-isolated",
+        skillRevision: "skills-1",
+      },
+    };
+
+    expect(() => parseRepositoryPolicy(input)).toThrow(
+      `policy.worker.models.${role} must be a non-empty string`,
+    );
+  });
+
+  it("rejects a policy with both legacy and role-specific worker models", () => {
+    const input = {
+      ...policy,
+      worker: {
+        ...policy.worker,
+        models: { routine: "routine-alias", strong: "strong-alias" },
+      },
+    };
+
+    expect(() => parseRepositoryPolicy(input)).toThrow(
+      "policy.worker.model cannot be combined with policy.worker.models",
+    );
+  });
+
+  it.each([
+    ["routine", "triage", "low"],
+    ["routine", "implementation", "high"],
+    ["routine", "checking", "medium"],
+    ["routine", "repair", "critical"],
+    ["routine", "review", "low"],
+    ["strong", "review", "medium"],
+    ["strong", "review", "critical"],
+    ["strong", "review", undefined],
+    ["strong", "review", "unknown"],
+  ] as const)("selects the %s model for %s at %s risk", (role, phase, risk) => {
+    const selected = resolveAgentSelection(
+      {
+        worker: {
+          provider: "selected-provider",
+          models: { routine: "routine-alias", strong: "strong-alias" },
+          sandbox: "test-isolated",
+          skillRevision: "skills-1",
+        },
+      },
+      phase,
+      risk,
+    );
+
+    expect(selected).toEqual({
+      provider: "selected-provider",
+      model: role === "routine" ? "routine-alias" : "strong-alias",
+      role,
+    });
+  });
+
+  it("uses a legacy model for both agent roles", () => {
+    expect(resolveAgentSelection(policy, "triage", "low")).toEqual({
+      provider: "test",
+      model: "fixture",
+      role: "routine",
+    });
+    expect(resolveAgentSelection(policy, "review", "high")).toEqual({
+      provider: "test",
+      model: "fixture",
+      role: "strong",
+    });
   });
 
   it("rejects unknown versions and completed results without evidence", () => {

@@ -122,6 +122,28 @@ export interface PhaseBudget {
   readonly timeoutSeconds: number;
 }
 
+export type AgentRole = "routine" | "strong";
+
+export interface AgentModelRoles {
+  readonly routine: string;
+  readonly strong: string;
+}
+
+export type WorkerPolicy = {
+  readonly provider: string;
+  readonly sandbox: string;
+  readonly skillRevision: string;
+} & (
+  | { readonly model: string; readonly models?: never }
+  | { readonly model?: never; readonly models: AgentModelRoles }
+);
+
+export interface AgentSelection {
+  readonly provider: string;
+  readonly model: string;
+  readonly role: AgentRole;
+}
+
 export interface RepositoryPolicy {
   readonly contractVersion: typeof WORKFLOW_CONTRACT_VERSION;
   readonly repository: string;
@@ -136,12 +158,7 @@ export interface RepositoryPolicy {
     readonly allowedActors: readonly ("maintainer" | "owner" | "policy")[];
     readonly autoStartRisk: readonly RiskLevel[];
   };
-  readonly worker: {
-    readonly provider: string;
-    readonly model: string;
-    readonly sandbox: string;
-    readonly skillRevision: string;
-  };
+  readonly worker: WorkerPolicy;
   readonly checks: readonly CheckCommand[];
   readonly phaseBudgets: Readonly<Record<WorkflowPhase, PhaseBudget>>;
   readonly repairBudget: {
@@ -237,6 +254,8 @@ export interface Assignment {
   readonly briefHash: string;
   readonly policyRevision: string;
   readonly skillRevision: string;
+  /** Missing only on assignments persisted before role model selection shipped. */
+  readonly agentSelection?: AgentSelection;
   readonly base: RevisionReference;
   readonly head?: RevisionReference;
   readonly createdAt: string;
@@ -578,6 +597,31 @@ export const parseRepositoryPolicy = (value: unknown): RepositoryPolicy => {
   if (!isRecord(value.worker)) {
     throw new ContractValidationError("policy.worker must be an object");
   }
+  const workerModels =
+    value.worker.models === undefined
+      ? undefined
+      : (() => {
+          if (value.worker.model !== undefined) {
+            throw new ContractValidationError(
+              "policy.worker.model cannot be combined with policy.worker.models",
+            );
+          }
+          if (!isRecord(value.worker.models)) {
+            throw new ContractValidationError(
+              "policy.worker.models must be an object",
+            );
+          }
+          return {
+            routine: nonEmptyString(
+              value.worker.models.routine,
+              "policy.worker.models.routine",
+            ),
+            strong: nonEmptyString(
+              value.worker.models.strong,
+              "policy.worker.models.strong",
+            ),
+          };
+        })();
   if (!Array.isArray(value.checks)) {
     throw new ContractValidationError("policy.checks must be an array");
   }
@@ -674,7 +718,9 @@ export const parseRepositoryPolicy = (value: unknown): RepositoryPolicy => {
     authorization: { required, allowedActors, autoStartRisk },
     worker: {
       provider: nonEmptyString(value.worker.provider, "policy.worker.provider"),
-      model: nonEmptyString(value.worker.model, "policy.worker.model"),
+      ...(workerModels === undefined
+        ? { model: nonEmptyString(value.worker.model, "policy.worker.model") }
+        : { models: workerModels }),
       sandbox: nonEmptyString(value.worker.sandbox, "policy.worker.sandbox"),
       skillRevision: nonEmptyString(
         value.worker.skillRevision,
@@ -694,6 +740,24 @@ export const createRepositoryPolicy = (
     contractVersion: WORKFLOW_CONTRACT_VERSION,
     ...input,
   });
+
+export const resolveAgentSelection = (
+  policy: Pick<RepositoryPolicy, "worker">,
+  phase: WorkflowPhase,
+  risk?: RiskLevel | "unknown",
+): AgentSelection => {
+  const role: AgentRole =
+    phase === "review" && risk !== "low" ? "strong" : "routine";
+  const worker = policy.worker;
+  const modelPath = worker.models
+    ? `policy.worker.models.${role}`
+    : "policy.worker.model";
+  return Object.freeze({
+    provider: nonEmptyString(worker.provider, "policy.worker.provider"),
+    model: nonEmptyString(worker.models?.[role] ?? worker.model, modelPath),
+    role,
+  });
+};
 
 export const parseCheckEvidence = (value: unknown): CheckEvidence => {
   if (!isRecord(value)) {
@@ -897,6 +961,11 @@ export const createAssignment = (input: CreateAssignmentInput): Assignment => {
     briefHash: brief.hash,
     policyRevision: input.policy.revision,
     skillRevision: brief.skillRevision,
+    agentSelection: resolveAgentSelection(
+      input.policy,
+      input.phase,
+      brief.risk,
+    ),
     base: brief.base,
     head: input.head,
     createdAt: nonEmptyString(input.createdAt, "assignment.createdAt"),
