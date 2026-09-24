@@ -347,8 +347,25 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     if (Exit.isFailure(result)) {
       const output = Cause.pretty(result.cause);
       expect(output).toContain("nonexistent");
-      expect(output).toContain("blank");
       expect(output).toContain("simple-loop");
+      expect(output).not.toContain("Available: blank");
+    }
+  });
+
+  it("init rejects the removed blank template", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
+    await initRepo(hostDir);
+
+    const result = await runCliInProcessAt(
+      ["init", "--template", "blank"],
+      hostDir,
+    );
+
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
+      const output = Cause.pretty(result.cause);
+      expect(output).toContain('Unknown template "blank"');
+      expect(output).toContain("Available: simple-loop");
     }
   });
 
@@ -434,7 +451,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     // vitest workers have no TTY, so this confirms the fully-non-interactive
     // path runs to completion without clack crashing on a missing prompt.
     const { stdout } = await runCli(
-      "init --agent claude-code --template blank --sandbox docker --issue-tracker github-issues --build-image false",
+      "init --agent claude-code --template simple-loop --sandbox docker --issue-tracker github-issues --build-image false",
       hostDir,
     );
 
@@ -455,7 +472,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
 
     try {
       await runCli(
-        "init --agent codex --template blank --sandbox docker --issue-tracker github-issues --build-image false",
+        "init --agent codex --template simple-loop --sandbox docker --issue-tracker github-issues --build-image false",
         hostDir,
       );
       expect.fail("Expected command to fail");
@@ -474,7 +491,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     await writeFile(join(isolatedHome, ".codex", "auth.json"), "{}\n");
 
     await runCli(
-      "init --agent codex --codex-auth chatgpt --template blank --sandbox docker --issue-tracker github-issues --build-image false",
+      "init --agent codex --codex-auth chatgpt --template simple-loop --sandbox docker --issue-tracker github-issues --build-image false",
       hostDir,
       { HOME: isolatedHome },
     );
@@ -501,7 +518,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     let error: unknown;
     try {
       await runCli(
-        "init --agent codex --codex-auth chatgpt --template blank --sandbox docker --issue-tracker github-issues --build-image false",
+        "init --agent codex --codex-auth chatgpt --template simple-loop --sandbox docker --issue-tracker github-issues --build-image false",
         hostDir,
         { HOME: isolatedHome },
       );
@@ -522,7 +539,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     await initRepo(hostDir);
 
     try {
-      await runCli("init --template blank --sandbox docker", hostDir);
+      await runCli("init --template simple-loop --sandbox docker", hostDir);
       expect.fail("Expected command to fail");
     } catch (err: unknown) {
       const { stdout, stderr } = err as { stdout: string; stderr: string };
@@ -546,7 +563,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     );
 
     const { stdout } = await runCli(
-      "init --agent claude-code --template blank --sandbox docker --issue-tracker github-issues --build-image false",
+      "init --agent claude-code --template simple-loop --sandbox docker --issue-tracker github-issues --build-image false",
       hostDir,
       {
         PATH: `${binDir}:${process.env.PATH ?? ""}`,
@@ -584,7 +601,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     });
 
     const { stdout } = await runCli(
-      "init --agent claude-code --template blank --sandbox docker --issue-tracker github-issues --build-image false",
+      "init --agent claude-code --template simple-loop --sandbox docker --issue-tracker github-issues --build-image false",
       hostDir,
       { PATH: `${binDir}:${process.env.PATH ?? ""}` },
     );
@@ -605,7 +622,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     });
 
     const failure = await runCli(
-      "init --agent claude-code --template blank --sandbox docker --issue-tracker github-issues --build-image false",
+      "init --agent claude-code --template simple-loop --sandbox docker --issue-tracker github-issues --build-image false",
       hostDir,
       { PATH: `${binDir}:${process.env.PATH ?? ""}` },
     ).catch((error: Error & { stdout: string; stderr: string }) => error);

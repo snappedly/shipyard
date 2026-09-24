@@ -52,10 +52,6 @@ export interface TemplateMetadata {
 
 const TEMPLATES: TemplateMetadata[] = [
   {
-    name: "blank",
-    description: "Bare scaffold — write your own prompt and orchestration",
-  },
-  {
     name: "simple-loop",
     description: "Implements standalone issues one by one and opens review PRs",
   },
@@ -503,14 +499,7 @@ const rewriteMainTs = (
       .readFileString(mainTsPath)
       .pipe(Effect.mapError((e) => new Error(e.message)));
 
-    // Templates use main.mts as the canonical filename in comments.
-    // When the target is main.ts, rewrite those references.
-    if (mainFilename === "main.ts") {
-      content = content.replace(/main\.mts/g, "main.ts");
-    }
-
-    // Replace the default factory function name in imports.
-    // and all factory calls with the correct model.
+    // Replace the default factory function name in calls.
     // Templates always use Codex as the placeholder factory.
     content = content.replace(
       new RegExp(`\\b${TEMPLATE_AGENT_FACTORY}\\b`, "g"),
@@ -537,13 +526,6 @@ const rewriteMainTs = (
           : `${agent.factoryImport}("${model}")`;
       },
     );
-
-    // CODEX_MODELS is only needed when the generated file continues using
-    // the central Codex configuration. Remove it from named imports when a
-    // custom model or another provider has replaced every reference.
-    if (agent.name !== "codex" || model !== CODEX_MODELS.routine.model) {
-      content = content.replace(/\bCODEX_MODELS,\s*/g, "");
-    }
 
     // ChatGPT subscription auth is stored by the host Codex CLI. Mount the
     // file into the sandbox read-only so Codex can use it without exposing an
@@ -687,7 +669,7 @@ export const scaffold = (
     const {
       agent,
       model,
-      templateName = "blank",
+      templateName = "simple-loop",
       issueTracker = ISSUE_TRACKER_REGISTRY[0]!, // default: github-issues
       sandboxProvider = SANDBOX_PROVIDER_REGISTRY[0]!, // default: docker
       codexAuth = "api-key",
