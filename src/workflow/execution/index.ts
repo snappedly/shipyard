@@ -679,23 +679,28 @@ export const executePhase = async (
   };
 };
 
-export interface RunPhaseEngineAdapterOptions {
-  /** Pre-resolved provider for legacy single-model policies. */
-  readonly agent?: AgentProvider;
-  /** Creates the provider selected by the assignment's trusted policy. */
-  readonly resolveAgent?: (selection: AgentSelection) => AgentProvider;
+export type PhaseAgentResolver =
+  | {
+      /** Pre-resolved provider for legacy single-model policies. */
+      readonly agent: AgentProvider;
+      readonly resolveAgent?: never;
+    }
+  | {
+      readonly agent?: never;
+      /** Creates the provider selected by the assignment's trusted policy. */
+      readonly resolveAgent: (selection: AgentSelection) => AgentProvider;
+    };
+
+export type RunPhaseEngineAdapterOptions = PhaseAgentResolver & {
   readonly sandbox: SandboxProvider;
   readonly cwd?: string;
   readonly run: (
     options: RunOptions,
   ) => Promise<RunResult & { output?: unknown }>;
-}
+};
 
 const resolvePhaseAgent = (
-  options: {
-    readonly agent?: AgentProvider;
-    readonly resolveAgent?: (selection: AgentSelection) => AgentProvider;
-  },
+  options: PhaseAgentResolver,
   request: PhaseEngineRequest,
 ): AgentProvider => {
   if (
@@ -776,15 +781,11 @@ export const createRunPhaseEngineAdapter = (
   },
 });
 
-export interface CreateSandboxPhaseEngineAdapterOptions {
-  /** Pre-resolved provider for legacy single-model policies. */
-  readonly agent?: AgentProvider;
-  /** Creates the provider selected by the assignment's trusted policy. */
-  readonly resolveAgent?: (selection: AgentSelection) => AgentProvider;
+export type CreateSandboxPhaseEngineAdapterOptions = PhaseAgentResolver & {
   readonly sandbox: SandboxProvider;
   readonly cwd?: string;
   readonly createSandbox: (options: CreateSandboxOptions) => Promise<Sandbox>;
-}
+};
 
 const sandboxResultToResponse = (
   result: SandboxRunResult,
