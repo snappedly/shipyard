@@ -29,6 +29,9 @@ plane around the agent:
 
 ## Install and run
 
+Before running Shipyard, install the [Snappedly skills](https://github.com/snappedly/skills)
+and run `setup-snapedly-skills` in the target repository.
+
 Requirements: Node.js 20.18.1+, Git, Docker, and credentials for your chosen
 agent. Run these commands in the repository Shipyard should change:
 
@@ -61,13 +64,13 @@ the [agent guide](docs/content/docs/agents.mdx) for authentication details.
 
 ## Pick the workflow you need
 
-| Template                       | Best for              | Built-in flow                                     |
-| ------------------------------ | --------------------- | ------------------------------------------------- |
-| `blank`                        | One custom task       | One agent run                                     |
-| `simple-loop`                  | A small issue backlog | Implement issues sequentially                     |
-| `sequential-reviewer`          | Safer issue delivery  | Implement → review, one issue at a time           |
-| `parallel-planner`             | Independent issues    | Plan dependencies → implement in parallel → merge |
-| `parallel-planner-with-review` | Maximum autonomy      | Plan → implement and review in parallel → merge   |
+| Template                       | Best for              | Built-in flow                                 |
+| ------------------------------ | --------------------- | --------------------------------------------- |
+| `blank`                        | One custom task       | One agent run                                 |
+| `simple-loop`                  | A small issue backlog | Implement issues sequentially → review PRs    |
+| `sequential-reviewer`          | Safer issue delivery  | Implement → review → review PR                |
+| `parallel-planner`             | Independent issues    | Plan → implement in parallel → review PRs     |
+| `parallel-planner-with-review` | Maximum autonomy      | Plan → implement and review in parallel → PRs |
 
 All templates are generated TypeScript. Adjust prompts, models, iteration
 limits, branch strategy, hooks, and checks in `.shipyard/main.ts` or
@@ -80,12 +83,57 @@ Shipyard controller ready for GitHub Issues. Label an issue `shipyard`; the
 controller wakes, drains a finite batch of eligible work, coalesces duplicate
 wake-ups, and stops when it makes no progress. Restarting it recovers work
 labelled while the host was offline.
+GitHub-backed `shipyard init` provisions `shipyard`, `shipyard:blocked`,
+`shipyard:pending`, `shipyard:complete`, and `shipyard:outstanding-tasks` in the repository.
+It also provisions the `bug`, `enhancement`, and five triage state labels.
+For a connected repository, init reports an error if any label cannot be created.
+
+The bundled issue workflows install Snappedly skills and the candidate's
+dependencies in Docker. When Shipyard takes an activated ticket, it runs
+`/triage` first and checks the current GitHub labels. Implementation requires
+both `shipyard` and `ready-for-agent`, with no conflicting triage state. Other
+triage outcomes follow the normal blocked flow: Shipyard adds
+`shipyard:blocked`, removes `shipyard`, and records the reason on the ticket.
+A standalone ready issue then runs through `/implement`. Activating
+a planning spec or a linked executable child resolves the parent and only
+linked tickets labelled `shipyard` into one `/implement-spec` scope. The sequential
+templates deliver selected tickets on one branch; the parallel templates assign
+ready tickets to `/implement` workers, integrate dependency waves, resolve ticket
+merge conflicts on the spec branch, and review the integrated change. One
+non-draft PR per spec awaits human merge. Later selected tickets update that PR.
+Shipyard also recognizes a ticket added to an open verified spec PR's `Source
+issues:` line as belonging to that spec, even without a GitHub sub-issue or
+`## Parent` link. Conflicting links block the selected ticket for correction.
+Selected tickets receive `shipyard:pending` while Shipyard works on them.
+Successful handoff replaces it with `shipyard:complete` and removes `shipyard`.
+The parent spec and PR show `shipyard:blocked` if an unfinished child is blocked,
+`shipyard:outstanding-tasks` if children remain, or `shipyard:complete` when all
+linked tickets are complete. Spec labels report child state; they never prevent
+a reactivated child from running. The issues remain open under the target
+repository's closure policy.
+With no labelled tickets yet, Shipyard marks the parent outstanding and waits
+to create the PR until a ticket is selected.
+If an attempted issue cannot be completed, Shipyard comments with the reason,
+marks the attempted tickets `shipyard:blocked`, clears `shipyard:pending`, and
+removes `shipyard` from the scope. The parent spec and any existing PR show
+`shipyard:blocked` while an unfinished child remains blocked. It does not
+publish a new PR for failed work. Resolve the problem, remove
+`shipyard:blocked` from a ticket, then add `shipyard` to retry that ticket;
+the parent spec's status label needs no manual change. Missing or ambiguous
+relationships block the affected selected issue and record the reason. If GitHub cannot confirm whether a
+PR became ready, Shipyard leaves the issue active for reconciliation. The GitHub token
+needs Contents, Issues, and Pull requests read/write permission plus Metadata
+read permission. Keep the Mac and foreground controller running for wake-ups.
+If GitHub rejects a failure comment, Shipyard keeps a local pending report for
+replay. A fresh `shipyard` activation on an unblocked ticket supersedes that
+report. Spec and PR status label failures are logged without stopping ticket
+work; retained activation lets the next invocation recalculate their labels.
 
 Accept runner installation during `init`, or install it later:
 
 ```sh
 npx shipyard runner install
-git add .github/workflows/shipyard-wake.yml .shipyard/.gitignore
+git add .shipyard .github/workflows/shipyard-wake.yml
 git commit -m "Add Shipyard wake workflow"
 git push
 npx shipyard runner start

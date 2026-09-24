@@ -102,6 +102,22 @@ export interface CreateSandboxOptions {
   };
 }
 
+const runRequiredSandboxHook = (
+  sandbox: SandboxService,
+  command: string,
+  cwd: string,
+  sudo?: boolean,
+) =>
+  Effect.flatMap(sandbox.exec(command, { cwd, sudo }), (result) =>
+    result.exitCode === 0
+      ? Effect.succeed(result)
+      : Effect.fail(
+          new Error(
+            `Sandbox setup failed (exit ${result.exitCode}): ${command}\n${result.stderr}`,
+          ),
+        ),
+  );
+
 /**
  * Options accepted by `SandboxRunResult.resume()` / `.fork()`. Mirrors
  * `ResumeRunResultOptions` in `run.ts` — drops the fields owned by the
@@ -852,10 +868,12 @@ export const createSandboxFromWorktree = async (
           `git config --global --add safe.directory ${shellQuote(sandboxRepoDir)}`,
         );
         const sandboxEffects = (sandboxOnReady ?? []).map((hook) =>
-          sandbox.exec(hook.command, {
-            cwd: sandboxRepoDir,
-            sudo: hook.sudo,
-          }),
+          runRequiredSandboxHook(
+            sandbox,
+            hook.command,
+            sandboxRepoDir,
+            hook.sudo,
+          ),
         );
         const allEffects = [...sandboxEffects] as Effect.Effect<
           unknown,
@@ -867,7 +885,13 @@ export const createSandboxFromWorktree = async (
         yield* Effect.all(allEffects, {
           concurrency: "unbounded",
         });
-      }),
+      }).pipe(
+        Effect.onError(() =>
+          providerHandle
+            ? Effect.promise(() => providerHandle!.close().catch(() => {}))
+            : Effect.void,
+        ),
+      ),
     );
   }
 
@@ -1034,10 +1058,12 @@ export const createSandbox = async (
                 `git config --global --add safe.directory ${shellQuote(sandboxRepoDir)}`,
               );
               const sandboxEffects = (sandboxOnReady ?? []).map((hook) =>
-                sandbox.exec(hook.command, {
-                  cwd: sandboxRepoDir,
-                  sudo: hook.sudo,
-                }),
+                runRequiredSandboxHook(
+                  sandbox,
+                  hook.command,
+                  sandboxRepoDir,
+                  hook.sudo,
+                ),
               );
               const allEffects = [...sandboxEffects] as Effect.Effect<
                 unknown,

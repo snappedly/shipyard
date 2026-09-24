@@ -546,8 +546,8 @@ const requireRunnerContext = async (
       repoDir,
       repository,
       // The published workflow is an administrative runner preflight. Keep
-      // it on the host's gh login instead of the issue-agent token from
-      // .shipyard/.env, which intentionally only needs issue permissions.
+      // it on the host's gh login instead of the runtime token from
+      // .shipyard/.env, which has no runner administration permission.
       environment: hostEnvironment,
     },
     adapters,

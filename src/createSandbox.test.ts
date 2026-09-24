@@ -15,7 +15,11 @@ import { promisify } from "node:util";
 import { Effect, Layer } from "effect";
 import { describe, expect, it } from "vitest";
 import { claudeCode, codex } from "./AgentProvider.js";
-import { createSandbox, type CreateSandboxOptions } from "./createSandbox.js";
+import {
+  createSandbox,
+  createSandboxFromWorktree,
+  type CreateSandboxOptions,
+} from "./createSandbox.js";
 import type { SandboxService } from "./SandboxFactory.js";
 import {
   createBindMountSandboxProvider,
@@ -1274,6 +1278,63 @@ describe("createSandbox", () => {
       expect(hookOutput.trim()).toBe("hook-ran");
     } finally {
       await sandbox.close();
+      await rm(hostDir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses agent startup when an onSandboxReady install command fails", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "sandbox-test-"));
+    await initRepo(hostDir);
+    await commitFile(hostDir, "init.txt", "init", "initial commit");
+
+    try {
+      await expect(
+        createSandbox({
+          branch: "test-failed-install",
+          sandbox: testSandbox,
+          hooks: { sandbox: { onSandboxReady: [{ command: "exit 17" }] } },
+          cwd: hostDir,
+          _test: { buildSandbox: (sandboxDir) => makeLocalSandbox(sandboxDir) },
+        }),
+      ).rejects.toThrow("exit 17");
+    } finally {
+      await rm(hostDir, { recursive: true, force: true });
+    }
+  });
+
+  it("closes an existing-worktree provider when setup fails", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "sandbox-test-"));
+    await initRepo(hostDir);
+    await commitFile(hostDir, "init.txt", "init", "initial commit");
+    let closed = false;
+    const provider = createBindMountSandboxProvider({
+      name: "failed-setup",
+      create: async () => ({
+        worktreePath: hostDir,
+        exec: async (command) => ({
+          stdout: "",
+          stderr: command === "exit 17" ? "failed install" : "",
+          exitCode: command === "exit 17" ? 17 : 0,
+        }),
+        copyFileIn: async () => {},
+        copyFileOut: async () => {},
+        close: async () => {
+          closed = true;
+        },
+      }),
+    });
+    try {
+      await expect(
+        createSandboxFromWorktree({
+          branch: "main",
+          worktreePath: hostDir,
+          hostRepoDir: hostDir,
+          sandbox: provider,
+          hooks: { sandbox: { onSandboxReady: [{ command: "exit 17" }] } },
+        }),
+      ).rejects.toThrow("failed install");
+      expect(closed).toBe(true);
+    } finally {
       await rm(hostDir, { recursive: true, force: true });
     }
   });

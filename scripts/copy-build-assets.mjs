@@ -4,7 +4,10 @@ import { cp, mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 await rm("dist/templates", { force: true, recursive: true });
-await cp("src/templates", "dist/templates", { recursive: true });
+await cp("src/templates", "dist/templates", {
+  recursive: true,
+  dereference: true,
+});
 
 const sourceMigrations = "src/workflow/coordinator/migrations";
 const targetMigrations = "dist/workflow/coordinator/migrations";

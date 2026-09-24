@@ -1,4 +1,4 @@
 {
   "name": "sequential-reviewer",
-  "description": "Implements issues one by one, with a code review step after each"
+  "description": "Implements issues one by one, reviews each branch, then opens review PRs"
 }
