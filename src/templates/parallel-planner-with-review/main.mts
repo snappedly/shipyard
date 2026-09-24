@@ -54,13 +54,13 @@ type Scope = {
   completedTicketIds?: string[];
   outstandingTicketIds?: string[];
 };
-const evidence = (stdout: string): string | undefined =>
-  [...stdout.matchAll(/<handoff>([\s\S]*?)<\/handoff>/g)].at(-1)?.[1]?.trim();
 const complete = (
   result: { stdout: string; completionSignal?: string | null },
   stage: string,
 ) => {
-  const packet = evidence(result.stdout);
+  const packet = [...result.stdout.matchAll(/<handoff>([\s\S]*?)<\/handoff>/g)]
+    .at(-1)?.[1]
+    ?.trim();
   if (!result.completionSignal || !packet)
     throw new Error(
       `${stage} lacks verified completion evidence: ${result.stdout.trim().slice(-1200)}`,

@@ -485,11 +485,10 @@ for (const candidate of activated) {
         ticket.labels.some((label) => label.name === "shipyard:complete"),
       )
       .map((ticket) => ticket.id);
-    const selectedIds = new Set(tickets.map((ticket) => ticket.id));
     const outstandingTicketIds = linkedTickets
       .filter(
         (ticket) =>
-          !selectedIds.has(ticket.id) &&
+          !selectedTicketIds.has(ticket.id) &&
           !completedTicketIds.includes(ticket.id),
       )
       .map((ticket) => ticket.id);
@@ -632,11 +631,10 @@ for (const candidate of activated) {
         }
         let completedStatusSynced = statusSynced;
         if (isSpec) {
-          const completed = new Set(tickets.map((ticket) => ticket.id));
           completedStatusSynced = syncStatus(
             root,
             linkedTickets.map((ticket) =>
-              completed.has(ticket.id)
+              selectedTicketIds.has(ticket.id)
                 ? { ...ticket, labels: [{ name: "shipyard:complete" }] }
                 : ticket,
             ),
@@ -694,7 +692,6 @@ for (const candidate of activated) {
     if (isSpec) {
       if (root.state && String(root.state).toLowerCase() !== "open")
         invalid(`Planning spec #${rootId} is closed`, id);
-      const ticketIds = new Set(tickets.map((ticket) => ticket.id));
       const completedIds = new Set(completedTicketIds);
       for (const ticket of tickets) {
         if (String(ticket.state).toLowerCase() !== "open")
@@ -705,7 +702,7 @@ for (const candidate of activated) {
         for (const blocker of ticket.blockedBy) {
           if (
             String(blocker.state).toLowerCase() !== "closed" &&
-            !ticketIds.has(blocker.id) &&
+            !selectedTicketIds.has(blocker.id) &&
             !completedIds.has(blocker.id)
           )
             invalid(
@@ -714,7 +711,7 @@ for (const candidate of activated) {
             );
         }
       }
-      const waiting = new Set(ticketIds);
+      const waiting = new Set(selectedTicketIds);
       while (waiting.size) {
         const ready = tickets.filter(
           (ticket) =>

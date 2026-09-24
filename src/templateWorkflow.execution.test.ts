@@ -6,7 +6,6 @@ const calls = vi.hoisted(() => ({
   events: [] as string[],
   pendingEdits: [] as string[],
   selected: 0,
-  plans: 0,
   spec: false,
   multi: false,
   commands: [] as string[],
@@ -294,7 +293,6 @@ beforeEach(() => {
   calls.events.length = 0;
   calls.pendingEdits.length = 0;
   calls.selected = 0;
-  calls.plans = 0;
   calls.spec = false;
   calls.multi = false;
   calls.commands.length = 0;

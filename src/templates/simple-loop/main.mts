@@ -37,8 +37,6 @@ const closeClean = async (sandbox: {
     throw new Error(`Sandbox has uncommitted work at ${preservedWorktreePath}`);
 };
 
-const handoffEvidence = (stdout: string): string | undefined =>
-  [...stdout.matchAll(/<handoff>([\s\S]*?)<\/handoff>/g)].at(-1)?.[1]?.trim();
 const blockScope = (
   scope: { id: string; branch: string; tickets?: Array<{ id: string }> },
   error: unknown,
@@ -131,7 +129,11 @@ for (let iteration = 0; iteration < 3; iteration++) {
           SKILL: issue.kind === "spec" ? "/implement-spec" : "/implement",
         },
       });
-      const packet = handoffEvidence(result.stdout);
+      const packet = [
+        ...result.stdout.matchAll(/<handoff>([\s\S]*?)<\/handoff>/g),
+      ]
+        .at(-1)?.[1]
+        ?.trim();
       if (!result.completionSignal || !packet)
         throw new Error(
           `Issue #${issue.id} has no verified completion evidence: ${result.stdout.trim().slice(-1200)}`,
