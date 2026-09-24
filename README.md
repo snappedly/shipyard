@@ -29,6 +29,9 @@ plane around the agent:
 
 ## Install and run
 
+Before running Shipyard, install the [Snappedly skills](https://github.com/snappedly/skills)
+and run `setup-snapedly-skills` in the target repository.
+
 Requirements: Node.js 20.18.1+, Git, Docker, and credentials for your chosen
 agent. Run these commands in the repository Shipyard should change:
 
