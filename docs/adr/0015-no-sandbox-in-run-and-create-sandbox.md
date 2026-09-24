@@ -1,4 +1,4 @@
-# Allow `noSandbox()` in `run()` and `createSandbox()`
+# Allow `noSandbox()` in `run()` and `createSandbox()` (superseded by ADR 0022)
 
 ## Context
 

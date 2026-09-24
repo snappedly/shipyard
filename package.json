@@ -13,14 +13,6 @@
     "./sandboxes/docker": {
       "import": "./dist/sandboxes/docker.js",
       "types": "./dist/sandboxes/docker.d.ts"
-    },
-    "./sandboxes/vercel": {
-      "import": "./dist/sandboxes/vercel.js",
-      "types": "./dist/sandboxes/vercel.d.ts"
-    },
-    "./sandboxes/no-sandbox": {
-      "import": "./dist/sandboxes/no-sandbox.js",
-      "types": "./dist/sandboxes/no-sandbox.d.ts"
     }
   },
   "bin": {
@@ -89,14 +81,6 @@
     "effect": "^3.22.2",
     "tsx": "^4.23.13",
     "zod": "^4.6.5"
-  },
-  "peerDependencies": {
-    "@vercel/sandbox": ">=1.0.0"
-  },
-  "peerDependenciesMeta": {
-    "@vercel/sandbox": {
-      "optional": true
-    }
   },
   "files": [
     "dist",

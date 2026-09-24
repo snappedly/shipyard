@@ -10,8 +10,5 @@ export const WORKTREES_DIR = "worktrees";
 export const PATCHES_DIR = "patches";
 export const LOCKS_DIR = "locks";
 export const RUNNER_DIR = "runner";
-export const RUNNER_SANDBOX_MASK_DIR = "runner-sandbox-mask";
 
-export const PARENT_GIT_SANDBOX_DIR = "/.shipyard-parent-git";
 export const SYNC_BASE_REF = "refs/shipyard/sync-base";
-export const CONTAINER_NAME_PREFIX = "shipyard-";

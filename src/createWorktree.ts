@@ -1,18 +1,11 @@
 import { toSessionTransferHandle } from "./SandboxProvider.js";
 import { NodeContext, NodeFileSystem } from "@effect/platform-node";
-import { join } from "node:path";
 import { Effect, Layer } from "effect";
 import type { AgentProvider } from "./AgentProvider.js";
 import { ClackDisplay, Display, FileDisplay } from "./Display.js";
 import { preprocessPrompt } from "./PromptPreprocessor.js";
 import { resolvePrompt } from "./PromptResolver.js";
-import {
-  SandboxFactory,
-  makeSandboxFromHandle,
-  resolveGitMounts,
-  SANDBOX_REPO_DIR,
-} from "./SandboxFactory.js";
-import { patchGitMountsForWindows } from "./mountUtils.js";
+import { SandboxFactory, makeSandboxFromHandle } from "./SandboxFactory.js";
 import { assertNoSymlinkComponents } from "./pathSecurity.js";
 import {
   withSandboxLifecycle,
@@ -20,13 +13,10 @@ import {
   type SandboxHooks,
 } from "./SandboxLifecycle.js";
 import type {
-  AnySandboxProvider,
   SandboxProvider,
   MergeToHeadBranchStrategy,
   NamedBranchStrategy,
-  BindMountSandboxHandle,
   IsolatedSandboxHandle,
-  NoSandboxHandle,
 } from "./SandboxProvider.js";
 import type { CloseResult, Sandbox } from "./createSandbox.js";
 import { createSandboxFromWorktree } from "./createSandbox.js";
@@ -56,7 +46,6 @@ import {
   validateNoBuiltInArgOverride,
   BUILT_IN_PROMPT_ARG_KEYS,
 } from "./PromptArgumentSubstitution.js";
-import { noSandbox } from "./sandboxes/no-sandbox.js";
 import { raceAbortSignal } from "./raceAbortSignal.js";
 import { validateMaxIterations } from "./validateMaxIterations.js";
 import type { Timeouts } from "./run.js";
@@ -92,8 +81,8 @@ export interface CreateWorktreeOptions {
 export interface WorktreeInteractiveOptions {
   /** Agent provider to use (e.g. codex(CODEX_MODELS.routine)) */
   readonly agent: AgentProvider;
-  /** Sandbox provider (e.g. docker(), noSandbox()). Defaults to noSandbox(). */
-  readonly sandbox?: AnySandboxProvider;
+  /** Docker sandbox provider. */
+  readonly sandbox: SandboxProvider;
   /** Inline prompt string (mutually exclusive with promptFile). */
   readonly prompt?: string;
   /** Path to a prompt file (mutually exclusive with prompt). */
@@ -289,7 +278,7 @@ export const createWorktree = async (
     opts.signal?.throwIfAborted();
 
     const { prompt, promptFile, hooks, agent: provider } = opts;
-    const resolvedSandbox = opts.sandbox ?? noSandbox();
+    const resolvedSandbox = opts.sandbox;
 
     // Validate buildInteractiveArgs is available
     if (!provider.buildInteractiveArgs) {
@@ -348,48 +337,18 @@ export const createWorktree = async (
       });
 
       // 4. Start sandbox
-      let handle:
-        | BindMountSandboxHandle
-        | IsolatedSandboxHandle
-        | NoSandboxHandle;
-
-      if (resolvedSandbox.tag === "none") {
-        handle = yield* Effect.promise(() =>
-          resolvedSandbox.create({
-            worktreePath: worktreeInfo.path,
-            env: effectiveEnv,
-          }),
-        );
-      } else if (resolvedSandbox.tag === "isolated") {
-        const startResult = yield* d.taskLog("Starting sandbox", () =>
-          startSandbox({
-            provider: resolvedSandbox,
-            hostRepoDir: worktreeInfo.path,
-            sourceRepoDir: hostRepoDir,
-            env: effectiveEnv,
-          }),
-        );
-        handle = startResult.handle;
-      } else {
-        const gitPath = join(hostRepoDir, ".git");
-        const rawGitMounts = yield* resolveGitMounts(gitPath);
-        const gitMounts = yield* patchGitMountsForWindows(
-          rawGitMounts,
-          worktreeInfo.path,
-          SANDBOX_REPO_DIR,
-        );
-        const startResult = yield* d.taskLog("Starting sandbox", () =>
-          startSandbox({
-            provider: resolvedSandbox,
-            hostRepoDir,
-            env: effectiveEnv,
-            worktreeOrRepoPath: worktreeInfo.path,
-            gitMounts,
-            repoDir: SANDBOX_REPO_DIR,
-          }),
-        );
-        handle = startResult.handle;
-      }
+      const startResult = yield* d.taskLog("Starting sandbox", () =>
+        startSandbox({
+          provider: resolvedSandbox,
+          hostRepoDir: worktreeInfo.path,
+          sourceRepoDir: hostRepoDir,
+          copySourceDir: worktreeInfo.path,
+          env: effectiveEnv,
+          copyPaths: options.copyToWorktree,
+          copyTimeoutMs: options.timeouts?.copyToWorktreeMs,
+        }),
+      );
+      const handle = startResult.handle;
 
       // Run lifecycle — worktree owns worktree, so no worktree cleanup here
       return yield* Effect.gen(function* () {
@@ -403,10 +362,7 @@ export const createWorktree = async (
         const sandbox = makeSandboxFromHandle(handle);
         const worktreePath = handle.worktreePath;
 
-        const applyToHost =
-          resolvedSandbox.tag === "isolated"
-            ? () => syncOut(worktreeInfo.path, handle as IsolatedSandboxHandle)
-            : () => Effect.void;
+        const applyToHost = () => syncOut(worktreeInfo.path, handle);
 
         const lifecycleEffect = withSandboxLifecycle(
           {
@@ -436,7 +392,7 @@ export const createWorktree = async (
 
               const interactiveArgs = provider.buildInteractiveArgs!({
                 prompt: fullPrompt,
-                dangerouslySkipPermissions: resolvedSandbox.tag !== "none",
+                dangerouslySkipPermissions: true,
               });
 
               const result = yield* raceAbortSignal(
@@ -515,7 +471,6 @@ export const createWorktree = async (
     if (opts.resumeSession) {
       await assertResumeSessionExists({
         provider,
-        sandboxTag: sandboxProvider.tag,
         hostRepoDir,
         resumeSession: opts.resumeSession,
       });
@@ -558,55 +513,20 @@ export const createWorktree = async (
       }
 
       // 4. Start sandbox
-      let handle:
-        | BindMountSandboxHandle
-        | IsolatedSandboxHandle
-        | NoSandboxHandle;
-      let sandboxRepoDir: string;
-
-      if (sandboxProvider.tag === "isolated") {
-        const startResult = yield* startSandbox({
-          provider: sandboxProvider,
-          hostRepoDir: worktreeInfo.path,
-          sourceRepoDir: hostRepoDir,
-          env: effectiveEnv,
-        });
-        handle = startResult.handle;
-        sandboxRepoDir = startResult.worktreePath;
-      } else if (sandboxProvider.tag === "none") {
-        const startResult = yield* startSandbox({
-          provider: sandboxProvider,
-          hostRepoDir,
-          env: effectiveEnv,
-          worktreeOrRepoPath: worktreeInfo.path,
-        });
-        handle = startResult.handle;
-        sandboxRepoDir = startResult.worktreePath;
-      } else {
-        const gitPath = join(hostRepoDir, ".git");
-        const rawGitMounts = yield* resolveGitMounts(gitPath);
-        const gitMounts = yield* patchGitMountsForWindows(
-          rawGitMounts,
-          worktreeInfo.path,
-          SANDBOX_REPO_DIR,
-        );
-        const startResult = yield* startSandbox({
-          provider: sandboxProvider,
-          hostRepoDir,
-          env: effectiveEnv,
-          worktreeOrRepoPath: worktreeInfo.path,
-          gitMounts,
-          repoDir: SANDBOX_REPO_DIR,
-        });
-        handle = startResult.handle;
-        sandboxRepoDir = startResult.worktreePath;
-      }
+      const startResult = yield* startSandbox({
+        provider: sandboxProvider,
+        hostRepoDir: worktreeInfo.path,
+        sourceRepoDir: hostRepoDir,
+        copySourceDir: worktreeInfo.path,
+        env: effectiveEnv,
+        copyPaths: options.copyToWorktree,
+        copyTimeoutMs: options.timeouts?.copyToWorktreeMs,
+      });
+      const handle = startResult.handle;
+      const sandboxRepoDir = startResult.worktreePath;
 
       const sandbox = makeSandboxFromHandle(handle);
-      const applyToHost =
-        sandboxProvider.tag === "isolated"
-          ? () => syncOut(worktreeInfo.path, handle as IsolatedSandboxHandle)
-          : () => Effect.void;
+      const applyToHost = () => syncOut(worktreeInfo.path, handle);
 
       // 5. Resolve logging
       const resolvedLogging: LoggingOption = opts.logging ?? {
@@ -648,7 +568,7 @@ export const createWorktree = async (
             })()
           : ClackDisplay.layer;
 
-      const bindMountHandle = toSessionTransferHandle(handle);
+      const sessionTransferHandle = toSessionTransferHandle(handle);
 
       // 6. Build a SandboxFactory that reuses the started sandbox
       const reuseFactoryLayer = Layer.succeed(SandboxFactory, {
@@ -658,7 +578,7 @@ export const createWorktree = async (
               hostWorktreePath: worktreeInfo.path,
               sandboxRepoPath: sandboxRepoDir,
               applyToHost,
-              bindMountHandle,
+              sessionTransferHandle,
             },
             sandbox,
           ).pipe(
@@ -753,13 +673,28 @@ export const createWorktree = async (
   const worktreeCreateSandbox = async (
     opts: WorktreeCreateSandboxOptions,
   ): Promise<Sandbox> => {
+    if (opts.copyToWorktree?.length) {
+      await Effect.runPromise(
+        copyToWorktree(
+          opts.copyToWorktree,
+          hostRepoDir,
+          worktreeInfo.path,
+          opts.timeouts?.copyToWorktreeMs ?? options.timeouts?.copyToWorktreeMs,
+        ),
+      );
+    }
     return createSandboxFromWorktree({
       branch: worktreeInfo.branch,
       worktreePath: worktreeInfo.path,
       hostRepoDir,
       sandbox: opts.sandbox,
       hooks: opts.hooks,
-      copyToWorktree: opts.copyToWorktree,
+      copyToWorktree: [
+        ...new Set([
+          ...(options.copyToWorktree ?? []),
+          ...(opts.copyToWorktree ?? []),
+        ]),
+      ],
       timeouts: opts.timeouts,
       branchStrategy: options.branchStrategy,
       _test: opts._test,

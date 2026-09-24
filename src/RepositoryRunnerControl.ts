@@ -34,12 +34,7 @@ import {
   type RunnerInstallMetadata,
   type RunnerLifecycleAdapters,
 } from "./RepositoryRunnerLifecycle.js";
-import {
-  ACTIVATION_LABEL,
-  CONFIG_DIR,
-  RUNNER_DIR,
-  RUNNER_SANDBOX_MASK_DIR,
-} from "./runtimeNames.js";
+import { ACTIVATION_LABEL, CONFIG_DIR, RUNNER_DIR } from "./runtimeNames.js";
 import {
   DEFAULT_LOG_RETENTION_DAYS,
   purgeRunLogs,
@@ -374,7 +369,6 @@ const requireCommand = async (
 
 interface RunnerControlContext {
   readonly runnerDir: string;
-  readonly maskDir: string;
   readonly repository: string;
   readonly metadata: RunnerInstallMetadata;
   readonly hostEnvironment: NodeJS.ProcessEnv;
@@ -393,7 +387,6 @@ const requireRunnerContext = async (
 
   const configDir = join(repoDir, CONFIG_DIR);
   const runnerDir = join(configDir, RUNNER_DIR);
-  const maskDir = join(configDir, RUNNER_SANDBOX_MASK_DIR);
   if (!(await adapters.exists(configDir))) {
     throw new RunnerControlError(
       `No ${CONFIG_DIR}/ found. Run \`shipyard init\` in this repository first.`,
@@ -559,7 +552,6 @@ const requireRunnerContext = async (
 
   return {
     runnerDir,
-    maskDir,
     repository,
     metadata,
     hostEnvironment,
@@ -640,7 +632,6 @@ const startRepositoryRunnerManaged = async (
     {
       repoDir: options.repoDir,
       runnerDir: context.runnerDir,
-      maskDir: context.maskDir,
       metadata: context.metadata,
       runnerEnvironment: repositoryRunnerEnvironment(context.hostEnvironment),
       dockerEnvironment: context.runtimeEnvironment,

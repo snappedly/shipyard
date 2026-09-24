@@ -352,7 +352,7 @@ const buildVerboseRawLineSink = (
 
 /** Override default timeouts for built-in lifecycle steps. Unset keys keep their defaults. */
 export interface Timeouts {
-  /** Timeout (ms) for the host-side copy of `copyToWorktree` paths into the worktree. Default: 60_000. */
+  /** Timeout (ms) for copying selected paths into a worktree or Docker sandbox. Default: 60_000. */
   readonly copyToWorktreeMs?: number;
   /** Timeout (ms) for each in-sandbox git setup command (safe.directory, user.name/email, branch discovery). Default: 10_000. */
   readonly gitSetupMs?: number;
@@ -412,12 +412,11 @@ export interface RunOptions<A extends AgentProvider = AgentProvider> {
   readonly completionTimeoutSeconds?: number;
   /** Optional name for the run, shown as a prefix in log output */
   readonly name?: string;
-  /** Paths relative to the host repo root to copy into the worktree before sandbox start. */
+  /** Paths relative to the host repo root to copy into Docker after Git sync. */
   readonly copyToWorktree?: string[];
   /** Tools the provider must enforce for this controlled phase. */
   readonly toolAllowlist?: readonly string[];
-  /** Branch strategy — controls how the agent's changes relate to branches.
-   * Defaults to { type: "head" } for bind-mount providers and { type: "merge-to-head" } for isolated providers. */
+  /** Branch strategy; defaults to merge-to-head. */
   readonly branchStrategy?: BranchStrategy;
   /** Resume a prior agent session by ID. The session record must exist on the host. Incompatible with maxIterations > 1. */
   readonly resumeSession?: string;
@@ -540,32 +539,9 @@ export async function run(
   } = options;
   validateMaxIterations(maxIterations);
 
-  // Derive branch strategy: explicit option > default based on provider tag
-  const branchStrategy: BranchStrategy =
-    options.branchStrategy ??
-    (options.sandbox.tag === "isolated"
-      ? { type: "merge-to-head" }
-      : { type: "head" });
-  const effectiveBranchType = branchStrategy.type;
-
-  // Validate: head strategy is not supported with isolated providers
-  if (effectiveBranchType === "head" && options.sandbox.tag === "isolated") {
-    throw new Error(
-      "head branch strategy is not supported with isolated providers",
-    );
-  }
-
-  // Validate: copyToWorktree is incompatible with head strategy
-  if (
-    effectiveBranchType === "head" &&
-    options.copyToWorktree &&
-    options.copyToWorktree.length > 0
-  ) {
-    throw new Error(
-      "copyToWorktree is not supported with head branch strategy. " +
-        "In head mode the host working directory is bind-mounted directly.",
-    );
-  }
+  const branchStrategy: BranchStrategy = options.branchStrategy ?? {
+    type: "merge-to-head",
+  };
 
   // Validate: resumeSession + maxIterations > 1 is not allowed
   if (options.resumeSession && maxIterations > 1) {
@@ -623,7 +599,6 @@ export async function run(
   if (options.resumeSession) {
     await assertResumeSessionExists({
       provider,
-      sandboxTag: options.sandbox.tag,
       hostRepoDir,
       resumeSession: options.resumeSession,
     });
@@ -667,17 +642,9 @@ export async function run(
     getCurrentBranch(hostRepoDir),
   );
 
-  // When in merge-to-head mode, generate a temporary branch name.
-  // In head mode, use the host's current branch directly (no worktree).
-  const resolvedBranch =
-    effectiveBranchType === "head"
-      ? currentHostBranch
-      : (branch ?? generateTempBranchName(options.name));
-
-  // When using a temp branch, prefix the log filename with the target branch
-  // (the host's current branch) so developers can tell which branch was targeted.
+  const resolvedBranch = branch ?? generateTempBranchName(options.name);
   const targetBranch =
-    effectiveBranchType === "merge-to-head" ? currentHostBranch : undefined;
+    branchStrategy.type === "merge-to-head" ? currentHostBranch : undefined;
 
   // Resolve logging option
   const resolvedLogging: LoggingOption = options.logging ?? {
@@ -776,10 +743,7 @@ export async function run(
       );
     }
 
-    // In head mode, pass the host branch so SandboxLifecycle skips the merge step.
-    // In merge-to-head mode, branch is undefined (triggers merge). In branch mode, it's the explicit branch.
-    const orchestrateBranch =
-      effectiveBranchType === "head" ? currentHostBranch : branch;
+    const orchestrateBranch = branch;
 
     const orchestrateResult = yield* orchestrate({
       hostRepoDir,

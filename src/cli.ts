@@ -574,33 +574,10 @@ const initCommand = Command.make(
         });
       }
 
-      // Resolve sandbox provider: CLI flag > interactive select (no default — user must choose)
-      const sandboxProviders = listSandboxProviders();
-      let selectedSandboxProvider: SandboxProviderEntry;
-      if (sandboxFlag._tag === "Some") {
-        selectedSandboxProvider = getSandboxProvider(sandboxFlag.value)!;
-      } else {
-        if (!isInteractive) {
-          yield* failIfNonInteractive("--sandbox");
-        }
-        const selected = yield* Effect.promise(() =>
-          clack.select({
-            message: "Select a sandbox provider:",
-            options: sandboxProviders.map((p) => ({
-              value: p.name,
-              label: p.label,
-            })),
-          }),
-        );
-        if (clack.isCancel(selected)) {
-          yield* Effect.fail(
-            new InitError({
-              message: "Sandbox provider selection cancelled.",
-            }),
-          );
-        }
-        selectedSandboxProvider = getSandboxProvider(selected as string)!;
-      }
+      // Docker is the sole supported provider. Keep --sandbox docker accepted
+      // for existing non-interactive init scripts.
+      const selectedSandboxProvider: SandboxProviderEntry =
+        getSandboxProvider("docker")!;
 
       // Resolve issue tracker: CLI flag > interactive select (already validated above)
       const issueTrackers = listIssueTrackers();

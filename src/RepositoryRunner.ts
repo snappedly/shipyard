@@ -14,12 +14,7 @@ import { constants } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import {
-  ACTIVATION_LABEL,
-  CONFIG_DIR,
-  RUNNER_DIR,
-  RUNNER_SANDBOX_MASK_DIR,
-} from "./runtimeNames.js";
+import { ACTIVATION_LABEL, CONFIG_DIR, RUNNER_DIR } from "./runtimeNames.js";
 import {
   assertProtectedDirectoryIdentities,
   repositoryRunnerEnvironment,
@@ -261,9 +256,7 @@ const appendRunnerIgnores = async (
     ? await adapters.readText(gitignorePath)
     : "";
   const lines = new Set(current.split(/\r?\n/));
-  const additions = [`${RUNNER_DIR}/`, `${RUNNER_SANDBOX_MASK_DIR}/`].filter(
-    (line) => !lines.has(line),
-  );
+  const additions = [`${RUNNER_DIR}/`].filter((line) => !lines.has(line));
   if (additions.length === 0) return;
   const prefix =
     current.length === 0 || current.endsWith("\n") ? current : `${current}\n`;
@@ -294,7 +287,6 @@ export const installRepositoryRunner = async (
 
   const configDir = join(options.repoDir, CONFIG_DIR);
   const runnerDir = join(configDir, RUNNER_DIR);
-  const maskDir = join(configDir, RUNNER_SANDBOX_MASK_DIR);
   if (!(await adapters.exists(configDir))) {
     throw new RunnerInstallError(
       `No ${CONFIG_DIR}/ found. Run \`shipyard init\` in this repository first.`,
@@ -358,7 +350,6 @@ export const installRepositoryRunner = async (
         {
           repoDir: options.repoDir,
           runnerDir,
-          maskDir,
           repository,
           runnerName,
         },
@@ -373,10 +364,8 @@ export const installRepositoryRunner = async (
     }
     await appendRunnerIgnores(join(configDir, ".gitignore"), adapters);
     await adapters.chmod(runnerDir, 0o700);
-    await adapters.chmod(maskDir, 0o700);
     await assertProtectedDirectoryIdentities(
       runnerDir,
-      maskDir,
       adapters.inspectDirectory,
     ).catch((error) => {
       throw commandFailure("Validating protected runner directories", error);
@@ -500,18 +489,13 @@ export const installRepositoryRunner = async (
   await adapters.makeDirectory(runnerDir).catch((error) => {
     throw commandFailure("Creating the protected runner directory", error);
   });
-  if (!(await adapters.exists(maskDir))) {
-    await adapters.makeDirectory(maskDir);
-  }
   await assertProtectedDirectoryIdentities(
     runnerDir,
-    maskDir,
     adapters.inspectDirectory,
   ).catch((error) => {
     throw commandFailure("Validating protected runner directories", error);
   });
   await adapters.chmod(runnerDir, 0o700);
-  await adapters.chmod(maskDir, 0o700);
   reportProgress(
     options,
     5,
@@ -553,17 +537,14 @@ export const installRepositoryRunner = async (
       { cwd: runnerDir, env: repositoryRunnerEnvironment(hostEnv) },
     );
   } catch {
-    const cleanup = await Promise.allSettled([
-      adapters.remove(runnerDir),
-      adapters.remove(maskDir),
-    ]);
+    const cleanup = await Promise.allSettled([adapters.remove(runnerDir)]);
     const cleanupSucceeded = cleanup.every(
       (result) => result.status === "fulfilled",
     );
     throw new RunnerInstallError(
       cleanupSucceeded
         ? `Registering ${runnerName} failed. Partial local runner files were removed so installation can be retried. Check GitHub Settings > Actions > Runners for an orphan registration; the one-time token was not stored.`
-        : `Registering ${runnerName} failed and partial local runner files could not be fully removed. Remove only ${runnerDir} and ${maskDir}, check GitHub Settings > Actions > Runners for an orphan registration, then retry. The one-time token was not stored.`,
+        : `Registering ${runnerName} failed and partial local runner files could not be fully removed. Remove only ${runnerDir}, check GitHub Settings > Actions > Runners for an orphan registration, then retry. The one-time token was not stored.`,
     );
   }
   reportProgress(options, 7, progressTotal, "Registered runner with GitHub");

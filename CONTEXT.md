@@ -1,6 +1,6 @@
 # Shipyard
 
-A TypeScript toolkit that orchestrates AI coding agents inside isolated sandbox environments, managing the lifecycle of sandboxes, branches, prompts, and iterations.
+A TypeScript toolkit that orchestrates AI coding agents inside Docker sandboxes, managing the lifecycle of sandboxes, branches, prompts, and iterations.
 
 ## Language
 
@@ -11,7 +11,7 @@ The TypeScript CLI tool that orchestrates an **agent** inside a **sandbox**.
 _Avoid_: "the tool", "the CLI", "RALPH"
 
 **Sandbox**:
-The isolation boundary around the **agent** -- a container, VM, or similar environment that constrains the **agent**'s access.
+The Docker container that constrains the **agent**'s access.
 _Avoid_: "container" (too specific), "Docker sandbox" (ambiguous with Claude's built-in feature), "workspace"
 
 **Host**:
@@ -25,30 +25,18 @@ _Avoid_: "RALPH", "the bot", "Claude" (too specific -- agent is swappable)
 ### Sandboxes
 
 **Sandbox provider**:
-A pluggable implementation that creates and manages a **sandbox**, injected into `run()` via the `sandbox` option.
+A Docker implementation that creates and manages a **sandbox**, injected into `run()` via the `sandbox` option.
 _Avoid_: "backend", "runtime", "sandbox factory"
 
-**Bind-mount sandbox provider**:
-A **sandbox provider** where the **host** filesystem is mounted directly into the environment.
-_Avoid_: "local provider", "mount provider"
-
 **Isolated sandbox provider**:
-A **sandbox provider** where the environment has its own filesystem, requiring sync to move code in and commits out.
+The Docker **sandbox provider**. It has its own filesystem and uses Git sync to move code in and commits out.
 _Avoid_: "remote provider", "sync provider"
-
-**No-sandbox provider**:
-A **sandbox provider** where no container is created -- the **agent** runs directly on the **host**.
-_Avoid_: "local provider", "none provider", "host provider"
 
 ### Branching
 
 **Branch strategy**:
 Configuration on a **sandbox provider** that controls how the agent's changes relate to branches, set at provider construction time.
 _Avoid_: "worktree mode" (old name), "branch mode"
-
-**Head (branch strategy)**:
-A **branch strategy** where the **agent** works directly in the **host** working directory -- no **worktree**, no branch indirection.
-_Avoid_: `"none"` (old name), "direct"
 
 **Merge-to-head (branch strategy)**:
 A **branch strategy** where Shipyard creates a temporary branch, the agent works on it, and changes are merged back to HEAD.
@@ -59,7 +47,7 @@ A **branch strategy** where commits land on an explicitly named branch provided 
 _Avoid_: "named-branch"
 
 **Worktree**:
-A git worktree created in `.shipyard/worktrees/` on the **host**, used by the **merge-to-head** and **branch** strategies. For **bind-mount sandbox providers**, the **worktree** is mounted into the **sandbox**. For **isolated sandbox providers**, the **worktree** is the sync source/destination -- commits from the **sandbox** are pulled back into the **worktree**. Created explicitly via `createWorktree()` or implicitly by `run()`/`interactive()` when using a non-**head** **branch strategy**.
+A git worktree created in `.shipyard/worktrees/` on the **host**, used by the **merge-to-head** and **branch** strategies. The **worktree** is the Git sync source and destination; commits from the **sandbox** are pulled back into it. Created explicitly via `createWorktree()` or implicitly by `run()`/`interactive()`.
 _Avoid_: "workspace", "branch copy", "clone"
 
 **Source branch**:

@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import * as shipyard from "@snappedly-tools/shipyard";
-import { noSandbox } from "@snappedly-tools/shipyard/sandboxes/no-sandbox";
+import { docker } from "@snappedly-tools/shipyard/sandboxes/docker";
 import { codexAgent, fail, required, safeSh, sh } from "../shared/common";
 
 const ISSUE_NUMBER = required("ISSUE_NUMBER");
@@ -15,7 +15,7 @@ try {
   const result = await shipyard.run({
     name: `implement-#${ISSUE_NUMBER}`,
     agent: codexAgent(),
-    sandbox: noSandbox(),
+    sandbox: docker(),
     logging: { type: "stdout" },
     promptFile: path.join(import.meta.dirname, "prompt.md"),
     promptArgs: {

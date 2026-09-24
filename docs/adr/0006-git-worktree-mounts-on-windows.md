@@ -1,5 +1,7 @@
 # Git worktree mounts on Windows hosts
 
+Superseded by ADR 0022. The mount implementation described here was removed.
+
 ## Context
 
 When a sandbox runs inside a Linux container on a **Windows host**, git worktree
