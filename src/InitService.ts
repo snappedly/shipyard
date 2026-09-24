@@ -52,10 +52,6 @@ export interface TemplateMetadata {
 
 const TEMPLATES: TemplateMetadata[] = [
   {
-    name: "blank",
-    description: "Bare scaffold — write your own prompt and orchestration",
-  },
-  {
     name: "simple-loop",
     description: "Implements standalone issues one by one and opens review PRs",
   },
@@ -503,12 +499,6 @@ const rewriteMainTs = (
       .readFileString(mainTsPath)
       .pipe(Effect.mapError((e) => new Error(e.message)));
 
-    // Templates use main.mts as the canonical filename in comments.
-    // When the target is main.ts, rewrite those references.
-    if (mainFilename === "main.ts") {
-      content = content.replace(/main\.mts/g, "main.ts");
-    }
-
     // Replace the default factory function name in imports.
     // and all factory calls with the correct model.
     // Templates always use Codex as the placeholder factory.
@@ -687,7 +677,7 @@ export const scaffold = (
     const {
       agent,
       model,
-      templateName = "blank",
+      templateName = "simple-loop",
       issueTracker = ISSUE_TRACKER_REGISTRY[0]!, // default: github-issues
       sandboxProvider = SANDBOX_PROVIDER_REGISTRY[0]!, // default: docker
       codexAuth = "api-key",

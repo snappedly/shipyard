@@ -291,7 +291,7 @@ const runCommand = Command.make(
 
 const templateOption = Options.text("template").pipe(
   Options.withDescription(
-    "Template to scaffold (e.g. blank, simple-loop, parallel-planner)",
+    "Template to scaffold (e.g. simple-loop, parallel-planner)",
   ),
   Options.optional,
 );
@@ -644,7 +644,7 @@ const initCommand = Command.make(
         const selected = yield* Effect.promise(() =>
           clack.select({
             message: "Select a template:",
-            initialValue: "blank",
+            initialValue: "simple-loop",
             options: templates.map((tmpl) => ({
               value: tmpl.name,
               label: tmpl.name,

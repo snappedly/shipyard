@@ -127,7 +127,7 @@ describe("InitService scaffold", () => {
     expect(env).toBe(envExample);
   });
 
-  it("does not scaffold config.json for blank template", async () => {
+  it("does not scaffold config.json", async () => {
     const dir = await makeDir();
     await runScaffold(dir);
 
@@ -201,50 +201,20 @@ describe("InitService scaffold", () => {
     expect(dockerfile).not.toContain("pnpm");
   });
 
-  it("skeleton prompt contains section headers and hints", async () => {
+  it("default prompt contains the issue scope and completion signal", async () => {
     const dir = await makeDir();
     await runScaffold(dir);
 
     const prompt = await readFile(join(dir, ".shipyard", "prompt.md"), "utf-8");
-    expect(prompt).toContain("# ");
-    expect(prompt).toContain("!`");
+    expect(prompt).toContain("# Assigned issue scope");
     expect(prompt).toContain("<promise>COMPLETE</promise>");
   });
 
-  it("blank template produces skeleton prompt and main.mts", async () => {
-    const dir = await makeDir();
-    await runScaffold(dir, { templateName: "blank" });
-
-    const configDir = join(dir, ".shipyard");
-    const prompt = await readFile(join(configDir, "prompt.md"), "utf-8");
-    expect(prompt).toContain("!`");
-    expect(prompt).toContain("<promise>COMPLETE</promise>");
-
-    const { access } = await import("node:fs/promises");
-    await expect(access(join(configDir, "main.mts"))).resolves.toBeUndefined();
-  });
-
-  it("blank template main.mts imports from @snappedly-tools/shipyard", async () => {
-    const dir = await makeDir();
-    await runScaffold(dir, { templateName: "blank" });
-
-    const mainTs = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
-    expect(mainTs).toContain('"@snappedly-tools/shipyard"');
-  });
-
-  it("blank template main.mts calls run()", async () => {
-    const dir = await makeDir();
-    await runScaffold(dir, { templateName: "blank" });
-
-    const mainTs = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
-    expect(mainTs).toContain("run(");
-  });
-
-  it("blank template produces identical output to default (no template arg)", async () => {
+  it("defaults to simple-loop when no template is specified", async () => {
     const dir1 = await makeDir();
     const dir2 = await makeDir();
     await runScaffold(dir1);
-    await runScaffold(dir2, { templateName: "blank" });
+    await runScaffold(dir2, { templateName: "simple-loop" });
 
     const prompt1 = await readFile(
       join(dir1, ".shipyard", "prompt.md"),
@@ -255,6 +225,15 @@ describe("InitService scaffold", () => {
       "utf-8",
     );
     expect(prompt1).toBe(prompt2);
+  });
+
+  it("does not offer or scaffold the blank template", async () => {
+    expect(listTemplates().map((template) => template.name)).not.toContain(
+      "blank",
+    );
+    await expect(
+      runScaffold(await makeDir(), { templateName: "blank" }),
+    ).rejects.toThrow('Unknown template: "blank"');
   });
 
   // --- main file rewriting ---
@@ -418,7 +397,7 @@ describe("InitService scaffold", () => {
     });
 
     const mainTs = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
-    expect(mainTs).toContain("codex(CODEX_MODELS.routine)");
+    expect(mainTs).toContain("shipyard.codex(shipyard.CODEX_MODELS.routine)");
     expect(mainTs).not.toContain("claudeCode");
   });
 
@@ -455,13 +434,6 @@ describe("InitService scaffold", () => {
     expect(mainTs).toContain("shipyard.CODEX_MODELS.routine");
     expect(mainTs).toContain("shipyard.CODEX_MODELS.strong");
     expect(mainTs).not.toMatch(/gpt-5\.6/);
-  });
-
-  it("blank template retains the low-level issue-list example", async () => {
-    const dir = await makeDir();
-    await runScaffold(dir, { templateName: "blank" });
-    const prompt = await readFile(join(dir, ".shipyard", "prompt.md"), "utf-8");
-    expect(prompt).toContain("gh issue list --state open --label shipyard");
   });
 
   it.each([
@@ -764,23 +736,6 @@ describe("InitService scaffold", () => {
   });
 
   describe("Issue tracker scaffold", () => {
-    // --- blank ---
-
-    it("blank with github-issues produces prompt with gh issue list example", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, {
-        templateName: "blank",
-        issueTracker: getIssueTracker("github-issues"),
-      });
-
-      const prompt = await readFile(
-        join(dir, ".shipyard", "prompt.md"),
-        "utf-8",
-      );
-      expect(prompt).toContain("gh issue list");
-      expect(prompt).not.toContain("{{LIST_TASKS_COMMAND}}");
-    });
-
     it("parallel-planner with github-issues produces implement-prompt with gh issue view", async () => {
       const dir = await makeDir();
       await runScaffold(dir, {
@@ -946,24 +901,10 @@ describe("InitService scaffold", () => {
         join(dir, ".shipyard", "main.ts"),
         "utf-8",
       );
-      expect(mainContent).toContain("codex(CODEX_MODELS.routine)");
+      expect(mainContent).toContain(
+        "shipyard.codex(shipyard.CODEX_MODELS.routine)",
+      );
       expect(mainContent).not.toContain("claudeCode");
-    });
-
-    it("comments in scaffolded main.ts reference main.ts, not main.mts", async () => {
-      const dir = await makeDir();
-      await writeFile(
-        join(dir, "package.json"),
-        JSON.stringify({ name: "test", type: "module" }),
-      );
-      await runScaffold(dir);
-
-      const mainContent = await readFile(
-        join(dir, ".shipyard", "main.ts"),
-        "utf-8",
-      );
-      expect(mainContent).not.toContain("main.mts");
-      expect(mainContent).toContain("main.ts");
     });
 
     it("scaffolds main.mts when package.json is invalid JSON", async () => {
@@ -1013,7 +954,7 @@ describe("InitService scaffold", () => {
         "utf-8",
       );
       expect(mainTs).toContain(
-        'import { run, claudeCode } from "@snappedly-tools/shipyard"',
+        'import * as shipyard from "@snappedly-tools/shipyard"',
       );
       expect(mainTs).toContain(
         'import { docker } from "@snappedly-tools/shipyard/sandboxes/docker"',
