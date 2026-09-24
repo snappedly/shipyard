@@ -658,18 +658,45 @@ const initCommand = Command.make(
         selectedTemplate = selected as string;
       }
 
-      // The GitHub Issues integration has one fixed activation-label contract.
-      // Label creation remains best-effort so init can still scaffold when gh
-      // is unavailable or the current identity cannot manage labels.
+      // These labels are part of the GitHub Issues workflow contract.
       if (selectedIssueTracker.name === "github-issues") {
-        yield* Effect.try({
-          try: () =>
+        const failedLabels: string[] = [];
+        for (const [name, description, color] of [
+          [ACTIVATION_LABEL, `Issues for ${PRODUCT_NAME} to work on`, "F9A825"],
+          ["shipyard:blocked", "Shipyard work needs intervention", "B60205"],
+          ["shipyard:pending", "Shipyard is working on this ticket", "1D76DB"],
+          [
+            "shipyard:complete",
+            "Shipyard work ready for human review",
+            "0E8A16",
+          ],
+          [
+            "shipyard:outstanding-tasks",
+            "Spec has uncompleted tickets",
+            "FBCA04",
+          ],
+        ] as const) {
+          try {
             execSync(
-              `gh label create "${ACTIVATION_LABEL}" --description "Issues for ${PRODUCT_NAME} to work on" --color "F9A825" --force 2>/dev/null`,
+              `gh label create "${name}" --description "${description}" --color "${color}" --force`,
               { cwd, stdio: "ignore" },
-            ),
-          catch: () => undefined,
-        }).pipe(Effect.ignore);
+            );
+          } catch {
+            failedLabels.push(name);
+          }
+        }
+        if (failedLabels.length) {
+          let connected = Boolean(process.env.GH_REPO);
+          try {
+            execSync("git remote get-url origin", { cwd, stdio: "ignore" });
+            connected = true;
+          } catch {
+            // A local repository can be scaffolded before its GitHub remote exists.
+          }
+          const message = `Could not create GitHub labels: ${failedLabels.join(", ")}. Check GitHub access and rerun init.`;
+          if (connected) yield* Effect.fail(new InitError({ message }));
+          console.warn(message);
+        }
       }
 
       const scaffoldResult = yield* d.spinner(

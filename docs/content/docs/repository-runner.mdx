@@ -15,8 +15,9 @@ You need Apple Silicon macOS, Docker Desktop, an initialized Shipyard
 repository, `gh` authenticated with repository-administration access, and agent
 credentials in `.shipyard/.env`.
 
-The `GH_TOKEN` in `.shipyard/.env` is the issue-agent credential and may be
-limited to Issues and Metadata. Runner startup uses the host `gh` login for
+The `GH_TOKEN` in `.shipyard/.env` is the issue-agent credential. Bundled issue
+workflows need Contents, Issues, and Pull requests read/write permission plus
+Metadata read permission to push a branch and publish a PR. Runner startup uses the host `gh` login for
 administrative checks, including reading the published wake workflow. When
 Shipyard runs in Docker, the runtime token is passed into that sandbox for
 its GitHub issue operations; it is not the runner's administrative login.
@@ -27,7 +28,7 @@ and defaults to Yes. Non-interactive init skips it unless you pass
 
 ```sh
 npx shipyard runner install
-git add .github/workflows/shipyard-wake.yml .shipyard/.gitignore
+git add .shipyard .github/workflows/shipyard-wake.yml
 git commit -m "Add Shipyard wake workflow"
 git push
 npx shipyard runner start
@@ -51,6 +52,42 @@ credentials, and published workflow.
 Only the exact lowercase GitHub issue label `shipyard` is eligible. Adding it
 or manually dispatching **Shipyard wake-up** signals the controller. A
 differently cased label, issue edit, or comment does not wake it.
+
+The bundled issue templates install Snappedly skills and repository
+dependencies inside their Docker sandbox. Standalone issues use `/implement`.
+An activated planning spec or linked executable child becomes one
+`/implement-spec` scope containing the parent, linked children labelled
+`shipyard`, and their dependencies. Unlabelled children remain outside the work
+scope. The selected template keeps its sequential or parallel planning,
+implementation, and review stages. Parallel templates run ready child tickets
+through scoped `/implement` workers, resolve cherry-pick conflicts during
+integration, and merge each dependency wave into one spec branch. The complete
+scope gets one open, non-draft PR per spec. Later selected tickets update the
+same PR. The workflow never merges into the target branch or closes issues.
+An open verified spec PR's `Source issues:` line can also link a newly labelled
+ticket to that spec when no other parent link exists. Conflicting links block
+the selected ticket for correction.
+Selected tickets get `shipyard:pending` while Shipyard works. Successful handoff
+replaces it with `shipyard:complete` and removes `shipyard` from activated issues
+so later wake-ups do not repeat work. The parent spec and existing PR show
+`shipyard:blocked` if an unfinished child is blocked, `shipyard:outstanding-tasks`
+if other children remain, or `shipyard:complete` when all linked tickets are
+complete. Spec labels only report child state; they do not gate ticket selection.
+The non-draft PR is ready for human review;
+the issues remain open until the target repository's closure policy closes them. A
+failed attempted scope gets an issue comment describing the failure. Its selected
+tickets become `shipyard:blocked` and lose `shipyard:pending` and `shipyard`, so
+they do not retry automatically. The parent spec and existing PR reflect the block; failed
+work does not create a new PR. Resolve the problem, remove `shipyard:blocked`
+from the ticket, and add `shipyard` to retry; the spec label is recalculated.
+Missing or conflicting relationships and invalid selected children receive
+`shipyard:blocked` with an issue comment explaining the failure. If GitHub cannot confirm PR
+readiness, Shipyard leaves activation in place so the next invocation can
+reconcile the PR.
+If a failure comment cannot be written, Shipyard retains a local pending report
+under Git metadata. A fresh `shipyard` activation on an unblocked ticket
+supersedes that report. Spec and PR status label errors are logged without
+stopping ticket work; a later activation recalculates their labels.
 
 Start always preflights the current backlog, recovering labels added while the
 Mac was off. If work exists, it invokes exactly `npx shipyard run`. After a

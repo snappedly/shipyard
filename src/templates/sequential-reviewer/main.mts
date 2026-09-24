@@ -1,120 +1,192 @@
-// Sequential Reviewer — implement-then-review loop
-//
-// This template drives a two-phase workflow per issue:
-//   Phase 1 (Implement): A Codex agent picks an open issue, works on it
-//                        on a dedicated branch, commits the changes, and signals
-//                        completion.
-//   Phase 2 (Review):    A second Codex agent reviews the branch diff and either
-//                        approves it or makes corrections directly on the branch.
-//
-// Both phases share a single sandbox created via createSandbox(), so the
-// implementer and reviewer work on the same explicit branch.
-//
-// The outer loop repeats up to MAX_ITERATIONS times, processing one issue per
-// iteration and stopping early once the backlog is exhausted (an implement
-// phase that produces no commits). This is a middle-complexity option between
-// the simple-loop (no review gate) and the parallel-planner (concurrent
-// execution with a planning phase).
-// Generated entrypoint: .shipyard/main.mts
-//
-// Usage:
-//   npx shipyard run
-// Or add to package.json:
-//   "scripts": { "shipyard": "shipyard run" }
-
+// Sequential Reviewer: one implementation and one independent review per
+// activated issue scope. Publication follows successful review.
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import * as shipyard from "@snappedly-tools/shipyard";
 import { docker } from "@snappedly-tools/shipyard/sandboxes/docker";
 
-// ---------------------------------------------------------------------------
-// Configuration
-// ---------------------------------------------------------------------------
-
-// Maximum number of implement→review cycles to run before stopping.
-// Each cycle works on one issue. Raise this to process more issues per run.
+if (process.loadEnvFile && existsSync(".shipyard/.env"))
+  process.loadEnvFile(".shipyard/.env");
+const targetBranch = execFileSync("git", ["branch", "--show-current"], {
+  encoding: "utf8",
+}).trim();
+const repository = execFileSync(
+  "gh",
+  ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
+  { encoding: "utf8" },
+).trim();
+if (
+  !/^[A-Za-z0-9._/-]+$/.test(targetBranch) ||
+  !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)
+) {
+  throw new Error("Invalid target branch or GitHub repository");
+}
+process.env.GH_REPO = repository;
 const MAX_ITERATIONS = 10;
-
-// Hooks run inside the sandbox before the agent starts each iteration.
-// npm install ensures the sandbox always has fresh dependencies.
 const hooks = {
-  sandbox: { onSandboxReady: [{ command: "npm install" }] },
+  sandbox: {
+    onSandboxReady: [
+      { command: "timeout 300 bash .shipyard/setup.sh", timeoutMs: 300_000 },
+    ],
+  },
+};
+const closeClean = async (sandbox: {
+  close: () => Promise<{ preservedWorktreePath?: string }>;
+}) => {
+  const { preservedWorktreePath } = await sandbox.close();
+  if (preservedWorktreePath)
+    throw new Error(`Sandbox has uncommitted work at ${preservedWorktreePath}`);
 };
 
-// Copy node_modules from the host into the worktree before each sandbox
-// starts. Avoids a full npm install from scratch; the hook above handles
-// platform-specific binaries and any packages added since the last copy.
-const copyToWorktree = ["node_modules"];
+const handoffEvidence = (stdout: string): string | undefined =>
+  [...stdout.matchAll(/<handoff>([\s\S]*?)<\/handoff>/g)].at(-1)?.[1]?.trim();
+const blockScope = (
+  scope: { id: string; branch: string; tickets?: Array<{ id: string }> },
+  error: unknown,
+) => {
+  const reason = (error instanceof Error ? error.message : String(error)).slice(
+    0,
+    3000,
+  );
+  execFileSync(
+    "bash",
+    [
+      ".shipyard/block-scope.sh",
+      scope.id,
+      scope.id,
+      repository,
+      [scope.id, ...(scope.tickets ?? []).map((ticket) => ticket.id)].join(","),
+      scope.branch,
+    ],
+    { input: reason, encoding: "utf8" },
+  );
+  console.error(`Shipyard blocked issue #${scope.id}: ${reason}`);
+};
 
-// ---------------------------------------------------------------------------
-// Main loop
-// ---------------------------------------------------------------------------
+for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
+  const issues = JSON.parse(
+    execFileSync("node", [".shipyard/select-issues.mjs"], { encoding: "utf8" }),
+  ) as Array<{
+    id: string;
+    title: string;
+    branch: string;
+    kind: "standalone" | "spec";
+    body?: string;
+    tickets?: Array<{
+      id: string;
+      title: string;
+      body: string;
+      state: string;
+      blockedBy: Array<{ id: string; title: string; state: string }>;
+    }>;
+    completedTicketIds?: string[];
+    outstandingTicketIds?: string[];
+  }>;
+  const issue = issues[0];
+  if (!issue) break;
 
-for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
-  console.log(`\n=== Iteration ${iteration}/${MAX_ITERATIONS} ===\n`);
-
-  // Generate a unique branch name for this iteration.
-  const branch = `shipyard/sequential-reviewer/${Date.now()}`;
-
-  // Create a single sandbox that both the implementer and reviewer share.
-  // This gives both agents a real, named branch that persists across phases.
-  const sandbox = await shipyard.createSandbox({
-    branch,
-    sandbox: docker(),
-    hooks,
-    copyToWorktree,
-  });
-
+  let handedOff = false;
+  let publicationUncertain = false;
   try {
-    // -----------------------------------------------------------------------
-    // Phase 1: Implement
-    //
-    // A Codex agent picks the next open issue, writes the
-    // implementation (using RGR: Red → Green → Repeat → Refactor), and
-    // commits the result.
-    //
-    // The agent signals completion via <promise>COMPLETE</promise> when done.
-    // -----------------------------------------------------------------------
-    // One iteration so each outer pass implements a single issue on its own
-    // branch, then hands it to the reviewer. A higher value lets the agent
-    // drain the whole backlog onto this one branch in a single pass, which
-    // defeats the per-issue review.
-    const implement = await sandbox.run({
-      name: "implementer",
-      maxIterations: 1,
-      agent: shipyard.codex(shipyard.CODEX_MODELS.routine),
-      promptFile: "./.shipyard/implement-prompt.md",
+    execFileSync("gh", [
+      "label",
+      "create",
+      "shipyard:pending",
+      "--repo",
+      repository,
+      "--color",
+      "1D76DB",
+      "--description",
+      "Shipyard is working on this ticket",
+      "--force",
+    ]);
+    for (const ticketId of issue.kind === "spec"
+      ? (issue.tickets ?? []).map((ticket) => ticket.id)
+      : [issue.id])
+      execFileSync("gh", [
+        "issue",
+        "edit",
+        ticketId,
+        "--repo",
+        repository,
+        "--add-label",
+        "shipyard:pending",
+      ]);
+    const sandbox = await shipyard.createSandbox({
+      branch: issue.branch,
+      sandbox: docker(),
+      hooks,
     });
+    let evidence: string;
+    try {
+      const implement = await sandbox.run({
+        name: "implementer",
+        maxIterations: 1,
+        agent: shipyard.codex(shipyard.CODEX_MODELS.routine),
+        promptFile: "./.shipyard/implement-prompt.md",
+        promptArgs: {
+          TASK_ID: issue.id,
+          ISSUE_TITLE: issue.title,
+          BRANCH: issue.branch,
+          SCOPE: JSON.stringify(issue),
+          SKILL: issue.kind === "spec" ? "/implement-spec" : "/implement",
+        },
+      });
+      const implementationEvidence = handoffEvidence(implement.stdout);
+      if (!implement.completionSignal || !implementationEvidence)
+        throw new Error(
+          `Issue #${issue.id} has no verified implementation evidence: ${implement.stdout.trim().slice(-1200)}`,
+        );
 
-    if (!implement.commits.length) {
-      // No commits means the backlog is empty or every remaining issue is
-      // blocked — there is nothing left to implement or review, so stop.
-      console.log("Implementation agent made no commits. Stopping.");
-      break;
+      const review = await sandbox.run({
+        name: "reviewer",
+        maxIterations: 1,
+        agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
+        promptFile: "./.shipyard/review-prompt.md",
+        promptArgs: {
+          BRANCH: issue.branch,
+          SCOPE: JSON.stringify(issue),
+          SKILL: issue.kind === "spec" ? "/implement-spec" : "/implement",
+          TASK_ID: issue.id,
+        },
+      });
+      const reviewEvidence = handoffEvidence(review.stdout);
+      if (
+        !review.completionSignal ||
+        !review.stdout.includes("<review>APPROVED</review>") ||
+        !reviewEvidence
+      ) {
+        throw new Error(
+          `Issue #${issue.id} has unresolved review findings: ${review.stdout.trim().slice(-1200)}`,
+        );
+      }
+      evidence = `${implementationEvidence}\n\n${reviewEvidence}`;
+    } finally {
+      await closeClean(sandbox);
     }
 
-    console.log(`\nImplementation complete on branch: ${branch}`);
-    console.log(`Commits: ${implement.commits.length}`);
-
-    // -----------------------------------------------------------------------
-    // Phase 2: Review
-    //
-    // A second Codex agent reviews the diff of the branch produced by
-    // Phase 1. It uses the {{BRANCH}} prompt argument to inspect the right
-    // branch, and either approves or makes corrections directly on the branch.
-    // -----------------------------------------------------------------------
-    await sandbox.run({
-      name: "reviewer",
-      maxIterations: 1,
-      agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
-      promptFile: "./.shipyard/review-prompt.md",
-      promptArgs: {
-        BRANCH: branch,
-      },
+    const publication = await shipyard.createSandbox({
+      branch: issue.branch,
+      sandbox: docker(),
     });
-
-    console.log("\nReview complete.");
-  } finally {
-    await sandbox.close();
+    try {
+      publicationUncertain = true;
+      const handoff = await publication.exec(
+        `bash .shipyard/handoff.sh ${issue.id} ${issue.branch} ${targetBranch} ${repository} ${[issue.id, ...(issue.tickets ?? []).map((ticket) => ticket.id)].join(",")} ${issue.outstandingTicketIds?.join(",") || "-"} ${issue.completedTicketIds?.join(",") || "-"}`,
+        { stdin: evidence },
+      );
+      publicationUncertain = handoff.exitCode === 75;
+      if (handoff.exitCode !== 0)
+        throw new Error(
+          `PR handoff for #${issue.id} failed: ${handoff.stderr || handoff.stdout}`,
+        );
+      console.log(handoff.stdout.trim());
+      handedOff = true;
+    } finally {
+      await publication.close();
+    }
+  } catch (error) {
+    if (handedOff || publicationUncertain) throw error;
+    blockScope(issue, error);
   }
 }
-
-console.log("\nAll done.");

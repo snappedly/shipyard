@@ -1,37 +1,11 @@
-# ISSUES
-
-Here are the open issues in the repo:
+# Activated issue scopes
 
 <issues-json>
-
-!`{{LIST_TASKS_COMMAND}}`
-
+!`node .shipyard/select-issues.mjs`
 </issues-json>
 
-The list above has already been filtered to issues ready for work.
+Use exactly these resolved scopes as the ready frontier. `scope.tickets` contains only selected tickets with the `shipyard` label; other linked tickets are context and must not be implemented. For planning specs, follow `/implement-spec` when planning the selected scope, honoring child dependencies and overlapping files. The surrounding template will run ready tickets in parallel with scoped `/implement` workers, integrate each dependency wave into one spec branch, then perform integrated cleanup, review, and one PR handoff. Do not omit selected tickets, invent scope IDs, create PRs, merge to target, or close issues.
 
-# TASK
+Emit each selected scope once, by its parent or standalone ID. If no scope is ready, emit an empty array:
 
-Analyze the open issues and build a dependency graph. For each issue, determine whether it **blocks** or **is blocked by** any other open issue.
-
-An issue B is **blocked by** issue A if:
-
-- B requires code or infrastructure that A introduces
-- B and A modify overlapping files or modules, making concurrent work likely to produce merge conflicts
-- B's requirements depend on a decision or API shape that A will establish
-
-An issue is **unblocked** if it has zero blocking dependencies on other open issues.
-
-For each unblocked issue, assign a branch name using the exact format `shipyard/issue-{id}` (no slug or other suffix). This must be deterministic so that re-planning the same issue always produces the same branch name and accumulated progress is preserved.
-
-# OUTPUT
-
-Output your plan as a JSON object wrapped in `<plan>` tags:
-
-<plan>
-{"issues": [{"id": "42", "title": "Fix auth bug", "branch": "shipyard/issue-42"}]}
-</plan>
-
-Include only unblocked issues. If every issue is blocked, include the single highest-priority candidate (the one with the fewest or weakest dependencies).
-
-Always emit the `<plan>` tags, even when there is nothing to do. If there are no issues to work on at all, output `<plan>{"issues": []}</plan>` so the run can exit cleanly.
+<plan>{"issues":[{"id":"42"}]}</plan>

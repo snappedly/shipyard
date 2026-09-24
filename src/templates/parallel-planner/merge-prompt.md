@@ -1,26 +1,14 @@
-# TASK
+# Final integration for scope #{{TASK_ID}}: {{ISSUE_TITLE}}
 
-Merge the following branches into the current branch:
+On branch `{{BRANCH}}`, inspect its complete diff from `{{BASE_BRANCH}}` and the source issue. This is the planner's final integration stage and ends in one PR for this scope. Follow `/code-cleanup` and local `/code-review` appropriate to the issue, using the worker's existing valid check evidence. Run required integrated checks and reinstall candidate dependencies with `bash .shipyard/setup.sh` after manifest changes. Resolve findings, commit corrections and inspect the final branch.
 
-{{BRANCHES}}
+Do not close the issue, merge into the target, or publish the PR. If checks or review remain unresolved, explain why without completion. After a verified final commit, report `Checks: <commands and results>`, `Review: APPROVED`, and limitations:
 
-For each branch:
+<handoff>...</handoff>
+<promise>COMPLETE</promise>
 
-1. Run `git merge <branch> --no-edit`
-2. If there are merge conflicts, resolve them intelligently by reading both sides and choosing the correct resolution
-3. After resolving conflicts, read the repository's configured feedback-loop contract and run every applicable check for the merged change
-4. If a check fails, fix the issue before proceeding to the next branch
+For a planning spec, follow `/implement-spec` for whole-spec integration, cleanup, and final checks on the one spec branch. Read parent and all scoped child bodies and comments, inspect dependency order and merged commits, and resolve gaps before completion. Run `/code-review` here when this template has no separate reviewer stage. Never merge the target branch or close issues.
 
-After all branches are merged, make a single commit summarizing the merge.
-
-# CLOSE ISSUES
-
-For each branch that was merged, close its issue using the following command:
-
-`{{CLOSE_TASK_COMMAND}}`
-
-Here are all the issues:
-
-{{ISSUES}}
-
-Once you've merged everything you can, output <promise>COMPLETE</promise>.
+```json
+{{SCOPE}}
+```
