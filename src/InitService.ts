@@ -499,8 +499,7 @@ const rewriteMainTs = (
       .readFileString(mainTsPath)
       .pipe(Effect.mapError((e) => new Error(e.message)));
 
-    // Replace the default factory function name in imports.
-    // and all factory calls with the correct model.
+    // Replace the default factory function name in calls.
     // Templates always use Codex as the placeholder factory.
     content = content.replace(
       new RegExp(`\\b${TEMPLATE_AGENT_FACTORY}\\b`, "g"),
@@ -527,13 +526,6 @@ const rewriteMainTs = (
           : `${agent.factoryImport}("${model}")`;
       },
     );
-
-    // CODEX_MODELS is only needed when the generated file continues using
-    // the central Codex configuration. Remove it from named imports when a
-    // custom model or another provider has replaced every reference.
-    if (agent.name !== "codex" || model !== CODEX_MODELS.routine.model) {
-      content = content.replace(/\bCODEX_MODELS,\s*/g, "");
-    }
 
     // ChatGPT subscription auth is stored by the host Codex CLI. Mount the
     // file into the sandbox read-only so Codex can use it without exposing an
