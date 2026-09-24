@@ -6,6 +6,8 @@ export type WorkItemKind = "planning-spec" | "executable-issue" | "pr-repair";
 
 export type RiskLevel = "low" | "medium" | "high" | "critical";
 
+export type WorkRisk = RiskLevel | "unknown";
+
 export type WorkflowPhase =
   | "triage"
   | "implementation"
@@ -101,7 +103,7 @@ export interface WorkBrief {
   readonly evidence: readonly string[];
   readonly acceptanceCriteria: readonly string[];
   readonly exclusions: readonly string[];
-  readonly risk: RiskLevel;
+  readonly risk: WorkRisk;
   readonly verification: VerificationPlan;
   readonly unresolvedQuestions: readonly string[];
   readonly authorization: Authorization;
@@ -485,7 +487,11 @@ export const createWorkBrief = (input: CreateWorkBriefInput): WorkBrief => {
       "acceptanceCriteria",
     ),
     exclusions: stringArray(input.exclusions, "exclusions"),
-    risk: enumValue(input.risk, ["low", "medium", "high", "critical"], "risk"),
+    risk: enumValue(
+      input.risk,
+      ["low", "medium", "high", "critical", "unknown"],
+      "risk",
+    ),
     verification: parseVerification(input.verification),
     unresolvedQuestions: stringArray(
       input.unresolvedQuestions,
@@ -529,7 +535,11 @@ export const parseWorkBrief = (value: unknown): WorkBrief => {
       "acceptanceCriteria",
     ),
     exclusions: stringArray(value.exclusions, "exclusions"),
-    risk: enumValue(value.risk, ["low", "medium", "high", "critical"], "risk"),
+    risk: enumValue(
+      value.risk,
+      ["low", "medium", "high", "critical", "unknown"],
+      "risk",
+    ),
     verification: parseVerification(value.verification),
     unresolvedQuestions: stringArray(
       value.unresolvedQuestions,

@@ -221,6 +221,29 @@ describe("workflow contracts", () => {
     });
   });
 
+  it("accepts unknown risk and uses the strong model for review", () => {
+    const brief = createWorkBrief({
+      ...createBrief(),
+      risk: "unknown",
+      hash: undefined,
+    });
+    const assignment = createAssignment({
+      id: "unknown-risk-review",
+      phase: "review",
+      brief,
+      policy,
+      attempt: 1,
+      head: { branch: "shipyard/issue-42", sha: "c".repeat(40) },
+      createdAt: "2026-09-17T12:00:00.000Z",
+    });
+
+    expect(assignment.agentSelection).toEqual({
+      provider: "test",
+      model: "fixture",
+      role: "strong",
+    });
+  });
+
   it("rejects unknown versions and completed results without evidence", () => {
     expect(() =>
       parseWorkBrief({ ...createBrief(), contractVersion: 999 }),
