@@ -137,17 +137,48 @@ supply sandbox variables. Keep `.shipyard/.env` untracked.
 
 ## Codex model roles
 
-Generated scripts use `codex(CODEX_MODELS.routine)`. Use
-`codex(CODEX_MODELS.strong)` for heavier planning or review, or pass your chosen
-model directly: `codex("your-model", { effort: "high" })`.
+Custom workflows can use `codex(CODEX_MODELS.routine)` and
+`codex(CODEX_MODELS.strong)`, or pass a model directly:
+`codex("your-model", { effort: "high" })`.
 
-The role defaults live in `src/modelConfig.ts`. Override them in the **host
-process environment before starting your script**:
+The library reads these existing Codex role overrides from the host process
+environment when the module loads:
 
 - `SHIPYARD_CODEX_ROUTINE_MODEL`
 - `SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT`
 - `SHIPYARD_CODEX_STRONG_MODEL`
 - `SHIPYARD_CODEX_STRONG_REASONING_EFFORT`
 
-These configure the host-side library at import time; putting them only in
-`.shipyard/.env` does not change the model roles.
+All generated workflows support the provider-independent
+`SHIPYARD_ROUTINE_MODEL` and `SHIPYARD_STRONG_MODEL` variables in
+`.shipyard/.env`. The generated workflow loads that file before it resolves
+model roles. A host value overrides the same file entry. The repository-root
+`.env` is not loaded. See [agent setup](agents.mdx) for provider examples, model
+catalogs, and precedence.
+
+## Workflow repository policy models
+
+A repository policy's `worker` entry can select two models for one provider:
+
+```json
+{
+  "provider": "codex",
+  "models": {
+    "routine": "provider-supported-routine-id",
+    "strong": "provider-supported-strong-id"
+  },
+  "sandbox": "docker",
+  "skillRevision": "skills/main"
+}
+```
+
+The provider stays the same for both models. Shipyard accepts any nonempty model
+identifier or provider-supported alias. It passes the value to the selected
+provider without checking a Shipyard model list. If the provider rejects a
+model, Shipyard records that phase failure and does not choose another model.
+
+Triage, implementation, focused checks, and repair use the routine model.
+Review uses routine only when the brief has `risk: "low"` and `scope: "small"`.
+All other reviews use strong, including reviews with missing or unknown scope
+or medium-or-higher or unknown risk. Older policies with `worker.model` use
+that model for both roles.

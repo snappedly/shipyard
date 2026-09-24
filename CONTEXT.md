@@ -212,8 +212,11 @@ A coordinator-owned source item, such as a GitHub issue or a PR repair, tracked 
 _Avoid_: "task" when referring to coordinator state, "job" (too narrow for waiting and review)
 
 **Executable brief**:
-A versioned, hash-identified description of an authorized **workflow item**. It carries the observed problem, evidence, acceptance criteria, exclusions, verification expectations, risk, source provenance, and unresolved questions.
+A versioned, hash-identified description of an authorized **workflow item**. It carries the observed problem, evidence, acceptance criteria, exclusions, verification expectations, risk, scope classification, source provenance, and unresolved questions.
 _Avoid_: "prompt" (the brief is the contract from which a prompt may be made)
+
+**Scope classification**:
+A description of how broadly work extends. **Small** work is narrowly bounded to one behavior or component with limited integration. **Substantial** work spans interacting components, changes architecture or policy, or requires whole-spec integration or acceptance. **Unknown** means the brief lacks enough evidence to classify the work. Scope is distinct from **risk**: a small change can still carry high risk.
 
 **Phase attempt**:
 One bounded attempt to advance a **workflow item** through a named lifecycle phase. It has an immutable assignment, a phase result, and retained evidence. It is distinct from an engine **Iteration**, which invokes an **agent**.

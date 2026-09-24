@@ -516,7 +516,8 @@ const parseCodexStreamLine = (line: string): ParsedStreamEvent[] => {
 
 /** Options for the codex agent provider. */
 export interface CodexOptions {
-  readonly effort?: CodexReasoningEffort;
+  /** Set to `null` to use the provider default instead of a configured role effort. */
+  readonly effort?: CodexReasoningEffort | null;
   /** Environment variables injected by this agent provider. */
   readonly env?: Record<string, string>;
   /** When false, session capture is disabled. Default: true. */
@@ -544,10 +545,12 @@ export const codex = (
 ): AgentProvider & { readonly sessionStorage: AgentSessionStorage } => {
   const modelId = typeof model === "string" ? model : model.model;
   const effort =
-    options?.effort ??
-    (typeof model === "string"
-      ? CONFIGURED_CODEX_MODEL_EFFORTS.get(modelId)
-      : model.effort);
+    options?.effort === null
+      ? undefined
+      : (options?.effort ??
+        (typeof model === "string"
+          ? CONFIGURED_CODEX_MODEL_EFFORTS.get(modelId)
+          : model.effort));
 
   // Configured Shipyard Codex model roles carry their own reasoning setting;
   // callers can still override it through CodexOptions.
@@ -611,7 +614,8 @@ export const codex = (
 // ---------------------------------------------------------------------------
 
 export interface ClaudeCodeOptions {
-  readonly effort?: "low" | "medium" | "high" | "xhigh" | "max";
+  /** Set to `null` to leave effort selection to the provider. */
+  readonly effort?: "low" | "medium" | "high" | "xhigh" | "max" | null;
   /** Environment variables injected by this agent provider. */
   readonly env?: Record<string, string>;
   /** When false, session capture is disabled. Default: true. */

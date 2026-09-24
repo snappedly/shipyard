@@ -38,6 +38,19 @@ const CODEX_CHATGPT_AUTH_OPTIONS = `{
   ],
 }`;
 
+const roleModelEnvExample = (agentName: string): string =>
+  agentName === "codex"
+    ? `# Optional model choices for Shipyard workflows.
+# Choose models available to your Codex CLI account: https://learn.chatgpt.com/docs/models
+# The provider must support each value. Aliases can change their target over time.
+# SHIPYARD_ROUTINE_MODEL=gpt-6-luna
+# SHIPYARD_STRONG_MODEL=gpt-6-sol`
+    : `# Optional model choices for Shipyard workflows.
+# Choose aliases or model IDs available to your Claude Code provider: https://code.claude.com/docs/en/model-config
+# The provider must support each value. Aliases can change their target over time.
+# SHIPYARD_ROUTINE_MODEL=sonnet
+# SHIPYARD_STRONG_MODEL=opus`;
+
 export interface TemplateMetadata {
   name: string;
   description: string;
@@ -482,6 +495,7 @@ const rewriteMainTs = (
   configDir: string,
   agent: AgentEntry,
   model: string,
+  modelExplicit: boolean,
   sandboxProvider: SandboxProviderEntry,
   mainFilename: string,
   codexAuth: CodexAuthMode,
@@ -505,28 +519,17 @@ const rewriteMainTs = (
       new RegExp(`\\b${TEMPLATE_AGENT_FACTORY}\\b`, "g"),
       agent.factoryImport,
     );
-    // Replace model arguments in factory calls. The built-in Codex templates
-    // use CODEX_MODELS references so the central model configuration remains
-    // live in a default Codex scaffold.
-    const factoryCallRe = new RegExp(
-      `${agent.factoryImport}\\(([^)\\n]*)\\)`,
-      "g",
-    );
     content = content.replace(
-      factoryCallRe,
-      (match, modelExpression: string) => {
-        const keepsConfiguredModel =
-          agent.name === "codex" &&
-          model === CODEX_MODELS.routine.model &&
-          /^(?:[A-Za-z_$][\w$]*\.)*CODEX_MODELS\.[A-Za-z_$][\w$]*$/.test(
-            modelExpression.trim(),
-          );
-        return keepsConfiguredModel
-          ? match
-          : `${agent.factoryImport}("${model}")`;
-      },
+      "const CODEX_PROVIDER = true;",
+      `const CODEX_PROVIDER = ${agent.name === "codex"};`,
     );
-
+    if (agent.name !== "codex" || modelExplicit) {
+      const modelLiteral = JSON.stringify(model);
+      content = content.replace(
+        /shipyard\.CODEX_MODELS\.(?:routine|strong)/g,
+        modelLiteral,
+      );
+    }
     // ChatGPT subscription auth is stored by the host Codex CLI. Mount the
     // file into the sandbox read-only so Codex can use it without exposing an
     // API key through the generated .env file.
@@ -619,6 +622,8 @@ const substituteTemplateArgs = (
 export interface ScaffoldOptions {
   agent: AgentEntry;
   model: string;
+  /** Whether `model` came from an explicit `init --model` option. */
+  modelExplicit?: boolean;
   templateName?: string;
   issueTracker?: IssueTrackerEntry;
   sandboxProvider?: SandboxProviderEntry;
@@ -669,6 +674,7 @@ export const scaffold = (
     const {
       agent,
       model,
+      modelExplicit = false,
       templateName = "simple-loop",
       issueTracker = ISSUE_TRACKER_REGISTRY[0]!, // default: github-issues
       sandboxProvider = SANDBOX_PROVIDER_REGISTRY[0]!, // default: docker
@@ -708,6 +714,7 @@ export const scaffold = (
         ? CODEX_CHATGPT_ENV_EXAMPLE
         : agent.envExample,
     ];
+    envExampleParts.push(roleModelEnvExample(agent.name));
     if (issueTracker.envExample) {
       envExampleParts.push(issueTracker.envExample);
     }
@@ -742,6 +749,7 @@ export const scaffold = (
       configDir,
       agent,
       model,
+      modelExplicit,
       sandboxProvider,
       mainFilename,
       codexAuth,

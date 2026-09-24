@@ -7,6 +7,55 @@ import { docker } from "@snappedly-tools/shipyard/sandboxes/docker";
 
 if (process.loadEnvFile && existsSync(".shipyard/.env"))
   process.loadEnvFile(".shipyard/.env");
+type ModelRole = "routine" | "strong";
+const CODEX_PROVIDER = true;
+const agentFactory = shipyard.codex;
+type AgentModel = Parameters<typeof agentFactory>[0];
+const readRoleModel = (role: ModelRole): string | undefined => {
+  const envName = `SHIPYARD_${role.toUpperCase()}_MODEL`;
+  const model = process.env[envName];
+  if (model !== undefined && model.trim().length === 0)
+    throw new Error(`${envName} must not be empty`);
+  return model;
+};
+const roleModels = {
+  routine: readRoleModel("routine"),
+  strong: readRoleModel("strong"),
+};
+const CODEX_REASONING_EFFORTS = shipyard.CODEX_REASONING_EFFORTS;
+type CodexReasoningEffort = shipyard.CodexReasoningEffort;
+const readCodexReasoningEffort = (
+  role: ModelRole,
+): CodexReasoningEffort | undefined => {
+  if (!CODEX_PROVIDER) return undefined;
+  const envName = `SHIPYARD_CODEX_${role.toUpperCase()}_REASONING_EFFORT`;
+  const effort = process.env[envName]?.trim();
+  if (!effort) return undefined;
+  if (!(CODEX_REASONING_EFFORTS as readonly string[]).includes(effort))
+    throw new Error(
+      `${envName} must be one of ${CODEX_REASONING_EFFORTS.join(", ")}; received "${effort}"`,
+    );
+  return effort as CodexReasoningEffort;
+};
+const roleEfforts = {
+  routine: readCodexReasoningEffort("routine"),
+  strong: readCodexReasoningEffort("strong"),
+};
+const readCodexRoleModel = (role: ModelRole, defaultModel: AgentModel) => {
+  if (!CODEX_PROVIDER || typeof defaultModel === "string") return defaultModel;
+  const envName = `SHIPYARD_CODEX_${role.toUpperCase()}_MODEL`;
+  const model = process.env[envName]?.trim();
+  return model ? { ...defaultModel, model } : defaultModel;
+};
+const roleAgent = (role: ModelRole, defaultModel: AgentModel) => {
+  const model = roleModels[role] ?? readCodexRoleModel(role, defaultModel);
+  const effort = roleEfforts[role];
+  if (typeof model !== "string")
+    return effort === undefined
+      ? agentFactory(model)
+      : agentFactory(model, { effort });
+  return agentFactory(model, { effort: effort ?? null });
+};
 const targetBranch = execFileSync("git", ["branch", "--show-current"], {
   encoding: "utf8",
 }).trim();
@@ -136,7 +185,7 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
         : [issue.id]) {
         await sandbox.run({
           name: `triage #${ticketId}`,
-          agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
+          agent: roleAgent("routine", shipyard.CODEX_MODELS.routine),
           maxIterations: 1,
           promptFile: "./.shipyard/triage-prompt.md",
           promptArgs: { TASK_ID: ticketId },
@@ -146,7 +195,7 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
       const implement = await sandbox.run({
         name: "implementer",
         maxIterations: 1,
-        agent: shipyard.codex(shipyard.CODEX_MODELS.routine),
+        agent: roleAgent("routine", shipyard.CODEX_MODELS.routine),
         promptFile: "./.shipyard/implement-prompt.md",
         promptArgs: {
           TASK_ID: issue.id,
@@ -165,7 +214,7 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
       const review = await sandbox.run({
         name: "reviewer",
         maxIterations: 1,
-        agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
+        agent: roleAgent("strong", shipyard.CODEX_MODELS.strong),
         promptFile: "./.shipyard/review-prompt.md",
         promptArgs: {
           BRANCH: issue.branch,
