@@ -59,13 +59,19 @@ Commit the setup and prompt so the sandbox can read them. Make sure the Git igno
 npx shipyard run
 ```
 
+Or for the automated runner:
+
+```sh
+npx shipyard runner start
+```
+
 ## Turn GitHub issues into pull requests
 
 Then:
 
 1. Write an issue with a clear goal and add the `shipyard` and
    `ready-for-agent` labels.
-2. Run `npx shipyard run`. Shipyard checks the issue, implements it in Docker,
+2. Make sure the runner is running, or start `npx shipyard run`. Shipyard checks the issue, implements it in Docker,
    reviews the work, and opens a pull request.
 3. Inspect the pull request and merge it when you are happy with the result.
 
