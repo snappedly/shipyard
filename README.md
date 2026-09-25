@@ -41,7 +41,11 @@ npx shipyard init
 
 During `shipyard init`, choose your agent, **Docker**, the template you want, and install the optional
 [repository runner](docs/content/docs/repository-runner.mdx). Follow
-the authentication prompts.
+the authentication prompts. Init offers to commit and push the generated
+Shipyard setup to the current branch. The offer stages `.shipyard/` and, when
+installed, `.github/workflows/shipyard-wake.yml`. It leaves `.shipyard/.env`
+untracked. Non-interactive init skips the offer; pass `--commit-setup true` to
+commit and push the generated files.
 
 On a local Mac, the repository runner automatically wakes Shipyard when you label an issue.
 It runs as long as its terminal stays open.
@@ -60,8 +64,8 @@ conflict resolution, and integration. The review-enabled planner also uses
 strong for ticket and final specification reviews. See
 [agent setup](docs/content/docs/agents.mdx).
 
-Commit the setup and prompt so the sandbox can read them. Make sure the Git ignore file keeps
-`.shipyard/.env` out of the commit.
+If you decline the commit, commit `.shipyard/` before running Shipyard. Docker
+sandboxes read setup files from Git history. Keep `.shipyard/.env` untracked.
 
 ```sh
 npx shipyard run

@@ -44,7 +44,7 @@ export const initializeRepositoryRunner = async (
 };
 
 export const repositoryRunnerNextSteps = (): readonly string[] => [
-  `First, commit and push ${REPOSITORY_RUNNER_WORKFLOW_PATH} to the repository's default branch`,
+  `Ensure ${REPOSITORY_RUNNER_WORKFLOW_PATH} is committed and pushed to the repository's default branch`,
   `Keep the foreground controller open with \`npx ${CLI_NAME} runner start\``,
   `Inspect it from another terminal with \`npx ${CLI_NAME} runner status\``,
   `Stop it with \`npx ${CLI_NAME} runner stop\``,

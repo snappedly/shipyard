@@ -70,7 +70,11 @@ if (
 ) {
   throw new Error("Invalid target branch or GitHub repository");
 }
-process.env.GH_REPO = repository;
+const sandboxAuthOptions = {};
+const sandboxProvider = docker({
+  env: { GH_REPO: repository },
+  ...sandboxAuthOptions,
+});
 const MAX_ITERATIONS = 10;
 const hooks = {
   sandbox: {
@@ -175,7 +179,7 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
       ]);
     const sandbox = await shipyard.createSandbox({
       branch: issue.branch,
-      sandbox: docker(),
+      sandbox: sandboxProvider,
       hooks,
     });
     let evidence: string;
@@ -240,7 +244,7 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
 
     const publication = await shipyard.createSandbox({
       branch: issue.branch,
-      sandbox: docker(),
+      sandbox: sandboxProvider,
     });
     try {
       publicationUncertain = true;

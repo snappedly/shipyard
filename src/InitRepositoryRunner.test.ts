@@ -76,7 +76,7 @@ describe("repository runner initialization", () => {
     const nextSteps = repositoryRunnerNextSteps().join("\n");
 
     expect(nextSteps).toContain(".github/workflows/shipyard-wake.yml");
-    expect(nextSteps).toContain("commit and push");
+    expect(nextSteps).toContain("committed and pushed");
     expect(nextSteps).toContain("npx shipyard runner start");
     expect(nextSteps).toContain("npx shipyard runner status");
     expect(nextSteps).toContain("npx shipyard runner stop");

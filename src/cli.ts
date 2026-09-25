@@ -48,6 +48,7 @@ import {
   initializeRepositoryRunner,
   repositoryRunnerNextSteps,
 } from "./InitRepositoryRunner.js";
+import { commitAndPushInitSetup } from "./InitGitSetup.js";
 import { runnerCommand } from "./RepositoryRunnerCommands.js";
 import {
   ACTIVATION_LABEL,
@@ -356,6 +357,14 @@ const installRunnerOption = Options.choice("install-runner", [
   Options.optional,
 );
 
+const commitSetupOption = Options.choice("commit-setup", ["true", "false"])
+  .pipe(
+    Options.withDescription(
+      "Whether to commit and push .shipyard/ and the optional runner workflow",
+    ),
+  )
+  .pipe(Options.optional);
+
 /**
  * Translate an `Options.choice("flag", ["true", "false"]).optional` value into
  * a tri-state boolean. None when the flag was absent; otherwise the parsed bool.
@@ -378,6 +387,7 @@ const initCommand = Command.make(
     buildImage: buildImageOption,
     installTemplateDeps: installTemplateDepsOption,
     installRunner: installRunnerOption,
+    commitSetup: commitSetupOption,
   },
   ({
     imageName: imageNameFlag,
@@ -390,6 +400,7 @@ const initCommand = Command.make(
     buildImage: buildImageFlag,
     installTemplateDeps: installTemplateDepsFlag,
     installRunner: installRunnerFlag,
+    commitSetup: commitSetupFlag,
   }) =>
     Effect.gen(function* () {
       const d = yield* Display;
@@ -443,6 +454,7 @@ const initCommand = Command.make(
         installTemplateDepsFlag,
       );
       const installRunnerChoice = choiceToTriBool(installRunnerFlag);
+      const commitSetupChoice = choiceToTriBool(commitSetupFlag);
 
       const isInteractive = process.stdin.isTTY === true;
       const failIfNonInteractive = (flag: string) =>
@@ -825,15 +837,12 @@ const initCommand = Command.make(
               }),
       });
 
-      if (runnerInit.status === "installed") {
+      const runnerInstalled = runnerInit.status === "installed";
+      if (runnerInstalled) {
         yield* d.status(
           `Installed ${runnerInit.result.name} for ${runnerInit.result.repository}.`,
           "success",
         );
-        yield* d.text("Repository runner next steps:");
-        for (const [index, line] of repositoryRunnerNextSteps().entries()) {
-          yield* d.text(styleText("dim", `${index + 1}. ${line}`));
-        }
       } else if (runnerInit.status === "failed") {
         yield* d.status(
           `Shipyard scaffolding is ready, but repository runner installation failed: ${runnerInit.message}`,
@@ -843,6 +852,82 @@ const initCommand = Command.make(
           `Retry from this repository with \`npx ${CLI_NAME} runner install\`.`,
           "warn",
         );
+      }
+
+      let shouldCommitSetup =
+        commitSetupChoice._tag === "Some" && commitSetupChoice.value;
+      if (commitSetupChoice._tag === "None" && isInteractive) {
+        const confirmed = yield* Effect.promise(() =>
+          clack.confirm({
+            message:
+              "Commit .shipyard/ and the optional runner workflow, then push this branch to origin? Sandboxes need the setup committed. The push also sends any local commits not already on origin.",
+            initialValue: true,
+          }),
+        );
+        if (clack.isCancel(confirmed)) {
+          yield* Effect.fail(
+            new InitError({ message: "Shipyard setup commit cancelled." }),
+          );
+        }
+        shouldCommitSetup = confirmed === true;
+      }
+
+      if (shouldCommitSetup) {
+        const publishResult = yield* Effect.sync(() => {
+          try {
+            return {
+              status: "committed" as const,
+              result: commitAndPushInitSetup(cwd),
+            };
+          } catch (error) {
+            return {
+              status: "failed" as const,
+              message: error instanceof Error ? error.message : String(error),
+            };
+          }
+        });
+        if (publishResult.status === "failed") {
+          yield* d.status(
+            `Could not commit the Shipyard setup: ${publishResult.message}`,
+            "warn",
+          );
+          yield* d.status(
+            `Commit \`${CONFIG_DIR}/\` before running Shipyard.`,
+            "warn",
+          );
+        } else if (publishResult.result.pushError) {
+          yield* d.status(
+            `Committed ${publishResult.result.commit}, but could not push to origin/${publishResult.result.branch}: ${publishResult.result.pushError}`,
+            "warn",
+          );
+          yield* d.status(
+            `Push it later with \`git push origin ${publishResult.result.branch}\`.`,
+            "warn",
+          );
+        } else {
+          yield* d.status(
+            `Committed ${publishResult.result.commit} and pushed origin/${publishResult.result.branch}.`,
+            "success",
+          );
+        }
+      } else {
+        yield* d.status(
+          `Commit \`${CONFIG_DIR}/\` before running Shipyard. Sandboxes do not receive uncommitted setup files.`,
+          "warn",
+        );
+        if (runnerInstalled) {
+          yield* d.status(
+            "Push the runner wake workflow to the repository's default branch before starting the runner.",
+            "warn",
+          );
+        }
+      }
+
+      if (runnerInstalled) {
+        yield* d.text("Repository runner next steps:");
+        for (const [index, line] of repositoryRunnerNextSteps().entries()) {
+          yield* d.text(styleText("dim", `${index + 1}. ${line}`));
+        }
       }
 
       yield* d.status("Init complete!", "success");
