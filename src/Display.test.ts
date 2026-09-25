@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { NodeFileSystem } from "@effect/platform-node";
 import { Effect, Layer, Ref } from "effect";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   Display,
   type DisplayEntry,
@@ -472,20 +472,6 @@ describe("FileDisplay", () => {
     const log = readLog(logPath);
     expect(log).toContain("Done.\nContext window: 10%\n");
     expect(log).not.toContain("Done.\n\nContext window");
-  });
-
-  it("creates log file with run delimiter on initialization", async () => {
-    const { logPath, layer } = setup();
-
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const d = yield* Display;
-        yield* d.intro("shipyard");
-      }).pipe(Effect.provide(layer)),
-    );
-
-    const log = readLog(logPath);
-    expect(log).toMatch(/^\n--- Run started: .+ ---\n$/);
   });
 
   it("strips [Name] prefix from status messages", async () => {

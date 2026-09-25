@@ -2,9 +2,9 @@ import {
   parsePhaseResult,
   parseRepositoryPolicy,
   parseWorkBrief,
+  type AgentSelection,
   type Assignment,
   type PhaseResult,
-  type RepositoryPolicy,
   type WorkIdentity,
   type WorkflowPhase,
 } from "../contracts/index.js";
@@ -115,15 +115,6 @@ const optionalRow = <T extends Record<string, unknown>>(
   result: PostgresQueryResult<T>,
 ): T | undefined => result.rows[0];
 
-const keyToString = (key: WorkKey): string =>
-  [
-    key.repository,
-    key.itemId,
-    String(key.briefRevision),
-    key.phase,
-    key.relevantRevision,
-  ].join("\u0000");
-
 const sameIdentity = (left: WorkIdentity, right: WorkIdentity): boolean =>
   left.repository === right.repository &&
   left.itemId === right.itemId &&
@@ -147,8 +138,30 @@ const parseAssignment = (value: unknown): Assignment => {
   if (typeof base !== "object" || base === null || Array.isArray(base)) {
     throw new Error("Stored assignment base must be an object");
   }
-  const baseRecord = base as Record<string, unknown>;
   const head = candidate.head;
+  const agentSelection = candidate.agentSelection;
+  let parsedAgentSelection: AgentSelection | undefined;
+  if (agentSelection !== undefined) {
+    if (
+      typeof agentSelection !== "object" ||
+      agentSelection === null ||
+      Array.isArray(agentSelection)
+    ) {
+      throw new Error("Stored assignment agent selection must be an object");
+    }
+    const selection = agentSelection as Record<string, unknown>;
+    if (selection.role !== "routine" && selection.role !== "strong") {
+      throw new Error("Stored assignment agent selection role is invalid");
+    }
+    parsedAgentSelection = {
+      provider: requiredString(
+        selection.provider,
+        "assignment.agentSelection.provider",
+      ),
+      model: requiredString(selection.model, "assignment.agentSelection.model"),
+      role: selection.role,
+    };
+  }
   const revision = (value: unknown, path: string) => {
     if (typeof value !== "object" || value === null || Array.isArray(value)) {
       throw new Error(`${path} must be an object`);
@@ -195,6 +208,9 @@ const parseAssignment = (value: unknown): Assignment => {
       candidate.skillRevision,
       "assignment.skillRevision",
     ),
+    ...(parsedAgentSelection === undefined
+      ? {}
+      : { agentSelection: parsedAgentSelection }),
     base: revision(base, "assignment.base"),
     head: head === undefined ? undefined : revision(head, "assignment.head"),
     createdAt: requiredString(candidate.createdAt, "assignment.createdAt"),
@@ -451,13 +467,6 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
     path: string,
   ): Promise<T> {
     return row(await this.client.query<T>(text, values), path);
-  }
-
-  private async optional<T extends Record<string, unknown>>(
-    text: string,
-    values: readonly unknown[],
-  ): Promise<T | undefined> {
-    return optionalRow(await this.client.query<T>(text, values));
   }
 
   async insertEventIfAbsent(event: StoredEvent) {

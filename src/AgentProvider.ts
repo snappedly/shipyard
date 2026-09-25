@@ -15,16 +15,14 @@ import {
   claudeHostSessionPath,
   claudeSandboxSessionPath,
   claudeSubagentsDirOnHost,
-  findClaudeSessionOnHost,
   findCodexSessionOnHost,
   listClaudeSubagentSessionsInSandbox,
   locateCodexHostSession,
   locateCodexSandboxSession,
   transferClaudeSession,
   transferCodexSession,
-  type HostSessionLookup,
 } from "./SessionStore.js";
-import type { BindMountSandboxHandle } from "./SandboxProvider.js";
+import type { SessionTransferHandle } from "./SandboxProvider.js";
 import { CODEX_MODELS } from "./modelConfig.js";
 import type { CodexModelConfig, CodexReasoningEffort } from "./modelConfig.js";
 import { shellQuote } from "./shellQuote.js";
@@ -179,14 +177,14 @@ export interface AgentSessionStorage {
     hostCwd: string;
     sandboxCwd: string;
     sessionId: string;
-    handle: BindMountSandboxHandle;
+    handle: SessionTransferHandle;
   }): Promise<void>;
   /** Transfer a session JSONL from the host store into the sandbox. */
   resumeIntoSandbox(args: {
     hostCwd: string;
     sandboxCwd: string;
     sessionId: string;
-    handle: BindMountSandboxHandle;
+    handle: SessionTransferHandle;
   }): Promise<void>;
   /** Read a captured session JSONL from the host store. Returns undefined when absent. */
   readHostSession(cwd: string, sessionId: string): Promise<string | undefined>;
@@ -194,14 +192,6 @@ export interface AgentSessionStorage {
   existsOnHost(cwd: string, sessionId: string): Promise<boolean>;
   /** Absolute host path where a session would be stored (for not-found error messages). */
   hostSessionFilePath(cwd: string, sessionId: string): string | undefined;
-  /**
-   * Locate a session on the host by its unique id, independent of cwd encoding.
-   * Used by the no-sandbox resume precheck, where the agent runs on the host and
-   * writes the session in place under a cwd-derived directory Shipyard cannot
-   * reliably reconstruct. Returns the located path (or `undefined`) plus the
-   * directory that was searched (for not-found errors).
-   */
-  findByIdOnHost(sessionId: string): Promise<HostSessionLookup>;
 }
 
 export interface AgentProvider {
@@ -233,7 +223,7 @@ const CONFIGURED_CODEX_MODEL_EFFORTS = new Map(
 // ---------------------------------------------------------------------------
 
 const readSandboxFile = async (
-  handle: Pick<BindMountSandboxHandle, "copyFileOut">,
+  handle: Pick<SessionTransferHandle, "copyFileOut">,
   sandboxPath: string,
   tag: string,
 ): Promise<string> => {
@@ -260,7 +250,7 @@ const readSandboxFile = async (
 };
 
 const writeSandboxFile = async (
-  handle: Pick<BindMountSandboxHandle, "copyFileIn" | "exec">,
+  handle: Pick<SessionTransferHandle, "copyFileIn" | "exec">,
   sandboxPath: string,
   content: string,
   tag: string,
@@ -293,7 +283,7 @@ const copyClaudeSessionFile = async ({
   destPath,
   tag,
 }: {
-  handle: Pick<BindMountSandboxHandle, "copyFileOut">;
+  handle: Pick<SessionTransferHandle, "copyFileOut">;
   sourcePath: string;
   fromCwd: string;
   toCwd: string;
@@ -391,7 +381,6 @@ const makeClaudeSessionStorage = (
       );
       await writeSandboxFile(handle, sandboxPath, rewritten, "claude-res");
     },
-    findByIdOnHost: (id) => findClaudeSessionOnHost(id, hostProjectsDir),
   };
 };
 
@@ -440,7 +429,6 @@ const makeCodexSessionStorage = (
       const target = posix.join(sandboxSessionsDir, located.relativePath);
       await writeSandboxFile(handle, target, rewritten, "codex-res");
     },
-    findByIdOnHost: (id) => findCodexSessionOnHost(id, hostSessionsDir),
   };
 };
 
@@ -528,7 +516,8 @@ const parseCodexStreamLine = (line: string): ParsedStreamEvent[] => {
 
 /** Options for the codex agent provider. */
 export interface CodexOptions {
-  readonly effort?: CodexReasoningEffort;
+  /** Set to `null` to use the provider default instead of a configured role effort. */
+  readonly effort?: CodexReasoningEffort | null;
   /** Environment variables injected by this agent provider. */
   readonly env?: Record<string, string>;
   /** When false, session capture is disabled. Default: true. */
@@ -556,10 +545,12 @@ export const codex = (
 ): AgentProvider & { readonly sessionStorage: AgentSessionStorage } => {
   const modelId = typeof model === "string" ? model : model.model;
   const effort =
-    options?.effort ??
-    (typeof model === "string"
-      ? CONFIGURED_CODEX_MODEL_EFFORTS.get(modelId)
-      : model.effort);
+    options?.effort === null
+      ? undefined
+      : (options?.effort ??
+        (typeof model === "string"
+          ? CONFIGURED_CODEX_MODEL_EFFORTS.get(modelId)
+          : model.effort));
 
   // Configured Shipyard Codex model roles carry their own reasoning setting;
   // callers can still override it through CodexOptions.
@@ -623,7 +614,8 @@ export const codex = (
 // ---------------------------------------------------------------------------
 
 export interface ClaudeCodeOptions {
-  readonly effort?: "low" | "medium" | "high" | "xhigh" | "max";
+  /** Set to `null` to leave effort selection to the provider. */
+  readonly effort?: "low" | "medium" | "high" | "xhigh" | "max" | null;
   /** Environment variables injected by this agent provider. */
   readonly env?: Record<string, string>;
   /** When false, session capture is disabled. Default: true. */

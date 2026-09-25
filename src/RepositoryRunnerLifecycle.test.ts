@@ -10,7 +10,6 @@ import {
 const repoDir = "/repo";
 const configDir = join(repoDir, ".shipyard");
 const runnerDir = join(configDir, "runner");
-const maskDir = join(configDir, "runner-sandbox-mask");
 const metadataPath = join(runnerDir, ".shipyard-install.json");
 const lockPath = join(runnerDir, ".shipyard-controller.lock");
 const workPath = join(runnerDir, "_work");
@@ -40,7 +39,6 @@ const makeAdapters = (overrides: Partial<RunnerLifecycleAdapters> = {}) => {
     repoDir,
     configDir,
     runnerDir,
-    maskDir,
     workPath,
     join(configDir, "logs"),
     join(configDir, "worktrees"),
@@ -119,7 +117,6 @@ const makeAdapters = (overrides: Partial<RunnerLifecycleAdapters> = {}) => {
 const installOptions = {
   repoDir,
   runnerDir,
-  maskDir,
   repository: metadata.repository,
   runnerName: metadata.name,
 };
@@ -181,40 +178,6 @@ describe("validateExistingRepositoryRunner", () => {
       validateExistingRepositoryRunner(installOptions, base.adapters),
     ).rejects.toThrow("Multiple repository runners carry the shipyard label");
   });
-
-  it("rejects a symlinked protected sandbox mask", async () => {
-    const base = makeAdapters({
-      inspectDirectory: async (path) => ({
-        realPath:
-          path === maskDir
-            ? "/REPO/.SHIPYARD/RUNNER"
-            : "/repo/.shipyard/runner",
-        directory: true,
-        symbolicLink: path === maskDir,
-      }),
-    });
-
-    await expect(
-      validateExistingRepositoryRunner(installOptions, base.adapters),
-    ).rejects.toThrow("must be a real directory");
-  });
-
-  it("rejects protected directories that alias after macOS case folding", async () => {
-    const base = makeAdapters({
-      inspectDirectory: async (path) => ({
-        realPath:
-          path === maskDir
-            ? "/REPO/.SHIPYARD/RUNNER"
-            : "/repo/.shipyard/runner",
-        directory: true,
-        symbolicLink: false,
-      }),
-    });
-
-    await expect(
-      validateExistingRepositoryRunner(installOptions, base.adapters),
-    ).rejects.toThrow("must be distinct directories");
-  });
 });
 
 describe("recoverRepositoryRunner", () => {
@@ -228,13 +191,11 @@ describe("recoverRepositoryRunner", () => {
         repository: metadata.repository,
       }),
     );
-    base.files.set(join(maskDir, "stale"), "stale");
 
     const result = await recoverRepositoryRunner(
       {
         repoDir,
         runnerDir,
-        maskDir,
         metadata,
         runnerEnvironment: { PATH: "/usr/bin:/bin" },
       },
@@ -242,8 +203,7 @@ describe("recoverRepositoryRunner", () => {
     );
 
     expect(result).toEqual({ reRegistered: false });
-    expect(base.removes).toEqual([lockPath, workPath, maskDir]);
-    expect(base.directories.has(maskDir)).toBe(true);
+    expect(base.removes).toEqual([lockPath, workPath]);
     expect(base.files.get(join(configDir, ".env"))).toBe(
       "GH_TOKEN=runtime-token\n",
     );
@@ -276,7 +236,6 @@ describe("recoverRepositoryRunner", () => {
       {
         repoDir,
         runnerDir,
-        maskDir,
         metadata,
         runnerEnvironment: { PATH: "/usr/bin:/bin" },
       },
@@ -324,7 +283,6 @@ describe("recoverRepositoryRunner", () => {
         {
           repoDir,
           runnerDir,
-          maskDir,
           metadata,
           runnerEnvironment: { PATH: "/usr/bin:/bin" },
         },
@@ -358,7 +316,6 @@ describe("recoverRepositoryRunner", () => {
       {
         repoDir,
         runnerDir,
-        maskDir,
         metadata,
         runnerEnvironment: { PATH: "/usr/bin:/bin" },
       },
@@ -390,7 +347,6 @@ describe("recoverRepositoryRunner", () => {
       {
         repoDir,
         runnerDir,
-        maskDir,
         metadata,
         runnerEnvironment: { PATH: "/usr/bin:/bin" },
         dockerEnvironment: {

@@ -666,7 +666,7 @@ describe("WorktreeManager.create", () => {
       cwd: repoDir,
     });
 
-    const { path, branch } = await run(
+    const { path } = await run(
       create(repoDir, { branch: "shipyard/no-tracking-test" }),
     );
 

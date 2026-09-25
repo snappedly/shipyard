@@ -16,7 +16,6 @@ import {
   type WorkflowPhase,
 } from "../contracts/index.js";
 import { sameRevision } from "../shared.js";
-import { InMemoryCoordinatorStorage } from "./in-memory-storage.js";
 import type {
   AcquireBranchLeaseInput,
   BranchLease,

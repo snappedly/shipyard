@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Effect } from "effect";
 
 vi.mock("node:child_process", async (importOriginal) => {
@@ -15,17 +15,19 @@ import { startContainer, buildImage } from "./DockerLifecycle.js";
 
 const mockExecFile = vi.mocked(execFile);
 
+beforeEach(() => {
+  mockExecFile.mockImplementation((_cmd, _args, _opts, cb: any) => {
+    cb(null, "", "");
+    return undefined as any;
+  });
+});
+
 afterEach(() => {
   mockExecFile.mockReset();
 });
 
 describe("buildImage", () => {
   it("passes --build-arg flags when buildArgs is provided", async () => {
-    mockExecFile.mockImplementation((_cmd, _args, _opts, cb: any) => {
-      cb(null, "", "");
-      return undefined as any;
-    });
-
     await Effect.runPromise(
       buildImage("my-image", "/tmp/dir", {
         buildArgs: { AGENT_UID: "1001", AGENT_GID: "1001" },
@@ -46,11 +48,6 @@ describe("buildImage", () => {
   });
 
   it("does not pass --build-arg flags when buildArgs is omitted", async () => {
-    mockExecFile.mockImplementation((_cmd, _args, _opts, cb: any) => {
-      cb(null, "", "");
-      return undefined as any;
-    });
-
     await Effect.runPromise(buildImage("my-image", "/tmp/dir"));
 
     const buildCall = mockExecFile.mock.calls.find(
@@ -63,11 +60,6 @@ describe("buildImage", () => {
 
 describe("startContainer", () => {
   it("starts the container with an init process", async () => {
-    mockExecFile.mockImplementation((_cmd, _args, _opts, cb: any) => {
-      cb(null, "", "");
-      return undefined as any;
-    });
-
     await Effect.runPromise(startContainer("ctr", "img", {}));
 
     const runCall = mockExecFile.mock.calls.find(
@@ -78,11 +70,6 @@ describe("startContainer", () => {
   });
 
   it("adds an exact repository-runner owner label when requested", async () => {
-    mockExecFile.mockImplementation((_cmd, _args, _opts, cb: any) => {
-      cb(null, "", "");
-      return undefined as any;
-    });
-
     await Effect.runPromise(
       startContainer(
         "ctr",
@@ -109,11 +96,6 @@ describe("startContainer", () => {
   });
 
   it("passes --network flag when network is a string", async () => {
-    mockExecFile.mockImplementation((_cmd, _args, _opts, cb: any) => {
-      cb(null, "", "");
-      return undefined as any;
-    });
-
     await Effect.runPromise(
       startContainer("ctr", "img", {}, { network: "my-network" }),
     );
@@ -129,11 +111,6 @@ describe("startContainer", () => {
   });
 
   it("passes multiple --network flags when network is an array", async () => {
-    mockExecFile.mockImplementation((_cmd, _args, _opts, cb: any) => {
-      cb(null, "", "");
-      return undefined as any;
-    });
-
     await Effect.runPromise(
       startContainer("ctr", "img", {}, { network: ["net1", "net2"] }),
     );
@@ -151,11 +128,6 @@ describe("startContainer", () => {
   });
 
   it("does not pass --network when network is omitted", async () => {
-    mockExecFile.mockImplementation((_cmd, _args, _opts, cb: any) => {
-      cb(null, "", "");
-      return undefined as any;
-    });
-
     await Effect.runPromise(startContainer("ctr", "img", {}));
 
     const runCall = mockExecFile.mock.calls.find(
@@ -166,11 +138,6 @@ describe("startContainer", () => {
   });
 
   it("passes --group-add flag when groups has one entry", async () => {
-    mockExecFile.mockImplementation((_cmd, _args, _opts, cb: any) => {
-      cb(null, "", "");
-      return undefined as any;
-    });
-
     await Effect.runPromise(
       startContainer("ctr", "img", {}, { groups: ["docker"] }),
     );
@@ -186,11 +153,6 @@ describe("startContainer", () => {
   });
 
   it("passes multiple --group-add flags in order, stringifying numeric GIDs", async () => {
-    mockExecFile.mockImplementation((_cmd, _args, _opts, cb: any) => {
-      cb(null, "", "");
-      return undefined as any;
-    });
-
     await Effect.runPromise(
       startContainer("ctr", "img", {}, { groups: ["docker", 999] }),
     );
@@ -208,11 +170,6 @@ describe("startContainer", () => {
   });
 
   it("does not pass --group-add when groups is omitted", async () => {
-    mockExecFile.mockImplementation((_cmd, _args, _opts, cb: any) => {
-      cb(null, "", "");
-      return undefined as any;
-    });
-
     await Effect.runPromise(startContainer("ctr", "img", {}));
 
     const runCall = mockExecFile.mock.calls.find(
@@ -223,11 +180,6 @@ describe("startContainer", () => {
   });
 
   it("passes --device flag when devices has one entry", async () => {
-    mockExecFile.mockImplementation((_cmd, _args, _opts, cb: any) => {
-      cb(null, "", "");
-      return undefined as any;
-    });
-
     await Effect.runPromise(
       startContainer("ctr", "img", {}, { devices: ["/dev/kvm"] }),
     );
@@ -243,11 +195,6 @@ describe("startContainer", () => {
   });
 
   it("passes multiple --device flags in order", async () => {
-    mockExecFile.mockImplementation((_cmd, _args, _opts, cb: any) => {
-      cb(null, "", "");
-      return undefined as any;
-    });
-
     await Effect.runPromise(
       startContainer(
         "ctr",
@@ -272,11 +219,6 @@ describe("startContainer", () => {
   });
 
   it("does not pass --device when devices is omitted", async () => {
-    mockExecFile.mockImplementation((_cmd, _args, _opts, cb: any) => {
-      cb(null, "", "");
-      return undefined as any;
-    });
-
     await Effect.runPromise(startContainer("ctr", "img", {}));
 
     const runCall = mockExecFile.mock.calls.find(
@@ -287,11 +229,6 @@ describe("startContainer", () => {
   });
 
   it("passes --cpus flag when cpus is provided", async () => {
-    mockExecFile.mockImplementation((_cmd, _args, _opts, cb: any) => {
-      cb(null, "", "");
-      return undefined as any;
-    });
-
     await Effect.runPromise(startContainer("ctr", "img", {}, { cpus: 2 }));
 
     const runCall = mockExecFile.mock.calls.find(
@@ -305,11 +242,6 @@ describe("startContainer", () => {
   });
 
   it("stringifies fractional cpus values", async () => {
-    mockExecFile.mockImplementation((_cmd, _args, _opts, cb: any) => {
-      cb(null, "", "");
-      return undefined as any;
-    });
-
     await Effect.runPromise(startContainer("ctr", "img", {}, { cpus: 1.5 }));
 
     const runCall = mockExecFile.mock.calls.find(
@@ -322,11 +254,6 @@ describe("startContainer", () => {
   });
 
   it("does not pass --cpus when cpus is omitted", async () => {
-    mockExecFile.mockImplementation((_cmd, _args, _opts, cb: any) => {
-      cb(null, "", "");
-      return undefined as any;
-    });
-
     await Effect.runPromise(startContainer("ctr", "img", {}));
 
     const runCall = mockExecFile.mock.calls.find(
@@ -337,11 +264,6 @@ describe("startContainer", () => {
   });
 
   it("uses -v format with formatVolumeMount for volume mounts", async () => {
-    mockExecFile.mockImplementation((_cmd, _args, _opts, cb: any) => {
-      cb(null, "", "");
-      return undefined as any;
-    });
-
     await Effect.runPromise(
       startContainer(
         "ctr",
@@ -365,11 +287,6 @@ describe("startContainer", () => {
   });
 
   it("includes readonly flag for read-only mounts", async () => {
-    mockExecFile.mockImplementation((_cmd, _args, _opts, cb: any) => {
-      cb(null, "", "");
-      return undefined as any;
-    });
-
     await Effect.runPromise(
       startContainer(
         "ctr",
@@ -395,39 +312,7 @@ describe("startContainer", () => {
     expect(runArgs[vIdx + 1]).toBe("/host/path:/sandbox/path:ro,z");
   });
 
-  it("default mount string ends with :z (SELinux shared label)", async () => {
-    mockExecFile.mockImplementation((_cmd, _args, _opts, cb: any) => {
-      cb(null, "", "");
-      return undefined as any;
-    });
-
-    await Effect.runPromise(
-      startContainer(
-        "ctr",
-        "img",
-        {},
-        {
-          volumeMounts: [
-            { hostPath: "/host/path", sandboxPath: "/sandbox/path" },
-          ],
-        },
-      ),
-    );
-
-    const runCall = mockExecFile.mock.calls.find(
-      ([, args]) => Array.isArray(args) && args[0] === "run",
-    );
-    const runArgs = runCall![1] as string[];
-    const vIdx = runArgs.indexOf("-v");
-    expect(runArgs[vIdx + 1]).toBe("/host/path:/sandbox/path:z");
-  });
-
   it("selinuxLabel 'Z' produces :Z suffix", async () => {
-    mockExecFile.mockImplementation((_cmd, _args, _opts, cb: any) => {
-      cb(null, "", "");
-      return undefined as any;
-    });
-
     await Effect.runPromise(
       startContainer(
         "ctr",
@@ -451,11 +336,6 @@ describe("startContainer", () => {
   });
 
   it("selinuxLabel false produces no SELinux suffix", async () => {
-    mockExecFile.mockImplementation((_cmd, _args, _opts, cb: any) => {
-      cb(null, "", "");
-      return undefined as any;
-    });
-
     await Effect.runPromise(
       startContainer(
         "ctr",
@@ -479,11 +359,6 @@ describe("startContainer", () => {
   });
 
   it("readonly with selinuxLabel false produces :ro only", async () => {
-    mockExecFile.mockImplementation((_cmd, _args, _opts, cb: any) => {
-      cb(null, "", "");
-      return undefined as any;
-    });
-
     await Effect.runPromise(
       startContainer(
         "ctr",

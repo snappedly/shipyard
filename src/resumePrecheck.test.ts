@@ -2,10 +2,9 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { claudeCode, codex } from "./AgentProvider.js";
+import { claudeCode } from "./AgentProvider.js";
 import type { AgentProvider } from "./AgentProvider.js";
 import { assertResumeSessionExists } from "./resumePrecheck.js";
-import { CODEX_MODELS } from "./modelConfig.js";
 
 const SESSION_ID = "9ba1c695-2222-4444-8888-e7e847bf34dd";
 
@@ -28,78 +27,7 @@ describe("assertResumeSessionExists", () => {
     await rm(projectsDir, { recursive: true, force: true });
   });
 
-  describe("no-sandbox (Claude Code)", () => {
-    it("passes when the session lives under a cwd-encoded dir that does not match the host repo dir", async () => {
-      // Simulate the agent having written the session in place from a worktree:
-      // the encoded directory reflects a realpath'd `.shipyard/worktrees/...`
-      // path, which the host-repo-dir encoding would never reconstruct.
-      const misEncodedDir = join(
-        projectsDir,
-        "-private-tmp-myrepo--shipyard-worktrees-feature",
-      );
-      await mkdir(misEncodedDir, { recursive: true });
-      await writeFile(join(misEncodedDir, `${SESSION_ID}.jsonl`), "{}");
-
-      const provider = claudeCode("claude-opus-4-8", {
-        sessionStorage: { hostProjectsDir: projectsDir },
-      });
-
-      await expect(
-        assertResumeSessionExists({
-          provider,
-          sandboxTag: "none",
-          hostRepoDir: "/some/unrelated/host/repo",
-          resumeSession: SESSION_ID,
-        }),
-      ).resolves.toBeUndefined();
-    });
-
-    it("throws an error naming the searched root when the session is absent", async () => {
-      const provider = claudeCode("claude-opus-4-8", {
-        sessionStorage: { hostProjectsDir: projectsDir },
-      });
-
-      await expect(
-        assertResumeSessionExists({
-          provider,
-          sandboxTag: "none",
-          hostRepoDir: "/some/host/repo",
-          resumeSession: "missing-id",
-        }),
-      ).rejects.toThrow(
-        `resumeSession "missing-id" not found under ${projectsDir}`,
-      );
-    });
-  });
-
-  describe("no-sandbox (Codex)", () => {
-    it("resolves when the rollout file exists under the date-nested sessions dir", async () => {
-      const sessionPath = join(
-        projectsDir,
-        "2026",
-        "05",
-        "26",
-        `rollout-2026-05-26T08-00-00-${SESSION_ID}.jsonl`,
-      );
-      await mkdir(join(sessionPath, ".."), { recursive: true });
-      await writeFile(sessionPath, JSON.stringify({ type: "session_meta" }));
-
-      const provider = codex(CODEX_MODELS.routine, {
-        sessionStorage: { hostSessionsDir: projectsDir },
-      });
-
-      await expect(
-        assertResumeSessionExists({
-          provider,
-          sandboxTag: "none",
-          hostRepoDir: "/some/unrelated/host/repo",
-          resumeSession: SESSION_ID,
-        }),
-      ).resolves.toBeUndefined();
-    });
-  });
-
-  describe("sandboxed (bind-mount / isolated)", () => {
+  describe("Docker session storage", () => {
     it("checks the exact host-repo-dir encoded location and names the expected file path on a miss", async () => {
       const provider = claudeCode("claude-opus-4-8", {
         sessionStorage: { hostProjectsDir: projectsDir },
@@ -108,7 +36,6 @@ describe("assertResumeSessionExists", () => {
       await expect(
         assertResumeSessionExists({
           provider,
-          sandboxTag: "bind-mount",
           hostRepoDir: "/some/host/repo",
           resumeSession: "abc-123",
         }),
@@ -132,7 +59,6 @@ describe("assertResumeSessionExists", () => {
       await expect(
         assertResumeSessionExists({
           provider,
-          sandboxTag: "bind-mount",
           hostRepoDir,
           resumeSession: SESSION_ID,
         }),
@@ -144,7 +70,6 @@ describe("assertResumeSessionExists", () => {
     await expect(
       assertResumeSessionExists({
         provider: nonResumableAgent,
-        sandboxTag: "none",
         hostRepoDir: "/some/host/repo",
         resumeSession: SESSION_ID,
       }),

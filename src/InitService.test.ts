@@ -13,7 +13,7 @@ import {
   getIssueTracker,
   getSandboxProvider,
 } from "./InitService.js";
-import type { AgentEntry, ScaffoldOptions } from "./InitService.js";
+import type { ScaffoldOptions } from "./InitService.js";
 import { SANDBOX_REPO_DIR } from "./SandboxFactory.js";
 import { CODEX_MODELS } from "./modelConfig.js";
 
@@ -61,12 +61,16 @@ describe("InitService scaffold", () => {
       expectedKey: "CLAUDE_CODE_OAUTH_TOKEN=",
       unexpectedKey: "OPENAI_API_KEY=",
       expectClaudeSetupTokenHint: true,
+      expectedModelExample: "SHIPYARD_ROUTINE_MODEL=sonnet",
+      expectedModelCatalog: "https://code.claude.com/docs/en/model-config",
     },
     {
       agent: codexAgent,
       expectedKey: "OPENAI_API_KEY=",
       unexpectedKey: "ANTHROPIC_API_KEY=",
       expectClaudeSetupTokenHint: false,
+      expectedModelExample: "SHIPYARD_ROUTINE_MODEL=gpt-6-luna",
+      expectedModelCatalog: "https://learn.chatgpt.com/docs/models",
     },
   ])(
     "generates .env.example with $agent.name env var",
@@ -75,6 +79,8 @@ describe("InitService scaffold", () => {
       expectedKey,
       unexpectedKey,
       expectClaudeSetupTokenHint,
+      expectedModelExample,
+      expectedModelCatalog,
     }) => {
       const dir = await makeDir();
       await runScaffold(dir, { agent, model: agent.defaultModel });
@@ -86,6 +92,11 @@ describe("InitService scaffold", () => {
       expect(envExample).toContain(expectedKey);
       expect(envExample).not.toContain(unexpectedKey);
       expect(envExample).not.toContain("issues/191");
+      expect(envExample).toContain("SHIPYARD_ROUTINE_MODEL=");
+      expect(envExample).toContain("SHIPYARD_STRONG_MODEL=");
+      expect(envExample).toContain(expectedModelExample);
+      expect(envExample).toContain(expectedModelCatalog);
+      expect(envExample).toContain("Aliases can change their target over time");
       if (expectClaudeSetupTokenHint) {
         expect(envExample).toContain("claude setup-token");
       } else {
@@ -127,7 +138,7 @@ describe("InitService scaffold", () => {
     expect(env).toBe(envExample);
   });
 
-  it("does not scaffold config.json for blank template", async () => {
+  it("does not scaffold config.json", async () => {
     const dir = await makeDir();
     await runScaffold(dir);
 
@@ -201,50 +212,20 @@ describe("InitService scaffold", () => {
     expect(dockerfile).not.toContain("pnpm");
   });
 
-  it("skeleton prompt contains section headers and hints", async () => {
+  it("default prompt contains the issue scope and completion signal", async () => {
     const dir = await makeDir();
     await runScaffold(dir);
 
     const prompt = await readFile(join(dir, ".shipyard", "prompt.md"), "utf-8");
-    expect(prompt).toContain("# ");
-    expect(prompt).toContain("!`");
+    expect(prompt).toContain("# Assigned issue scope");
     expect(prompt).toContain("<promise>COMPLETE</promise>");
   });
 
-  it("blank template produces skeleton prompt and main.mts", async () => {
-    const dir = await makeDir();
-    await runScaffold(dir, { templateName: "blank" });
-
-    const configDir = join(dir, ".shipyard");
-    const prompt = await readFile(join(configDir, "prompt.md"), "utf-8");
-    expect(prompt).toContain("!`");
-    expect(prompt).toContain("<promise>COMPLETE</promise>");
-
-    const { access } = await import("node:fs/promises");
-    await expect(access(join(configDir, "main.mts"))).resolves.toBeUndefined();
-  });
-
-  it("blank template main.mts imports from @snappedly-tools/shipyard", async () => {
-    const dir = await makeDir();
-    await runScaffold(dir, { templateName: "blank" });
-
-    const mainTs = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
-    expect(mainTs).toContain('"@snappedly-tools/shipyard"');
-  });
-
-  it("blank template main.mts calls run()", async () => {
-    const dir = await makeDir();
-    await runScaffold(dir, { templateName: "blank" });
-
-    const mainTs = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
-    expect(mainTs).toContain("run(");
-  });
-
-  it("blank template produces identical output to default (no template arg)", async () => {
+  it("defaults to simple-loop when no template is specified", async () => {
     const dir1 = await makeDir();
     const dir2 = await makeDir();
     await runScaffold(dir1);
-    await runScaffold(dir2, { templateName: "blank" });
+    await runScaffold(dir2, { templateName: "simple-loop" });
 
     const prompt1 = await readFile(
       join(dir1, ".shipyard", "prompt.md"),
@@ -257,6 +238,15 @@ describe("InitService scaffold", () => {
     expect(prompt1).toBe(prompt2);
   });
 
+  it("does not offer or scaffold the blank template", async () => {
+    expect(listTemplates().map((template) => template.name)).not.toContain(
+      "blank",
+    );
+    await expect(
+      runScaffold(await makeDir(), { templateName: "blank" }),
+    ).rejects.toThrow('Unknown template: "blank"');
+  });
+
   // --- main file rewriting ---
 
   it("scaffolds main.mts with the specified model", async () => {
@@ -264,9 +254,10 @@ describe("InitService scaffold", () => {
     await runScaffold(dir, { model: "claude-sonnet-4-6" });
 
     const mainTs = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
-    expect(mainTs).toContain('claudeCode("claude-sonnet-4-6")');
-    // Should not contain the template's original model
-    expect(mainTs).not.toContain('claudeCode("claude-opus-4-8")');
+    expect(mainTs).toContain('roleAgent("routine", "claude-sonnet-4-6")');
+    expect(mainTs).toContain("const agentFactory = shipyard.claudeCode;");
+    expect(mainTs).toContain("const CODEX_PROVIDER = false;");
+    expect(mainTs).not.toContain("shipyard.CODEX_MODELS.routine");
   });
 
   it("scaffolds main.mts with default model when using agent default", async () => {
@@ -274,7 +265,25 @@ describe("InitService scaffold", () => {
     await runScaffold(dir);
 
     const mainTs = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
-    expect(mainTs).toContain('claudeCode("claude-opus-4-8")');
+    expect(mainTs).toContain('roleAgent("routine", "claude-opus-4-8")');
+  });
+
+  it("lets init --model supply both unset Codex roles without default effort", async () => {
+    const dir = await makeDir();
+    await runScaffold(dir, {
+      agent: codexAgent,
+      model: "unlisted-model",
+      modelExplicit: true,
+      templateName: "sequential-reviewer",
+    });
+
+    const mainTs = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
+    expect(mainTs).toContain('roleAgent("routine", "unlisted-model")');
+    expect(mainTs).toContain('roleAgent("strong", "unlisted-model")');
+    expect(mainTs).toContain("const CODEX_PROVIDER = true;");
+    expect(mainTs).toContain("const agentFactory = shipyard.codex;");
+    expect(mainTs).not.toContain("shipyard.CODEX_MODELS.routine");
+    expect(mainTs).not.toContain("shipyard.CODEX_MODELS.strong");
   });
 
   // --- Template-specific tests ---
@@ -418,7 +427,11 @@ describe("InitService scaffold", () => {
     });
 
     const mainTs = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
-    expect(mainTs).toContain("codex(CODEX_MODELS.routine)");
+    expect(mainTs).toContain("const agentFactory = shipyard.codex;");
+    expect(mainTs).toContain(
+      'roleAgent("routine", shipyard.CODEX_MODELS.routine)',
+    );
+    expect(mainTs).toContain("const CODEX_PROVIDER = true;");
     expect(mainTs).not.toContain("claudeCode");
   });
 
@@ -455,13 +468,6 @@ describe("InitService scaffold", () => {
     expect(mainTs).toContain("shipyard.CODEX_MODELS.routine");
     expect(mainTs).toContain("shipyard.CODEX_MODELS.strong");
     expect(mainTs).not.toMatch(/gpt-5\.6/);
-  });
-
-  it("blank template retains the low-level issue-list example", async () => {
-    const dir = await makeDir();
-    await runScaffold(dir, { templateName: "blank" });
-    const prompt = await readFile(join(dir, ".shipyard", "prompt.md"), "utf-8");
-    expect(prompt).toContain("gh issue list --state open --label shipyard");
   });
 
   it.each([
@@ -519,6 +525,64 @@ describe("InitService scaffold", () => {
       runScaffold(dir, { templateName: "nonexistent" }),
     ).rejects.toThrow("nonexistent");
   });
+
+  it.each(["parallel-planner", "parallel-planner-with-review"])(
+    "%s scaffolds the planner branch conflict helper",
+    async (templateName) => {
+      const dir = await makeDir();
+      await runScaffold(dir, { templateName });
+
+      const configDir = join(dir, ".shipyard");
+      const main = await readFile(join(configDir, "main.mts"), "utf-8");
+      const helper = await readFile(
+        join(configDir, "planner-branch.mts"),
+        "utf-8",
+      );
+      expect(main).toContain("./planner-branch.mjs");
+      expect(helper).toContain("resolvePlannerBranch");
+    },
+  );
+
+  it.each([
+    {
+      templateName: "parallel-planner",
+      agent: claudeCodeAgent,
+      expectedModelExample: "SHIPYARD_ROUTINE_MODEL=sonnet",
+    },
+    {
+      templateName: "parallel-planner",
+      agent: codexAgent,
+      expectedModelExample: "SHIPYARD_ROUTINE_MODEL=gpt-6-luna",
+    },
+    {
+      templateName: "parallel-planner-with-review",
+      agent: claudeCodeAgent,
+      expectedModelExample: "SHIPYARD_ROUTINE_MODEL=sonnet",
+    },
+    {
+      templateName: "parallel-planner-with-review",
+      agent: codexAgent,
+      expectedModelExample: "SHIPYARD_ROUTINE_MODEL=gpt-6-luna",
+    },
+  ])(
+    "$templateName generates model role settings for $agent.name",
+    async ({ templateName, agent, expectedModelExample }) => {
+      const dir = await makeDir();
+      await runScaffold(dir, {
+        templateName,
+        agent,
+        model: agent.defaultModel,
+      });
+
+      const envExample = await readFile(
+        join(dir, ".shipyard", ".env.example"),
+        "utf-8",
+      );
+      expect(envExample).toContain("SHIPYARD_ROUTINE_MODEL=");
+      expect(envExample).toContain("SHIPYARD_STRONG_MODEL=");
+      expect(envExample).toContain(expectedModelExample);
+    },
+  );
 
   describe("parallel-planner template", () => {
     it("produces main.mts, plan-prompt.md, implement-prompt.md, merge-prompt.md", async () => {
@@ -764,23 +828,6 @@ describe("InitService scaffold", () => {
   });
 
   describe("Issue tracker scaffold", () => {
-    // --- blank ---
-
-    it("blank with github-issues produces prompt with gh issue list example", async () => {
-      const dir = await makeDir();
-      await runScaffold(dir, {
-        templateName: "blank",
-        issueTracker: getIssueTracker("github-issues"),
-      });
-
-      const prompt = await readFile(
-        join(dir, ".shipyard", "prompt.md"),
-        "utf-8",
-      );
-      expect(prompt).toContain("gh issue list");
-      expect(prompt).not.toContain("{{LIST_TASKS_COMMAND}}");
-    });
-
     it("parallel-planner with github-issues produces implement-prompt with gh issue view", async () => {
       const dir = await makeDir();
       await runScaffold(dir, {
@@ -928,7 +975,7 @@ describe("InitService scaffold", () => {
         "utf-8",
       );
       expect(mainContent).toContain("@snappedly-tools/shipyard");
-      expect(mainContent).toContain('claudeCode("claude-opus-4-8")');
+      expect(mainContent).toContain('roleAgent("routine", "claude-opus-4-8")');
     });
 
     it("main.ts scaffolded with type: module rewrites the Codex factory correctly", async () => {
@@ -946,24 +993,10 @@ describe("InitService scaffold", () => {
         join(dir, ".shipyard", "main.ts"),
         "utf-8",
       );
-      expect(mainContent).toContain("codex(CODEX_MODELS.routine)");
+      expect(mainContent).toContain(
+        'roleAgent("routine", shipyard.CODEX_MODELS.routine)',
+      );
       expect(mainContent).not.toContain("claudeCode");
-    });
-
-    it("comments in scaffolded main.ts reference main.ts, not main.mts", async () => {
-      const dir = await makeDir();
-      await writeFile(
-        join(dir, "package.json"),
-        JSON.stringify({ name: "test", type: "module" }),
-      );
-      await runScaffold(dir);
-
-      const mainContent = await readFile(
-        join(dir, ".shipyard", "main.ts"),
-        "utf-8",
-      );
-      expect(mainContent).not.toContain("main.mts");
-      expect(mainContent).toContain("main.ts");
     });
 
     it("scaffolds main.mts when package.json is invalid JSON", async () => {
@@ -1013,7 +1046,7 @@ describe("InitService scaffold", () => {
         "utf-8",
       );
       expect(mainTs).toContain(
-        'import { run, claudeCode } from "@snappedly-tools/shipyard"',
+        'import * as shipyard from "@snappedly-tools/shipyard"',
       );
       expect(mainTs).toContain(
         'import { docker } from "@snappedly-tools/shipyard/sandboxes/docker"',

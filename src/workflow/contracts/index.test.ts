@@ -9,6 +9,7 @@ import {
   parsePhaseResult,
   parseRepositoryPolicy,
   parseWorkBrief,
+  resolveAgentSelection,
   requireTransition,
   type CheckEvidence,
   type RepositoryPolicy,
@@ -93,6 +94,19 @@ describe("workflow contracts", () => {
     expect(createBrief().hash).toBe(brief.hash);
   });
 
+  it("includes review scope in the brief hash when provided", () => {
+    const brief = createWorkBrief({
+      ...createBrief(),
+      scope: "small",
+      hash: undefined,
+    });
+
+    expect(parseWorkBrief(brief)).toEqual(brief);
+    expect(() => parseWorkBrief({ ...brief, scope: "substantial" })).toThrow(
+      "work brief hash does not match content",
+    );
+  });
+
   it("validates policy budgets and keeps unknown checks explicit", () => {
     expect(parseRepositoryPolicy(policy)).toEqual(policy);
     expect(
@@ -110,6 +124,176 @@ describe("workflow contracts", () => {
         },
       }),
     ).toThrow("positive integer");
+  });
+
+  it("accepts nonempty routine and strong model identifiers", () => {
+    const input = {
+      ...policy,
+      worker: {
+        provider: "custom-provider",
+        models: {
+          routine: "provider-specific-routine-alias",
+          strong: "provider-specific-strong-alias",
+        },
+        sandbox: "test-isolated",
+        skillRevision: "skills-1",
+      },
+    };
+
+    expect(parseRepositoryPolicy(input)).toMatchObject({
+      worker: {
+        provider: "custom-provider",
+        models: {
+          routine: "provider-specific-routine-alias",
+          strong: "provider-specific-strong-alias",
+        },
+      },
+    });
+  });
+
+  it.each([
+    ["routine", ""],
+    ["routine", "  "],
+    ["strong", ""],
+    ["strong", "  "],
+  ])("rejects an empty %s model", (role, model) => {
+    const input = {
+      ...policy,
+      worker: {
+        provider: "custom-provider",
+        models: {
+          routine: "routine-alias",
+          strong: "strong-alias",
+          [role]: model,
+        },
+        sandbox: "test-isolated",
+        skillRevision: "skills-1",
+      },
+    };
+
+    expect(() => parseRepositoryPolicy(input)).toThrow(
+      `policy.worker.models.${role} must be a non-empty string`,
+    );
+  });
+
+  it("rejects a policy with both legacy and role-specific worker models", () => {
+    const input = {
+      ...policy,
+      worker: {
+        ...policy.worker,
+        models: { routine: "routine-alias", strong: "strong-alias" },
+      },
+    };
+
+    expect(() => parseRepositoryPolicy(input)).toThrow(
+      "policy.worker.model cannot be combined with policy.worker.models",
+    );
+  });
+
+  it.each([
+    ["routine", "triage", "low", undefined],
+    ["routine", "implementation", "high", "substantial"],
+    ["routine", "checking", "medium", "unknown"],
+    ["routine", "repair", "critical", "small"],
+    ["routine", "review", "low", "small"],
+    ["strong", "review", "low", "substantial"],
+    ["strong", "review", "low", "unknown"],
+    ["strong", "review", "low", undefined],
+    ["strong", "review", "medium", "small"],
+    ["strong", "review", "critical", "small"],
+    ["strong", "review", undefined, "small"],
+    ["strong", "review", "unknown", "small"],
+  ] as const)(
+    "selects the %s model for %s at %s risk with %s scope",
+    (role, phase, risk, scope) => {
+      const selected = resolveAgentSelection(
+        {
+          worker: {
+            provider: "selected-provider",
+            models: { routine: "routine-alias", strong: "strong-alias" },
+            sandbox: "test-isolated",
+            skillRevision: "skills-1",
+          },
+        },
+        phase,
+        risk,
+        scope,
+      );
+
+      expect(selected).toEqual({
+        provider: "selected-provider",
+        model: role === "routine" ? "routine-alias" : "strong-alias",
+        role,
+      });
+    },
+  );
+
+  it("uses a legacy model for both agent roles", () => {
+    expect(resolveAgentSelection(policy, "triage", "low")).toEqual({
+      provider: "test",
+      model: "fixture",
+      role: "routine",
+    });
+    expect(resolveAgentSelection(policy, "review", "high")).toEqual({
+      provider: "test",
+      model: "fixture",
+      role: "strong",
+    });
+  });
+
+  it("accepts unknown risk and uses the strong model for review", () => {
+    const brief = createWorkBrief({
+      ...createBrief(),
+      risk: "unknown",
+      hash: undefined,
+    });
+    const assignment = createAssignment({
+      id: "unknown-risk-review",
+      phase: "review",
+      brief,
+      policy,
+      attempt: 1,
+      head: { branch: "shipyard/issue-42", sha: "c".repeat(40) },
+      createdAt: "2026-09-17T12:00:00.000Z",
+    });
+
+    expect(assignment.agentSelection).toEqual({
+      provider: "test",
+      model: "fixture",
+      role: "strong",
+    });
+  });
+
+  it("uses the strong model for a substantial low-risk review assignment", () => {
+    const brief = createWorkBrief({
+      ...createBrief(),
+      risk: "low",
+      scope: "substantial",
+      hash: undefined,
+    });
+    const assignment = createAssignment({
+      id: "substantial-low-risk-review",
+      phase: "review",
+      brief,
+      policy: createRepositoryPolicy({
+        ...policy,
+        worker: {
+          provider: "selected-provider",
+          models: { routine: "routine-alias", strong: "strong-alias" },
+          sandbox: "test-isolated",
+          skillRevision: "skills-1",
+        },
+      }),
+      attempt: 1,
+      head: { branch: "shipyard/issue-42", sha: "c".repeat(40) },
+      createdAt: "2026-09-17T12:00:00.000Z",
+    });
+
+    expect(assignment.agentSelection).toEqual({
+      provider: "selected-provider",
+      model: "strong-alias",
+      role: "strong",
+    });
   });
 
   it("rejects unknown versions and completed results without evidence", () => {

@@ -74,30 +74,16 @@ export * from "./workflow/review/index.js";
 export * from "./workflow/triage/index.js";
 export * from "./integrations/github/index.js";
 export * from "./integrations/releases/index.js";
-export {
-  createBindMountSandboxProvider,
-  createIsolatedSandboxProvider,
-} from "./SandboxProvider.js";
+export { createIsolatedSandboxProvider } from "./SandboxProvider.js";
 export type {
   SandboxProvider,
-  AnySandboxProvider,
-  BindMountSandboxProvider,
   IsolatedSandboxProvider,
-  NoSandboxProvider,
-  BindMountSandboxHandle,
   IsolatedSandboxHandle,
-  NoSandboxHandle,
   InteractiveExecOptions,
   ExecResult,
-  BindMountCreateOptions,
-  BindMountSandboxProviderConfig,
   IsolatedCreateOptions,
   IsolatedSandboxProviderConfig,
   BranchStrategy,
-  BindMountBranchStrategy,
-  IsolatedBranchStrategy,
-  NoSandboxBranchStrategy,
-  HeadBranchStrategy,
   MergeToHeadBranchStrategy,
   NamedBranchStrategy,
 } from "./SandboxProvider.js";

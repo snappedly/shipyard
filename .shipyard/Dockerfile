@@ -17,7 +17,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 
 # Build-args for UID/GID alignment: shipyard docker build-image
 # defaults these to the host user's UID/GID so image-built files
-# and bind-mounted files share an owner without runtime chown.
+# and explicitly mounted files share an owner without runtime chown.
 ARG AGENT_UID=1000
 ARG AGENT_GID=1000
 
@@ -31,7 +31,7 @@ USER ${AGENT_UID}:${AGENT_GID}
 
 WORKDIR /home/agent
 
-# In worktree sandbox mode, Shipyard bind-mounts the git worktree at /home/agent/workspace
-# and overrides the working directory to /home/agent/workspace at container start.
+# Shipyard syncs Git history into a sandbox-owned repository at /home/agent/workspace
+# and runs agent commands from /home/agent/workspace.
 # Structure your Dockerfile so that /home/agent/workspace can serve as the project root.
 ENTRYPOINT ["sleep", "infinity"]

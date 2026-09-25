@@ -35,7 +35,10 @@ describe("Shipyard runtime naming", () => {
 
     await runScaffold(dir);
 
-    const prompt = await readFile(join(dir, ".shipyard", "prompt.md"), "utf8");
-    expect(prompt).toContain("--label shipyard");
+    const selector = await readFile(
+      join(dir, ".shipyard", "select-issues.mjs"),
+      "utf8",
+    );
+    expect(selector).toContain('labels.includes("shipyard")');
   });
 });

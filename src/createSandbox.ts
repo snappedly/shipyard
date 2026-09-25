@@ -1,6 +1,5 @@
 import { toSessionTransferHandle } from "./SandboxProvider.js";
 import { NodeContext, NodeFileSystem } from "@effect/platform-node";
-import { join } from "node:path";
 import { Effect, Layer, Ref } from "effect";
 import type { AgentProvider } from "./AgentProvider.js";
 import {
@@ -36,18 +35,11 @@ import {
   runHostHooks,
   type SandboxHooks,
 } from "./SandboxLifecycle.js";
-import {
-  type SandboxService,
-  SandboxFactory,
-  SANDBOX_REPO_DIR,
-  resolveGitMounts,
-  makeSandboxFromHandle,
-} from "./SandboxFactory.js";
+import { type SandboxService, SandboxFactory } from "./SandboxFactory.js";
 import type {
   SandboxProvider,
-  BindMountSandboxHandle,
+  SessionTransferHandle,
   IsolatedSandboxHandle,
-  NoSandboxHandle,
   MergeToHeadBranchStrategy,
   NamedBranchStrategy,
   ExecResult,
@@ -56,11 +48,9 @@ import { validateMaxIterations } from "./validateMaxIterations.js";
 import { startSandbox } from "./startSandbox.js";
 import { syncOut } from "./syncOut.js";
 import * as WorktreeManager from "./WorktreeManager.js";
-import { copyToWorktree } from "./CopyToWorktree.js";
 import { shellQuote } from "./shellQuote.js";
 import { assertNoSymlinkComponents } from "./pathSecurity.js";
 import { resolveCwd } from "./resolveCwd.js";
-import { patchGitMountsForWindows } from "./mountUtils.js";
 import { assertResumeSessionExists } from "./resumePrecheck.js";
 import { registerShutdown } from "./shutdownRegistry.js";
 import { CLI_NAME } from "./runtimeNames.js";
@@ -86,7 +76,7 @@ export interface CreateSandboxOptions {
   readonly cwd?: string;
   /** Lifecycle hooks grouped by execution location (host or sandbox). */
   readonly hooks?: SandboxHooks;
-  /** Paths relative to the host repo root to copy into the worktree at creation time. */
+  /** Paths relative to the host repo root to copy into Docker after Git sync. */
   readonly copyToWorktree?: string[];
   /** Override default timeouts for built-in lifecycle steps. Unset keys keep their defaults. */
   readonly timeouts?: Timeouts;
@@ -94,11 +84,9 @@ export interface CreateSandboxOptions {
   readonly _test?: {
     readonly buildSandbox?: (sandboxDir: string) => SandboxService;
     /**
-     * Fake bind-mount handle exposed to the orchestrator's session-capture path.
-     * Only honored when `sandbox.tag === "bind-mount"`. Used to exercise the
-     * `bindMountHandle` flow in tests without booting a real container.
+     * Session transfer handle for tests that bypass Docker startup.
      */
-    readonly bindMountHandle?: BindMountSandboxHandle;
+    readonly sessionTransferHandle?: SessionTransferHandle;
   };
 }
 
@@ -264,7 +252,7 @@ export interface Sandbox {
    *
    * Returns the full `ExecResult` — non-zero `exitCode` is surfaced, not
    * thrown. Callers that want strict semantics should check `result.exitCode`
-   * themselves (matching the contract of `BindMountSandboxHandle.exec`).
+   * themselves (matching the contract of `SessionTransferHandle.exec`).
    */
   exec(command: string, options?: SandboxExecOptions): Promise<ExecResult>;
   /** Tear down the sandbox and worktree. */
@@ -297,14 +285,11 @@ interface SandboxHandleContext {
   readonly sandboxRepoDir: string;
   readonly sandbox: SandboxService;
   readonly providerHandle:
-    | BindMountSandboxHandle
+    | SessionTransferHandle
     | IsolatedSandboxHandle
-    | NoSandboxHandle
     | undefined;
   /** File-transfer handle adapted for agent session capture and resume. */
-  readonly bindMountHandle: BindMountSandboxHandle | undefined;
-  /** Provider tag, used by resumeSession to dispatch the host-side session lookup. */
-  readonly providerTag: SandboxProvider["tag"];
+  readonly sessionTransferHandle: SessionTransferHandle | undefined;
   readonly applyToHost: () => Effect.Effect<void, any>;
   readonly timeouts?: Timeouts;
   /** Worktree branch strategy. Set only when the handle is backed by a
@@ -332,7 +317,7 @@ const buildSandboxHandle = (
     sandboxRepoDir,
     sandbox,
     providerHandle,
-    bindMountHandle,
+    sessionTransferHandle,
     applyToHost,
     timeouts,
     branchStrategy,
@@ -380,7 +365,6 @@ const buildSandboxHandle = (
       if (runOptions.resumeSession) {
         await assertResumeSessionExists({
           provider,
-          sandboxTag: ctx.providerTag,
           hostRepoDir,
           resumeSession: runOptions.resumeSession,
         });
@@ -462,7 +446,7 @@ const buildSandboxHandle = (
               hostWorktreePath: worktreePath,
               sandboxRepoPath: sandboxRepoDir,
               applyToHost,
-              bindMountHandle,
+              sessionTransferHandle,
             },
             sandbox,
           ).pipe(
@@ -753,10 +737,9 @@ export interface CreateSandboxFromWorktreeOptions {
   readonly _test?: {
     readonly buildSandbox?: (sandboxDir: string) => SandboxService;
     /**
-     * Fake bind-mount handle exposed to the orchestrator's session-capture path.
-     * Only honored when `sandbox.tag === "bind-mount"`.
+     * Session transfer handle for tests that bypass Docker startup.
      */
-    readonly bindMountHandle?: BindMountSandboxHandle;
+    readonly sessionTransferHandle?: SessionTransferHandle;
   };
 }
 
@@ -771,36 +754,15 @@ export const createSandboxFromWorktree = async (
   const { branch, worktreePath, hostRepoDir } = options;
   const isTestMode = !!options._test?.buildSandbox;
 
-  // 1. Copy files if requested (bind-mount only)
-  if (
-    options.copyToWorktree &&
-    options.copyToWorktree.length > 0 &&
-    options.sandbox.tag !== "isolated"
-  ) {
-    await Effect.runPromise(
-      copyToWorktree(
-        options.copyToWorktree,
-        hostRepoDir,
-        worktreePath,
-        options.timeouts?.copyToWorktreeMs,
-      ),
-    );
-  }
-
   // 2. Start sandbox via provider or local sandbox layer (test mode)
-  let providerHandle:
-    | BindMountSandboxHandle
-    | IsolatedSandboxHandle
-    | NoSandboxHandle
-    | undefined;
+  let providerHandle: SessionTransferHandle | IsolatedSandboxHandle | undefined;
   let sandbox: SandboxService;
   let sandboxRepoDir: string;
-  const isIsolated = options.sandbox.tag === "isolated";
 
   if (isTestMode) {
     sandbox = options._test!.buildSandbox!(worktreePath);
     sandboxRepoDir = worktreePath;
-    providerHandle = options._test!.bindMountHandle;
+    providerHandle = options._test!.sessionTransferHandle;
   } else {
     const resolvedEnv = await Effect.runPromise(
       resolveEnv(hostRepoDir).pipe(Effect.provide(NodeContext.layer)),
@@ -813,42 +775,15 @@ export const createSandboxFromWorktree = async (
 
     const provider = options.sandbox;
 
-    let startEffect;
-    if (provider.tag === "isolated") {
-      startEffect = startSandbox({
-        provider,
-        hostRepoDir: worktreePath,
-        sourceRepoDir: hostRepoDir,
-        env,
-        copyPaths: options.copyToWorktree,
-      });
-    } else if (provider.tag === "none") {
-      startEffect = startSandbox({
-        provider,
-        hostRepoDir,
-        env,
-        worktreeOrRepoPath: worktreePath,
-      });
-    } else {
-      startEffect = resolveGitMounts(join(hostRepoDir, ".git")).pipe(
-        Effect.provide(NodeFileSystem.layer),
-        Effect.catchAll(() => Effect.succeed([])),
-        // Patch git mounts for Windows worktree compatibility (ADR-0006)
-        Effect.flatMap((gitMounts) =>
-          patchGitMountsForWindows(gitMounts, worktreePath, SANDBOX_REPO_DIR),
-        ),
-        Effect.flatMap((gitMounts) =>
-          startSandbox({
-            provider,
-            hostRepoDir,
-            env,
-            worktreeOrRepoPath: worktreePath,
-            gitMounts,
-            repoDir: SANDBOX_REPO_DIR,
-          }),
-        ),
-      );
-    }
+    const startEffect = startSandbox({
+      provider,
+      hostRepoDir: worktreePath,
+      sourceRepoDir: hostRepoDir,
+      copySourceDir: worktreePath,
+      env,
+      copyPaths: options.copyToWorktree,
+      copyTimeoutMs: options.timeouts?.copyToWorktreeMs,
+    });
 
     const startResult = await Effect.runPromise(startEffect);
 
@@ -896,15 +831,14 @@ export const createSandboxFromWorktree = async (
   }
 
   // 4. Build applyToHost callback
-  const applyToHost =
-    isIsolated && providerHandle
-      ? () => syncOut(worktreePath, providerHandle as IsolatedSandboxHandle)
-      : () => Effect.void;
+  const applyToHost = providerHandle
+    ? () => syncOut(worktreePath, providerHandle as IsolatedSandboxHandle)
+    : () => Effect.void;
 
   // 5. Build and return sandbox handle — container-only close (worktree owns worktree)
   let closed = false;
 
-  const bindMountHandle = toSessionTransferHandle(providerHandle);
+  const sessionTransferHandle = toSessionTransferHandle(providerHandle);
 
   return buildSandboxHandle(
     {
@@ -914,8 +848,7 @@ export const createSandboxFromWorktree = async (
       sandboxRepoDir,
       sandbox,
       providerHandle,
-      bindMountHandle,
-      providerTag: options.sandbox.tag,
+      sessionTransferHandle,
       applyToHost,
       timeouts: options.timeouts,
       branchStrategy: options.branchStrategy,
@@ -931,7 +864,7 @@ export const createSandboxFromWorktree = async (
 
 /**
  * Eagerly creates a git worktree on the provided explicit branch and starts
- * a sandbox with the worktree bind-mounted. Returns a Sandbox handle that
+ * a Docker sandbox with a synced Git workspace. Returns a Sandbox handle that
  * can be reused across multiple `run()` calls.
  */
 export const createSandbox = async (
@@ -939,7 +872,6 @@ export const createSandbox = async (
 ): Promise<Sandbox> => {
   const { branch } = options;
   const isTestMode = !!options._test?.buildSandbox;
-  const isIsolated = options.sandbox.tag === "isolated";
 
   // Resolve cwd, create the worktree, and set up the sandbox in a single Effect.
   // Once the worktree exists, any later failure (e.g. a missing image surfacing
@@ -959,20 +891,6 @@ export const createSandbox = async (
         );
 
         const prepared = yield* Effect.gen(function* () {
-          // Copy files (bind-mount/no-sandbox only; isolated copies in startSandbox).
-          if (
-            options.copyToWorktree &&
-            options.copyToWorktree.length > 0 &&
-            options.sandbox.tag !== "isolated"
-          ) {
-            yield* copyToWorktree(
-              options.copyToWorktree,
-              hostRepoDir,
-              worktreePath,
-              options.timeouts?.copyToWorktreeMs,
-            );
-          }
-
           // Run host.onWorktreeReady hooks (after copy, before sandbox creation).
           if (options.hooks?.host?.onWorktreeReady?.length) {
             yield* runHostHooks(
@@ -983,9 +901,8 @@ export const createSandbox = async (
 
           // Start the sandbox via the test layer or the shared startSandbox helper.
           let providerHandle:
-            | BindMountSandboxHandle
+            | SessionTransferHandle
             | IsolatedSandboxHandle
-            | NoSandboxHandle
             | undefined;
           let sandbox: SandboxService;
           let sandboxRepoDir: string;
@@ -993,7 +910,7 @@ export const createSandbox = async (
           if (isTestMode) {
             sandbox = options._test!.buildSandbox!(worktreePath);
             sandboxRepoDir = worktreePath;
-            providerHandle = options._test!.bindMountHandle;
+            providerHandle = options._test!.sessionTransferHandle;
           } else {
             const resolvedEnv = yield* resolveEnv(hostRepoDir);
             const env = mergeProviderEnv({
@@ -1003,43 +920,14 @@ export const createSandbox = async (
             });
 
             const provider = options.sandbox;
-            const startResult = yield* provider.tag === "isolated"
-              ? startSandbox({
-                  provider,
-                  hostRepoDir: worktreePath,
-                  sourceRepoDir: hostRepoDir,
-                  env,
-                  copyPaths: options.copyToWorktree,
-                })
-              : provider.tag === "none"
-                ? startSandbox({
-                    provider,
-                    hostRepoDir,
-                    env,
-                    worktreeOrRepoPath: worktreePath,
-                  })
-                : resolveGitMounts(join(hostRepoDir, ".git")).pipe(
-                    Effect.provide(NodeFileSystem.layer),
-                    Effect.catchAll(() => Effect.succeed([])),
-                    // Patch git mounts for Windows worktree compatibility (ADR-0006)
-                    Effect.flatMap((gitMounts) =>
-                      patchGitMountsForWindows(
-                        gitMounts,
-                        worktreePath,
-                        SANDBOX_REPO_DIR,
-                      ),
-                    ),
-                    Effect.flatMap((gitMounts) =>
-                      startSandbox({
-                        provider,
-                        hostRepoDir,
-                        env,
-                        worktreeOrRepoPath: worktreePath,
-                        gitMounts,
-                        repoDir: SANDBOX_REPO_DIR,
-                      }),
-                    ),
-                  );
+            const startResult = yield* startSandbox({
+              provider,
+              hostRepoDir: worktreePath,
+              sourceRepoDir: hostRepoDir,
+              env,
+              copyPaths: options.copyToWorktree,
+              copyTimeoutMs: options.timeouts?.copyToWorktreeMs,
+            });
 
             providerHandle = startResult.handle;
             sandbox = startResult.sandbox;
@@ -1098,10 +986,9 @@ export const createSandbox = async (
     );
 
   // Build applyToHost callback (once, reused across runs)
-  const applyToHost =
-    isIsolated && providerHandle
-      ? () => syncOut(worktreePath, providerHandle as IsolatedSandboxHandle)
-      : () => Effect.void;
+  const applyToHost = providerHandle
+    ? () => syncOut(worktreePath, providerHandle as IsolatedSandboxHandle)
+    : () => Effect.void;
 
   let closed = false;
 
@@ -1142,7 +1029,7 @@ export const createSandbox = async (
     );
   };
 
-  const bindMountHandle = toSessionTransferHandle(providerHandle);
+  const sessionTransferHandle = toSessionTransferHandle(providerHandle);
 
   // Return the Sandbox handle
   return buildSandboxHandle(
@@ -1153,8 +1040,7 @@ export const createSandbox = async (
       sandboxRepoDir,
       sandbox,
       providerHandle,
-      bindMountHandle,
-      providerTag: options.sandbox.tag,
+      sessionTransferHandle,
       applyToHost,
       timeouts: options.timeouts,
     },

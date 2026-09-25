@@ -14,14 +14,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import { Display, type DisplayEntry, SilentDisplay } from "./Display.js";
+import { type DisplayEntry, SilentDisplay } from "./Display.js";
 import { makeLocalSandbox } from "./testSandbox.js";
 import { orchestrate } from "./Orchestrator.js";
 import { substitutePromptArgs } from "./PromptArgumentSubstitution.js";
 import { claudeCode, codex as codexFactory } from "./AgentProvider.js";
 import type { AgentProvider } from "./AgentProvider.js";
 import type { SandboxService } from "./SandboxFactory.js";
-import type { DockerError, SandboxError } from "./errors.js";
+import type { DockerError } from "./errors.js";
 import { AgentError, AgentIdleTimeoutError } from "./errors.js";
 import { SandboxFactory } from "./SandboxFactory.js";
 import { encodeProjectPath } from "./SessionStore.js";
@@ -29,7 +29,7 @@ import {
   agentStreamEmitterLayer,
   type AgentStreamEvent,
 } from "./AgentStreamEmitter.js";
-import type { BindMountSandboxHandle } from "./SandboxProvider.js";
+import type { SessionTransferHandle } from "./SandboxProvider.js";
 import { CODEX_MODELS } from "./modelConfig.js";
 
 const noOpParserProvider: AgentProvider = {
@@ -536,7 +536,6 @@ describe("Orchestrator", () => {
     expect(result.completionSignal).toBeUndefined();
 
     // Host should still be at the original commit
-    const hostHead = await getHead(hostDir);
     const { stdout } = await execAsync("git log --oneline", { cwd: hostDir });
     expect(stdout.trim().split("\n")).toHaveLength(1);
   });
@@ -2856,7 +2855,7 @@ describe("Orchestrator with codex provider", () => {
 
 describe("Session capture integration", () => {
   /**
-   * Create a test factory that provides a bindMountHandle with copyFileIn/copyFileOut
+   * Create a test factory that provides a sessionTransferHandle with copyFileIn/copyFileOut
    * backed by the filesystem. This allows session capture to work through the
    * sessionStorage.captureToHost / resumeIntoSandbox path.
    */
@@ -2891,7 +2890,7 @@ describe("Session capture integration", () => {
           }),
           (_branchName) => {
             // Create a bind-mount handle backed by filesystem copy
-            const handle: BindMountSandboxHandle = {
+            const handle: SessionTransferHandle = {
               worktreePath: sandboxBaseDir,
               exec: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
               copyFileIn: async (hostPath, sandboxPath) => {
@@ -2936,7 +2935,7 @@ describe("Session capture integration", () => {
                 hostWorktreePath: sandboxBaseDir,
                 sandboxRepoPath: sandboxBaseDir,
                 applyToHost: () => Effect.void,
-                bindMountHandle: handle,
+                sessionTransferHandle: handle,
               },
               sandbox,
             ) as Effect.Effect<A, E | DockerError, R>;
@@ -3058,7 +3057,7 @@ describe("Session capture integration", () => {
     await initRepo(hostDir);
     await commitFile(hostDir, "hello.txt", "hello", "initial commit");
 
-    // Use default factory (no bindMountHandle, no session_id in stream)
+    // Use default factory (no sessionTransferHandle, no session_id in stream)
     const { factoryLayer } = makeTestSandboxFactory(hostDir, (dir) =>
       makeMockAgentLayer(dir, async () => {
         return "Done.";
@@ -3219,7 +3218,7 @@ describe("Session capture integration", () => {
             );
           }),
           () => {
-            const handle: BindMountSandboxHandle = {
+            const handle: SessionTransferHandle = {
               worktreePath: sandboxBaseDir,
               exec: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
               copyFileIn: async (hostPath, sandboxPath) => {
@@ -3288,7 +3287,7 @@ describe("Session capture integration", () => {
                 hostWorktreePath: sandboxBaseDir,
                 sandboxRepoPath: sandboxBaseDir,
                 applyToHost: () => Effect.void,
-                bindMountHandle: handle,
+                sessionTransferHandle: handle,
               },
               sandbox,
             ) as Effect.Effect<A, E | DockerError, R>;

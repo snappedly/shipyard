@@ -1,17 +1,14 @@
 import { Duration, Effect, Exit, TestClock, TestContext } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { exec } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import {
-  createBindMountSandboxProvider,
   createIsolatedSandboxProvider,
-  type BindMountSandboxHandle,
   type IsolatedSandboxHandle,
 } from "./SandboxProvider.js";
-import { SANDBOX_REPO_DIR } from "./SandboxFactory.js";
 import { startSandbox, COPY_PATHS_TIMEOUT_MS } from "./startSandbox.js";
 import { testIsolated } from "./sandboxes/test-isolated.js";
 import { CopyToWorktreeTimeoutError } from "./errors.js";
@@ -36,157 +33,6 @@ const commitFile = async (
 };
 
 describe("startSandbox", () => {
-  describe("bind-mount provider", () => {
-    it("calls provider.create with mounts and env", async () => {
-      const createCalls: any[] = [];
-      const provider = createBindMountSandboxProvider({
-        name: "test",
-        create: async (options) => {
-          createCalls.push(options);
-          return {
-            worktreePath: SANDBOX_REPO_DIR,
-            exec: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
-            copyFileIn: async () => {},
-            copyFileOut: async () => {},
-            close: async () => {},
-          };
-        },
-      });
-
-      const gitMounts = [{ hostPath: "/repo/.git", sandboxPath: "/repo/.git" }];
-      const result = await Effect.runPromise(
-        startSandbox({
-          provider,
-          hostRepoDir: "/repo",
-          env: { FOO: "bar" },
-          worktreeOrRepoPath: "/worktree",
-          gitMounts,
-          repoDir: SANDBOX_REPO_DIR,
-        }),
-      );
-
-      expect(createCalls).toHaveLength(1);
-      expect(createCalls[0].mounts).toContainEqual({
-        hostPath: "/worktree",
-        sandboxPath: SANDBOX_REPO_DIR,
-      });
-      expect(createCalls[0].mounts).toContainEqual({
-        hostPath: "/repo/.git",
-        sandboxPath: "/repo/.git",
-      });
-      expect(createCalls[0].env).toEqual({ FOO: "bar" });
-      expect(result.worktreePath).toBe(SANDBOX_REPO_DIR);
-      expect(result.handle).toBeDefined();
-      expect(result.sandbox).toBeDefined();
-    });
-
-    it("returns a working sandboxLayer", async () => {
-      const provider = createBindMountSandboxProvider({
-        name: "test",
-        create: async () => ({
-          worktreePath: SANDBOX_REPO_DIR,
-          exec: async () => ({ stdout: "hello", stderr: "", exitCode: 0 }),
-          copyFileIn: async () => {},
-          copyFileOut: async () => {},
-          close: async () => {},
-        }),
-      });
-
-      const { sandbox } = await Effect.runPromise(
-        startSandbox({
-          provider,
-          hostRepoDir: "/repo",
-          env: {},
-          worktreeOrRepoPath: "/worktree",
-          gitMounts: [],
-          repoDir: SANDBOX_REPO_DIR,
-        }),
-      );
-
-      const result = await Effect.runPromise(
-        Effect.gen(function* () {
-          return yield* sandbox.exec("echo hello");
-        }),
-      );
-
-      expect(result.stdout).toBe("hello");
-    });
-
-    it("masks installed runner files in a head bind mount", async () => {
-      const hostDir = await mkdtemp(join(tmpdir(), "shipyard-runner-mask-"));
-      const runnerDir = join(hostDir, ".shipyard", "runner");
-      const maskDir = join(hostDir, ".shipyard", "runner-sandbox-mask");
-      await mkdir(runnerDir, { recursive: true });
-      await mkdir(maskDir);
-      await writeFile(join(runnerDir, ".credentials"), "secret");
-      const createCalls: any[] = [];
-      const provider = createBindMountSandboxProvider({
-        name: "test",
-        create: async (options) => {
-          createCalls.push(options);
-          return {
-            worktreePath: SANDBOX_REPO_DIR,
-            exec: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
-            copyFileIn: async () => {},
-            copyFileOut: async () => {},
-            close: async () => {},
-          };
-        },
-      });
-
-      try {
-        await Effect.runPromise(
-          startSandbox({
-            provider,
-            hostRepoDir: hostDir,
-            env: {},
-            worktreeOrRepoPath: hostDir,
-            gitMounts: [],
-            repoDir: SANDBOX_REPO_DIR,
-          }),
-        );
-        expect(createCalls[0].mounts).toContainEqual({
-          hostPath: maskDir,
-          sandboxPath: `${SANDBOX_REPO_DIR}/.shipyard/runner`,
-          readonly: true,
-        });
-      } finally {
-        await rm(hostDir, { recursive: true, force: true });
-      }
-    });
-
-    it("rejects a symlinked runner mask before constructing a bind mount", async () => {
-      const hostDir = await mkdtemp(join(tmpdir(), "shipyard-runner-mask-"));
-      const runnerDir = join(hostDir, ".shipyard", "runner");
-      const maskDir = join(hostDir, ".shipyard", "runner-sandbox-mask");
-      await mkdir(runnerDir, { recursive: true });
-      await symlink(runnerDir, maskDir);
-      const provider = createBindMountSandboxProvider({
-        name: "test",
-        create: async () => {
-          throw new Error("must not create sandbox");
-        },
-      });
-
-      try {
-        await expect(
-          Effect.runPromise(
-            startSandbox({
-              provider,
-              hostRepoDir: hostDir,
-              env: {},
-              worktreeOrRepoPath: hostDir,
-              gitMounts: [],
-              repoDir: SANDBOX_REPO_DIR,
-            }),
-          ),
-        ).rejects.toThrow("must be a real directory");
-      } finally {
-        await rm(hostDir, { recursive: true, force: true });
-      }
-    });
-  });
-
   describe("isolated provider", () => {
     const tempDirs: string[] = [];
 

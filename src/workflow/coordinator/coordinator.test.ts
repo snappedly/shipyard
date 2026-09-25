@@ -129,6 +129,99 @@ const createCoordinator = (clock = createClock()) => {
 };
 
 describe("workflow coordinator", () => {
+  it.each(["triage", "implementation", "repair"] as const)(
+    "binds the routine agent model to each %s assignment",
+    async (phase) => {
+      const { coordinator } = createCoordinator();
+      const phaseBrief = brief({
+        identity: {
+          repository,
+          itemId: "8",
+          kind: phase === "repair" ? "pr-repair" : "executable-issue",
+        },
+        risk: "high",
+      });
+      const selectedPolicy = policy({
+        worker: {
+          provider: "selected-provider",
+          models: { routine: "routine-alias", strong: "strong-alias" },
+          sandbox: "fixture",
+          skillRevision: "skills-1",
+        },
+      });
+      await coordinator.ingest(
+        event(
+          `delivery-${phase}-role`,
+          "2026-09-17T12:00:00.000Z",
+          "a".repeat(40),
+          {
+            brief: phaseBrief,
+            policy: selectedPolicy,
+            phase,
+          },
+        ),
+      );
+      const dispatch = await coordinator.dispatchNext({
+        repository,
+        workerId: "worker-a",
+      });
+
+      expect(dispatch.assignment?.agentSelection).toEqual({
+        provider: "selected-provider",
+        model: "routine-alias",
+        role: "routine",
+      });
+      expect(dispatch.job?.phaseAttempts[phase]).toBe(1);
+    },
+  );
+
+  it("reuses the selected model within the bounded infrastructure retry", async () => {
+    const { coordinator } = createCoordinator();
+    const received = await coordinator.ingest(
+      event(
+        "delivery-model-retry",
+        "2026-09-17T12:00:00.000Z",
+        "a".repeat(40),
+        {
+          policy: policy({
+            worker: {
+              provider: "selected-provider",
+              models: { routine: "routine-alias", strong: "strong-alias" },
+              sandbox: "fixture",
+              skillRevision: "skills-1",
+            },
+            phaseBudgets: {
+              ...policy().phaseBudgets,
+              implementation: { maxAttempts: 1, timeoutSeconds: 60 },
+            },
+          }),
+        },
+      ),
+    );
+    const first = await coordinator.dispatchNext({
+      repository,
+      workerId: "worker-a",
+    });
+    await coordinator.recordInfrastructureFailure({
+      jobId: received.job!.id,
+      assignmentId: first.assignment!.id,
+      error: "Worker process exited before returning a result",
+    });
+
+    const retry = await coordinator.dispatchNext({
+      repository,
+      workerId: "worker-b",
+    });
+    const retriedJob = await coordinator.getJob(received.job!.id);
+
+    expect(retry.assignment?.id).toBe(first.assignment?.id);
+    expect(retry.assignment?.attempt).toBe(1);
+    expect(retry.assignment?.agentSelection).toEqual(
+      first.assignment?.agentSelection,
+    );
+    expect(retriedJob?.phaseAttempts.implementation).toBe(1);
+  });
+
   it("converges duplicate and out-of-order deliveries on one job and dispatch", async () => {
     const { coordinator } = createCoordinator();
     const newer = await coordinator.ingest(
@@ -580,7 +673,17 @@ describe("workflow coordinator", () => {
   it("binds checks and reviews to the assigned candidate and routes open findings to repair", async () => {
     const { coordinator } = createCoordinator();
     const received = await coordinator.ingest(
-      event("delivery-review", "2026-09-17T12:00:00.000Z", "a".repeat(40)),
+      event("delivery-review", "2026-09-17T12:00:00.000Z", "a".repeat(40), {
+        brief: brief({ risk: "low", scope: "substantial" }),
+        policy: policy({
+          worker: {
+            provider: "selected-provider",
+            models: { routine: "routine-alias", strong: "strong-alias" },
+            sandbox: "fixture",
+            skillRevision: "skills-1",
+          },
+        }),
+      }),
     );
     const implementation = await coordinator.dispatchNext({
       repository,
@@ -691,6 +794,11 @@ describe("workflow coordinator", () => {
       workerId: "worker-a",
       jobId: received.job!.id,
     });
+    expect(reviewDispatch.assignment?.agentSelection).toEqual({
+      provider: "selected-provider",
+      model: "strong-alias",
+      role: "strong",
+    });
     const reviewResult = {
       contractVersion: WORKFLOW_CONTRACT_VERSION,
       assignmentId: reviewDispatch.assignment!.id,
@@ -783,7 +891,7 @@ describe("workflow coordinator", () => {
 
   it("cancels active work when the source closes and does not dispatch planning specs", async () => {
     const { coordinator } = createCoordinator();
-    const received = await coordinator.ingest(
+    await coordinator.ingest(
       event("delivery-open", "2026-09-17T12:00:00.000Z", "a".repeat(40)),
     );
     await expect(

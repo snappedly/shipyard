@@ -2,8 +2,7 @@
  * Shared helper for filesystem-backed test sandbox providers.
  *
  * Implements "run commands in a temp directory" — process spawning,
- * working-directory management, exit code propagation, cleanup. Both
- * `testBindMount` and `testIsolated` are thin adaptors over this helper.
+ * working-directory management, exit code propagation, and cleanup.
  */
 
 import { execFile, spawn } from "node:child_process";
@@ -11,9 +10,8 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  createBindMountSandboxProvider,
-  type BindMountSandboxHandle,
-  type BindMountSandboxProvider,
+  createIsolatedSandboxProvider,
+  type IsolatedSandboxProvider,
   type ExecResult,
 } from "../SandboxProvider.js";
 import { collectProcessOutput } from "../processOutput.js";
@@ -108,34 +106,32 @@ export const createTempSandbox = async (
 };
 
 export interface StubProviderRecord {
-  readonly provider: BindMountSandboxProvider;
+  readonly provider: IsolatedSandboxProvider;
   readonly createCalls: ReadonlyArray<unknown>;
   readonly closeCalls: { count: number };
 }
 
 /**
- * Create a no-op bind-mount sandbox provider that records `create`/`close` calls.
- * For tests that verify call contracts without exercising filesystem behaviour.
+ * Create a filesystem-backed provider that records `create`/`close` calls.
  */
 export const testStubProvider = (
-  options: { name?: string; worktreePath?: string } = {},
+  options: { name?: string } = {},
 ): StubProviderRecord => {
   const createCalls: unknown[] = [];
   const closeCalls = { count: 0 };
-  const provider = createBindMountSandboxProvider({
+  const provider = createIsolatedSandboxProvider({
     name: options.name ?? "test-stub",
     create: async (createOptions) => {
       createCalls.push(createOptions);
-      const handle: BindMountSandboxHandle = {
-        worktreePath: options.worktreePath ?? "/home/agent/workspace",
-        exec: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
-        copyFileIn: async () => {},
-        copyFileOut: async () => {},
+      const { testIsolated } = await import("./test-isolated.js");
+      const handle = await testIsolated().create(createOptions);
+      return {
+        ...handle,
         close: async () => {
           closeCalls.count++;
+          await handle.close();
         },
       };
-      return handle;
     },
   });
   return { provider, createCalls, closeCalls };

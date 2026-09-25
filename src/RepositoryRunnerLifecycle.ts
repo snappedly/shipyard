@@ -3,12 +3,7 @@ import { constants } from "node:fs";
 import { access, lstat, mkdir, readFile, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import {
-  ACTIVATION_LABEL,
-  CONFIG_DIR,
-  RUNNER_DIR,
-  RUNNER_SANDBOX_MASK_DIR,
-} from "./runtimeNames.js";
+import { ACTIVATION_LABEL, CONFIG_DIR, RUNNER_DIR } from "./runtimeNames.js";
 import {
   assertProtectedDirectoryIdentities,
   repositoryRunnerEnvironment,
@@ -260,18 +255,13 @@ export const validateExistingRepositoryRunner = async (
   options: {
     readonly repoDir: string;
     readonly runnerDir: string;
-    readonly maskDir: string;
     readonly repository: string;
     readonly runnerName: string;
   },
   adapters: RunnerInstallValidationAdapters = defaultAdapters,
 ): Promise<RunnerInstallMetadata> => {
-  if (!(await adapters.exists(options.maskDir))) {
-    await adapters.makeDirectory(options.maskDir);
-  }
   await assertProtectedDirectoryIdentities(
     options.runnerDir,
-    options.maskDir,
     adapters.inspectDirectory,
   ).catch((error) => {
     throw lifecycleFailure("Validating protected runner directories", error);
@@ -378,7 +368,6 @@ export const recoverRepositoryRunner = async (
   options: {
     readonly repoDir: string;
     readonly runnerDir: string;
-    readonly maskDir: string;
     readonly metadata: RunnerInstallMetadata;
     readonly runnerEnvironment: NodeJS.ProcessEnv;
     readonly dockerEnvironment?: NodeJS.ProcessEnv;
@@ -396,12 +385,8 @@ export const recoverRepositoryRunner = async (
 
   const workDir = join(options.runnerDir, RUNNER_WORK_DIR);
   if (await adapters.exists(workDir)) await adapters.remove(workDir);
-  if (await adapters.exists(options.maskDir))
-    await adapters.remove(options.maskDir);
-  await adapters.makeDirectory(options.maskDir);
   await assertProtectedDirectoryIdentities(
     options.runnerDir,
-    options.maskDir,
     adapters.inspectDirectory,
   ).catch((error) => {
     throw lifecycleFailure("Validating protected runner directories", error);
@@ -586,7 +571,6 @@ export const removeRepositoryRunner = async (
 ): Promise<RepositoryRunnerRemoveResult> => {
   const configDir = join(options.repoDir, CONFIG_DIR);
   const runnerDir = join(configDir, RUNNER_DIR);
-  const maskDir = join(configDir, RUNNER_SANDBOX_MASK_DIR);
   if (!(await adapters.exists(runnerDir))) {
     throw new RunnerLifecycleError(
       `No repository runner is installed at ${runnerDir}.`,
@@ -598,7 +582,6 @@ export const removeRepositoryRunner = async (
   } catch (error) {
     if (!options.force) throw error;
     await adapters.remove(runnerDir);
-    if (await adapters.exists(maskDir)) await adapters.remove(maskDir);
     return {
       removed: true,
       forced: true,
@@ -630,7 +613,6 @@ export const removeRepositoryRunner = async (
       );
     }
     await adapters.remove(runnerDir);
-    if (await adapters.exists(maskDir)) await adapters.remove(maskDir);
     return {
       removed: true,
       forced: true,
@@ -638,7 +620,6 @@ export const removeRepositoryRunner = async (
     };
   }
 
-  if (await adapters.exists(maskDir)) await adapters.remove(maskDir);
   await adapters.remove(runnerDir);
   return { removed: true, forced: false };
 };

@@ -13,7 +13,6 @@ import {
   type HumanReviewDecisionInput,
 } from "../../workflow/handoff/index.js";
 import { verifyGitHubWebhookSignature } from "./signature.js";
-import { InMemoryGitHubStore } from "./store.js";
 import type {
   GitHubActor,
   GitHubAuthorizationPolicy,
@@ -27,10 +26,8 @@ import type {
   GitHubNormalizationResult,
   GitHubNormalizedEvent,
   GitHubPullRequestReviewSnapshot,
-  GitHubPullRequestReviewHandler,
   GitHubReconciliationInput,
   GitHubReconciliationResult,
-  GitHubTrackedPullRequest,
   GitHubWebhookEnvelope,
   GitHubWebhookReceipt,
   GitHubWebhookRequest,
@@ -735,32 +732,6 @@ export class GitHubIntegration {
       ingest,
       reason: ingest.reason,
     };
-  }
-
-  private async recordRejected(input: {
-    readonly deliveryId: string;
-    readonly eventName: string;
-    readonly payload: unknown;
-    readonly body: string | Uint8Array;
-    readonly reason: string;
-  }): Promise<void> {
-    const payloadRecord = record(input.payload);
-    const delivery: GitHubDeliveryRecord = {
-      deliveryId: input.deliveryId,
-      eventName: input.eventName,
-      repository: payloadRecord
-        ? (repositoryName(payloadRecord) ?? "unknown")
-        : "unknown",
-      senderLogin: payloadRecord ? sender(payloadRecord).login : "unknown",
-      receivedAt: this.now(),
-      payloadHash: payloadHash(input.body),
-      payload: input.payload,
-      status: "rejected",
-      reason: input.reason,
-    };
-    const stored =
-      await this.options.deliveryStore.recordDeliveryIfAbsent(delivery);
-    if (!stored.inserted) return;
   }
 
   private async rejectStored(

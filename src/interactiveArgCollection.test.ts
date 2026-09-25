@@ -15,12 +15,12 @@ vi.mock("@clack/prompts", async (importOriginal) => {
 
 import { interactive } from "./interactive.js";
 import {
-  createBindMountSandboxProvider,
-  type BindMountSandboxHandle,
+  createIsolatedSandboxProvider,
   type InteractiveExecOptions,
 } from "./SandboxProvider.js";
 import { claudeCode } from "./AgentProvider.js";
 import { silenceTerminalOutput } from "./testTerminalOutput.js";
+import { testIsolated } from "./sandboxes/test-isolated.js";
 
 silenceTerminalOutput();
 
@@ -64,26 +64,12 @@ describe("interactive arg collection", () => {
       opts: InteractiveExecOptions,
     ) => Promise<{ exitCode: number }>,
   ) =>
-    createBindMountSandboxProvider({
+    createIsolatedSandboxProvider({
       name: "test-interactive",
-      create: async (options) => {
-        const handle: BindMountSandboxHandle = {
-          worktreePath: options.worktreePath,
-          exec: async (command) => {
-            const result = execSync(command, {
-              cwd: options.worktreePath,
-              encoding: "utf-8",
-              stdio: ["pipe", "pipe", "pipe"],
-            });
-            return { stdout: result, stderr: "", exitCode: 0 };
-          },
-          interactiveExec: fakeInteractiveExec,
-          copyFileIn: async () => {},
-          copyFileOut: async () => {},
-          close: async () => {},
-        };
-        return handle;
-      },
+      create: async (options) => ({
+        ...(await testIsolated().create(options)),
+        interactiveExec: fakeInteractiveExec,
+      }),
     });
 
   it("prompts for missing {{KEY}} placeholders and substitutes them", async () => {

@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import { existsSync } from "node:fs";
-import { join, posix } from "node:path";
+import { posix } from "node:path";
 import {
   ContainerStartTimeoutError,
   CopyToWorktreeTimeoutError,
@@ -11,213 +11,43 @@ import {
   type DockerError,
 } from "./errors.js";
 import type {
-  SandboxProvider,
-  BindMountSandboxProvider,
-  BindMountSandboxHandle,
   IsolatedSandboxProvider,
   IsolatedSandboxHandle,
-  NoSandboxProvider,
-  NoSandboxHandle,
 } from "./SandboxProvider.js";
 import {
   type SandboxService,
-  type MountEntry,
   makeSandboxFromHandle,
-  SANDBOX_REPO_DIR,
 } from "./SandboxFactory.js";
 import { syncIn } from "./syncIn.js";
-import { normalizeMounts } from "./mountUtils.js";
 import {
   assertNoSymlinkComponents,
   resolveSafeRelativePath,
 } from "./pathSecurity.js";
-import {
-  assertExcludesRepositoryRunner,
-  assertSafeRepositoryRunnerDirectories,
-} from "./runnerSecurity.js";
-import {
-  CONFIG_DIR,
-  RUNNER_DIR,
-  RUNNER_SANDBOX_MASK_DIR,
-} from "./runtimeNames.js";
+import { assertExcludesRepositoryRunner } from "./runnerSecurity.js";
 
-export interface StartSandboxBindMountOptions {
-  provider: BindMountSandboxProvider;
-  hostRepoDir: string;
-  env: Record<string, string>;
-  worktreeOrRepoPath: string;
-  gitMounts: MountEntry[];
-  repoDir: string;
-  copyPaths?: undefined;
+export interface StartSandboxOptions {
+  readonly sourceRepoDir?: string;
+  /** Source for selected files; defaults to the original repository. */
+  readonly copySourceDir?: string;
+  readonly provider: IsolatedSandboxProvider;
+  readonly hostRepoDir: string;
+  readonly env: Record<string, string>;
+  readonly copyPaths?: string[];
+  readonly copyTimeoutMs?: number;
 }
-
-export interface StartSandboxIsolatedOptions {
-  /** Original repository for image naming and configured copy paths. */
-  sourceRepoDir?: string;
-  provider: IsolatedSandboxProvider;
-  hostRepoDir: string;
-  env: Record<string, string>;
-  worktreeOrRepoPath?: undefined;
-  gitMounts?: undefined;
-  repoDir?: undefined;
-  copyPaths?: string[];
-}
-
-export interface StartSandboxNoSandboxOptions {
-  provider: NoSandboxProvider;
-  hostRepoDir: string;
-  env: Record<string, string>;
-  /** Host-side worktree path the agent will run in. Equal to hostRepoDir in head mode. */
-  worktreeOrRepoPath: string;
-  gitMounts?: undefined;
-  repoDir?: undefined;
-  copyPaths?: undefined;
-}
-
-export type StartSandboxOptions =
-  | StartSandboxBindMountOptions
-  | StartSandboxIsolatedOptions
-  | StartSandboxNoSandboxOptions;
 
 export interface StartSandboxResult {
-  handle: BindMountSandboxHandle | IsolatedSandboxHandle | NoSandboxHandle;
-  sandbox: SandboxService;
-  worktreePath: string;
+  readonly handle: IsolatedSandboxHandle;
+  readonly sandbox: SandboxService;
+  readonly worktreePath: string;
 }
 
 const CONTAINER_START_TIMEOUT_MS = 120_000;
 const SYNC_IN_TIMEOUT_MS = 120_000;
-export const COPY_PATHS_TIMEOUT_MS = 120_000;
+export const COPY_PATHS_TIMEOUT_MS = 60_000;
 
-/**
- * Start a sandbox by dispatching on `provider.tag`.
- *
- * - `"bind-mount"`: creates mounts and delegates to the provider's `create()`.
- * - `"isolated"`: creates handle, syncs host repo via git bundle, then copies
- *   optional `copyPaths` via `handle.copyIn()`.
- *
- * Returns the handle, a `SandboxService` layer, and the worktree path.
- */
 export const startSandbox = (
   options: StartSandboxOptions,
-): Effect.Effect<
-  StartSandboxResult,
-  | DockerError
-  | WorktreeError
-  | SyncError
-  | ContainerStartTimeoutError
-  | SyncInTimeoutError
-  | CopyToWorktreeTimeoutError
-> => {
-  if (options.provider.tag === "bind-mount") {
-    return startBindMountSandbox(options as StartSandboxBindMountOptions);
-  }
-  if (options.provider.tag === "none") {
-    return startNoSandbox(options as StartSandboxNoSandboxOptions);
-  }
-  return startIsolatedSandbox(options as StartSandboxIsolatedOptions);
-};
-
-const startNoSandbox = (
-  options: StartSandboxNoSandboxOptions,
-): Effect.Effect<StartSandboxResult, WorktreeError> =>
-  Effect.tryPromise({
-    try: () =>
-      options.provider.create({
-        worktreePath: options.worktreeOrRepoPath,
-        env: options.env,
-      }),
-    catch: (e) =>
-      new WorktreeError({
-        message: `Provider '${options.provider.name}' create failed: ${e instanceof Error ? e.message : String(e)}`,
-      }),
-  }).pipe(
-    Effect.map((handle) => ({
-      handle,
-      sandbox: makeSandboxFromHandle(handle),
-      worktreePath: handle.worktreePath,
-    })),
-  );
-
-const startBindMountSandbox = (
-  options: StartSandboxBindMountOptions,
-): Effect.Effect<
-  StartSandboxResult,
-  DockerError | WorktreeError | ContainerStartTimeoutError
-> =>
-  Effect.tryPromise({
-    try: () => {
-      const usesRunnerMask =
-        options.worktreeOrRepoPath === options.hostRepoDir &&
-        existsSync(join(options.hostRepoDir, CONFIG_DIR, RUNNER_DIR)) &&
-        existsSync(
-          join(options.hostRepoDir, CONFIG_DIR, RUNNER_SANDBOX_MASK_DIR),
-        );
-      if (usesRunnerMask) {
-        assertSafeRepositoryRunnerDirectories(options.hostRepoDir);
-      }
-      const rawMounts = [
-        {
-          hostPath: options.worktreeOrRepoPath,
-          sandboxPath: options.repoDir,
-        },
-        ...options.gitMounts,
-        ...(usesRunnerMask
-          ? [
-              {
-                hostPath: join(
-                  options.hostRepoDir,
-                  CONFIG_DIR,
-                  RUNNER_SANDBOX_MASK_DIR,
-                ),
-                sandboxPath: posix.join(
-                  options.repoDir,
-                  CONFIG_DIR,
-                  RUNNER_DIR,
-                ),
-                readonly: true,
-              },
-            ]
-          : []),
-      ];
-      const mounts = normalizeMounts(
-        rawMounts,
-        options.worktreeOrRepoPath,
-        SANDBOX_REPO_DIR,
-      );
-      const worktreePath =
-        process.platform === "win32"
-          ? options.worktreeOrRepoPath.replace(/\\/g, "/")
-          : options.worktreeOrRepoPath;
-      return options.provider.create({
-        worktreePath,
-        hostRepoPath: options.hostRepoDir,
-        mounts,
-        env: options.env,
-      });
-    },
-    catch: (e) =>
-      new WorktreeError({
-        message: `Provider '${options.provider.name}' create failed: ${e instanceof Error ? e.message : String(e)}`,
-      }),
-  }).pipe(
-    Effect.map((handle) => ({
-      handle,
-      sandbox: makeSandboxFromHandle(handle),
-      worktreePath: handle.worktreePath,
-    })),
-    withTimeout(
-      CONTAINER_START_TIMEOUT_MS,
-      () =>
-        new ContainerStartTimeoutError({
-          message: `Sandbox container start timed out after ${CONTAINER_START_TIMEOUT_MS}ms`,
-          timeoutMs: CONTAINER_START_TIMEOUT_MS,
-        }),
-    ),
-  );
-
-const startIsolatedSandbox = (
-  options: StartSandboxIsolatedOptions,
 ): Effect.Effect<
   StartSandboxResult,
   | DockerError
@@ -263,6 +93,9 @@ const startIsolatedSandbox = (
 
       if (options.copyPaths && options.copyPaths.length > 0) {
         const pathsToCopy = options.copyPaths;
+        const copySourceDir =
+          options.copySourceDir ?? options.sourceRepoDir ?? options.hostRepoDir;
+        const copyTimeoutMs = options.copyTimeoutMs ?? COPY_PATHS_TIMEOUT_MS;
         yield* Effect.gen(function* () {
           for (const relativePath of pathsToCopy) {
             let hostPath: string;
@@ -270,7 +103,7 @@ const startIsolatedSandbox = (
             try {
               assertExcludesRepositoryRunner(relativePath);
               hostPath = resolveSafeRelativePath(
-                options.sourceRepoDir ?? options.hostRepoDir,
+                copySourceDir,
                 relativePath,
                 "copy path",
               );
@@ -294,7 +127,7 @@ const startIsolatedSandbox = (
             yield* Effect.tryPromise({
               try: async () => {
                 await assertNoSymlinkComponents(
-                  options.sourceRepoDir ?? options.hostRepoDir,
+                  copySourceDir,
                   hostPath,
                   "copy source",
                 );
@@ -314,11 +147,11 @@ const startIsolatedSandbox = (
           }
         }).pipe(
           withTimeout(
-            COPY_PATHS_TIMEOUT_MS,
+            copyTimeoutMs,
             () =>
               new CopyToWorktreeTimeoutError({
-                message: `Copying paths to worktree timed out after ${COPY_PATHS_TIMEOUT_MS}ms`,
-                timeoutMs: COPY_PATHS_TIMEOUT_MS,
+                message: `Copying paths to sandbox timed out after ${copyTimeoutMs}ms`,
+                timeoutMs: copyTimeoutMs,
                 paths: pathsToCopy,
               }),
           ),

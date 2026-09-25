@@ -57,36 +57,9 @@ describe("docker()", () => {
     expect(provider.name).toBe("docker");
   });
 
-  it("accepts an imageName option", () => {
-    const provider = docker({ imageName: "my-image:latest" });
-    expect(provider.tag).toBe("isolated");
-    expect(provider.name).toBe("docker");
-  });
-
-  it("has a create function", () => {
-    const provider = docker();
-    expect(typeof provider.create).toBe("function");
-  });
-
   it("does not have a branchStrategy property", () => {
     const provider = docker();
     expect("branchStrategy" in provider).toBe(false);
-  });
-
-  it("accepts selinuxLabel option", () => {
-    const withZ = docker({ selinuxLabel: "z" });
-    const withBigZ = docker({ selinuxLabel: "Z" });
-    const withFalse = docker({ selinuxLabel: false });
-    expect(withZ.tag).toBe("isolated");
-    expect(withBigZ.tag).toBe("isolated");
-    expect(withFalse.tag).toBe("isolated");
-  });
-
-  it("accepts a mounts option with valid paths", () => {
-    const provider = docker({
-      mounts: [{ hostPath: "~", sandboxPath: "/mnt/home" }],
-    });
-    expect(provider.tag).toBe("isolated");
   });
 
   it("throws at construction time if a mount hostPath does not exist", () => {
@@ -155,16 +128,6 @@ describe("docker()", () => {
   it("defaults env to empty object when not provided", () => {
     const provider = docker();
     expect(provider.env).toEqual({});
-  });
-
-  it("accepts a network option as a string", () => {
-    const provider = docker({ network: "my-network" });
-    expect(provider.tag).toBe("isolated");
-  });
-
-  it("accepts a network option as an array", () => {
-    const provider = docker({ network: ["net1", "net2"] });
-    expect(provider.tag).toBe("isolated");
   });
 
   it("passes --group-add flags to docker run, stringifying numeric GIDs", async () => {

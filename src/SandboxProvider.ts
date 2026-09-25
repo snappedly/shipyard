@@ -1,343 +1,139 @@
-/**
- * Sandbox provider types — the pluggable interface for sandbox runtimes.
- *
- * Provider authors implement a small Promise-based interface. Shipyard
- * handles worktree creation, git mount resolution, and commit extraction.
- */
-
 /** Result of executing a command inside a sandbox. */
 export interface ExecResult {
+  /** Collected standard output. */
   readonly stdout: string;
+  /** Collected standard error. */
   readonly stderr: string;
+  /** Process exit status. */
   readonly exitCode: number;
 }
 
-/** Options for interactiveExec — the streams the provider should wire to the spawned process. */
+/** Streams supplied when launching an interactive agent process. */
 export interface InteractiveExecOptions {
+  /** Input stream forwarded to the agent process. */
   readonly stdin: NodeJS.ReadableStream;
+  /** Output stream receiving agent standard output. */
   readonly stdout: NodeJS.WritableStream;
+  /** Output stream receiving agent standard error. */
   readonly stderr: NodeJS.WritableStream;
+  /** Working directory inside Docker. */
   readonly cwd?: string;
-  /** Terminate the interactive process when the caller cancels the session. */
+  /** Abort signal that terminates the interactive process. */
   readonly signal?: AbortSignal;
 }
 
-/** Handle to a running bind-mount sandbox. */
-export interface BindMountSandboxHandle {
-  /** Absolute path to the worktree inside the sandbox. */
-  readonly worktreePath: string;
-  /**
-   * Execute a command in the sandbox.
-   *
-   * Implementations MUST support line-by-line streaming via `onLine`. This is
-   * how Shipyard delivers live feedback to the user and enforces idle timeouts —
-   * without a streaming implementation, neither will work. A buffered/batch
-   * implementation that only calls `onLine` after the process exits does NOT
-   * satisfy this contract.
-   *
-   * When `stdin` is set, the implementation pipes the string to the child
-   * process's stdin and closes it. This avoids the Linux 128 KB per-arg limit.
-   */
-  exec(
-    command: string,
-    options?: {
-      onLine?: (line: string) => void;
-      cwd?: string;
-      sudo?: boolean;
-      stdin?: string;
-      /** Abort the command when the caller's operation is cancelled. */
-      signal?: AbortSignal;
-      /** Reject/terminate the command after this many combined output bytes. */
-      maxOutputBytes?: number;
-    },
-  ): Promise<ExecResult>;
-  /**
-   * Launch an interactive process inside the sandbox.
-   * Optional — providers that support interactive sessions implement this.
-   * The provider detects TTY mode from the streams (e.g. stdin.isTTY) and
-   * allocates a pseudo-terminal accordingly.
-   * Implementations MUST terminate the underlying process when `signal` aborts.
-   */
-  interactiveExec?(
-    args: string[],
-    options: InteractiveExecOptions,
-  ): Promise<{ exitCode: number }>;
-  /** Copy a single file from the host into the sandbox. */
-  copyFileIn(hostPath: string, sandboxPath: string): Promise<void>;
-  /** Copy a single file from the sandbox to the host. */
-  copyFileOut(sandboxPath: string, hostPath: string): Promise<void>;
-  /** Tear down the sandbox. */
-  close(): Promise<void>;
-}
-
-/** Options passed to a bind-mount provider's `create` function. */
-export interface BindMountCreateOptions {
-  /** Host-side path to the worktree directory. */
-  readonly worktreePath: string;
-  /** Host-side path to the original repo root. */
-  readonly hostRepoPath: string;
-  /** Volume mounts to apply (host:sandbox pairs). */
-  readonly mounts: Array<{
-    hostPath: string;
-    sandboxPath: string;
-    readonly?: boolean;
-  }>;
-  /** Environment variables to inject into the sandbox. */
-  readonly env: Record<string, string>;
-}
-
-/** Configuration for createBindMountSandboxProvider. */
-export interface BindMountSandboxProviderConfig {
-  /** Human-readable name for this provider (e.g. "docker"). */
-  readonly name: string;
-  /** Environment variables injected by this provider. Merged at launch time. */
-  readonly env?: Record<string, string>;
-  /**
-   * Absolute path to the home directory inside the sandbox (e.g. `"/home/agent"`).
-   * Used to expand `~` in user-provided `sandboxPath` mount configs.
-   * Set to `undefined` for providers that do not have a fixed home directory.
-   */
-  readonly sandboxHomedir?: string;
-  /** Create a sandbox handle from the given options. */
-  readonly create: (
-    options: BindMountCreateOptions,
-  ) => Promise<BindMountSandboxHandle>;
-}
-
-/** Handle to a running isolated sandbox (extends bind-mount with file transfer). */
+/** Handle to a running isolated sandbox. Docker implements this contract. */
 export interface IsolatedSandboxHandle {
-  /** Absolute path to the worktree inside the sandbox. */
+  /** Absolute Git workspace path inside Docker. */
   readonly worktreePath: string;
   /**
-   * Execute a command in the sandbox.
-   *
-   * Implementations MUST support line-by-line streaming via `onLine`. This is
-   * how Shipyard delivers live feedback to the user and enforces idle timeouts —
-   * without a streaming implementation, neither will work. A buffered/batch
-   * implementation that only calls `onLine` after the process exits does NOT
-   * satisfy this contract.
-   *
-   * When `stdin` is set, the implementation pipes the string to the child
-   * process's stdin and closes it. This avoids the Linux 128 KB per-arg limit.
+   * Execute a command in Docker. Deliver `onLine` as output arrives so idle
+   * timeouts and live feedback work; buffered delivery does not satisfy this
+   * contract. Pipe `stdin` to the child rather than passing it as an argument.
    */
   exec(
     command: string,
     options?: {
+      /** Live output callback. */
       onLine?: (line: string) => void;
+      /** Working directory inside Docker. */
       cwd?: string;
+      /** Execute as root when supported. */
       sudo?: boolean;
+      /** Input piped to the child process. */
       stdin?: string;
-      /** Abort the command when the caller's operation is cancelled. */
+      /** Abort signal that terminates the command. */
       signal?: AbortSignal;
-      /** Reject/terminate the command after this many combined output bytes. */
+      /** Maximum combined output bytes before termination. */
       maxOutputBytes?: number;
     },
   ): Promise<ExecResult>;
-  /**
-   * Launch an interactive process inside the sandbox.
-   * Optional — providers that support interactive sessions implement this.
-   * The provider detects TTY mode from the streams (e.g. stdin.isTTY) and
-   * allocates a pseudo-terminal accordingly.
-   * Implementations MUST terminate the underlying process when `signal` aborts.
-   */
+  /** Launch an interactive process and terminate it when `signal` aborts. */
   interactiveExec?(
     args: string[],
     options: InteractiveExecOptions,
   ): Promise<{ exitCode: number }>;
-  /** Copy a file or directory from the host into the sandbox. */
+  /** Copy a file or directory from the host into Docker. */
   copyIn(hostPath: string, sandboxPath: string): Promise<void>;
-  /** Copy a single file from the sandbox to the host. */
+  /** Copy a file from Docker to the host. */
+  copyFileOut(sandboxPath: string, hostPath: string): Promise<void>;
+  /** Tear down the container. */
+  close(): Promise<void>;
+}
+
+/** File transfer shape used by agent session storage. */
+export interface SessionTransferHandle {
+  /** Absolute Git workspace path inside Docker. */
+  readonly worktreePath: string;
+  /** Run a command in the sandbox. */
+  exec: IsolatedSandboxHandle["exec"];
+  /** Launch an interactive command when available. */
+  interactiveExec?: IsolatedSandboxHandle["interactiveExec"];
+  /** Copy one host file into the sandbox. */
+  copyFileIn(hostPath: string, sandboxPath: string): Promise<void>;
+  /** Copy one sandbox file to the host. */
   copyFileOut(sandboxPath: string, hostPath: string): Promise<void>;
   /** Tear down the sandbox. */
   close(): Promise<void>;
 }
 
-/** Options passed to an isolated provider's `create` function. */
+/** Inputs to Docker sandbox creation. */
 export interface IsolatedCreateOptions {
-  /** Original host repository path, used only for image naming; never mounted. */
+  /** Original repository path used to derive the image name; never mounted. */
   readonly hostRepoPath?: string;
-  /** Environment variables to inject into the sandbox. */
+  /** Environment injected into the Docker container. */
   readonly env: Record<string, string>;
 }
 
-/** Configuration for createIsolatedSandboxProvider. */
+/** Configuration for the isolated Docker provider contract. */
 export interface IsolatedSandboxProviderConfig {
-  /** Human-readable name for this provider (e.g. "vercel"). */
+  /** Human-readable provider name. */
   readonly name: string;
-  /** Environment variables injected by this provider. Merged at launch time. */
+  /** Provider environment merged into sandbox startup. */
   readonly env?: Record<string, string>;
-  /** Create an isolated sandbox handle from the given options. */
+  /** Start a sandbox and return its command and file-transfer handle. */
   readonly create: (
     options: IsolatedCreateOptions,
   ) => Promise<IsolatedSandboxHandle>;
 }
 
-/** A bind-mount sandbox provider. */
-export interface BindMountSandboxProvider {
-  /** @internal Discriminator for internal dispatch. */
-  readonly tag: "bind-mount";
-  /** Human-readable provider name. */
-  readonly name: string;
-  /** Environment variables injected by this provider. */
-  readonly env: Record<string, string>;
-  /**
-   * Absolute path to the home directory inside the sandbox (e.g. `"/home/agent"`).
-   * `undefined` when the provider does not declare a sandbox home directory.
-   */
-  readonly sandboxHomedir: string | undefined;
-  /** @internal Create a sandbox handle. */
-  readonly create: (
-    options: BindMountCreateOptions,
-  ) => Promise<BindMountSandboxHandle>;
-}
-
-/** An isolated sandbox provider. */
+/** Docker's isolated filesystem provider contract. */
 export interface IsolatedSandboxProvider {
-  /** @internal Discriminator for internal dispatch. */
+  /** Isolated filesystem discriminator. */
   readonly tag: "isolated";
   /** Human-readable provider name. */
   readonly name: string;
-  /** Environment variables injected by this provider. */
+  /** Environment variables injected into Docker. */
   readonly env: Record<string, string>;
-  /** @internal Create an isolated sandbox handle. */
+  /** Start a sandbox. */
   readonly create: (
     options: IsolatedCreateOptions,
   ) => Promise<IsolatedSandboxHandle>;
 }
 
-/** Handle to a no-sandbox session — runs commands directly on the host. */
-export interface NoSandboxHandle {
-  /** Absolute path to the worktree on the host. */
-  readonly worktreePath: string;
-  /**
-   * Execute a command on the host.
-   *
-   * Implementations MUST support line-by-line streaming via `onLine`. This is
-   * how Shipyard delivers live feedback to the user and enforces idle timeouts —
-   * without a streaming implementation, neither will work.
-   *
-   * When `stdin` is set, the implementation pipes the string to the child
-   * process's stdin and closes it. This avoids the Linux 128 KB per-arg limit.
-   */
-  exec(
-    command: string,
-    options?: {
-      onLine?: (line: string) => void;
-      cwd?: string;
-      sudo?: boolean;
-      stdin?: string;
-      /** Abort the command when the caller's operation is cancelled. */
-      signal?: AbortSignal;
-      /** Reject/terminate the command after this many combined output bytes. */
-      maxOutputBytes?: number;
-    },
-  ): Promise<ExecResult>;
-  /**
-   * Launch an interactive process on the host with inherited stdio.
-   */
-  interactiveExec(
-    args: string[],
-    options: InteractiveExecOptions,
-  ): Promise<{ exitCode: number }>;
-  /** No-op — no container to tear down. */
-  close(): Promise<void>;
-}
+/** Provider accepted by Shipyard's Docker execution path. */
+export type SandboxProvider = IsolatedSandboxProvider;
 
-/** A no-sandbox provider — runs the agent directly on the host with no container isolation. */
-export interface NoSandboxProvider {
-  /** @internal Discriminator for internal dispatch. */
-  readonly tag: "none";
-  /** Human-readable provider name. */
-  readonly name: string;
-  /** Environment variables injected by this provider. */
-  readonly env: Record<string, string>;
-  /** @internal Create a no-sandbox handle. */
-  readonly create: (options: {
-    readonly worktreePath: string;
-    readonly env: Record<string, string>;
-  }) => Promise<NoSandboxHandle>;
-}
-
-// ---------- Branch strategy types ----------
-
-/** Head strategy: agent writes directly to host working directory. Bind-mount only. */
-export interface HeadBranchStrategy {
-  readonly type: "head";
-}
-
-/** Merge-to-head strategy: temp branch, merge back to HEAD, delete temp branch. */
+/** Create a temporary branch and merge its commits back to host HEAD. */
 export interface MergeToHeadBranchStrategy {
+  /** Branch strategy discriminator. */
   readonly type: "merge-to-head";
 }
 
-/** Branch strategy: commits land on an explicit named branch. */
+/** Run on a caller-named branch. */
 export interface NamedBranchStrategy {
+  /** Branch strategy discriminator. */
   readonly type: "branch";
+  /** Branch to create or reuse. */
   readonly branch: string;
-  /**
-   * Git ref to use as the starting point when creating a new branch.
-   * Only used when the branch doesn't already exist — ignored otherwise.
-   * Callers are responsible for ensuring the ref is current (e.g. `git fetch`).
-   * Defaults to `HEAD` when omitted.
-   */
+  /** Starting ref for a new branch. */
   readonly baseBranch?: string;
 }
 
-/** Branch strategy for bind-mount providers (all three variants). */
-export type BindMountBranchStrategy =
-  | HeadBranchStrategy
-  | MergeToHeadBranchStrategy
-  | NamedBranchStrategy;
+/** Supported Docker branch strategies. */
+export type BranchStrategy = MergeToHeadBranchStrategy | NamedBranchStrategy;
 
-/** Branch strategy for isolated providers (no head — can't write to host). */
-export type IsolatedBranchStrategy =
-  | MergeToHeadBranchStrategy
-  | NamedBranchStrategy;
-
-/** Branch strategy for no-sandbox providers (all three — same as bind-mount). */
-export type NoSandboxBranchStrategy =
-  | HeadBranchStrategy
-  | MergeToHeadBranchStrategy
-  | NamedBranchStrategy;
-
-/** Union of all branch strategy variants. */
-export type BranchStrategy =
-  | BindMountBranchStrategy
-  | IsolatedBranchStrategy
-  | NoSandboxBranchStrategy;
-
-/**
- * A sandbox provider — the pluggable unit that `run()`, `interactive()`, and
- * `createSandbox()` accept. Tagged for internal dispatch: "bind-mount",
- * "isolated", or "none". When `NoSandboxProvider` is used, the agent runs
- * directly on the host with no container isolation — opt in at your own risk.
- */
-export type SandboxProvider =
-  | BindMountSandboxProvider
-  | IsolatedSandboxProvider
-  | NoSandboxProvider;
-
-/** @deprecated Use `SandboxProvider` — it now includes `NoSandboxProvider`. */
-export type AnySandboxProvider = SandboxProvider;
-
-/**
- * Create a bind-mount sandbox provider from a config object.
- * The returned provider can be passed to `run()` or `createSandbox()`.
- */
-export const createBindMountSandboxProvider = (
-  config: BindMountSandboxProviderConfig,
-): BindMountSandboxProvider => ({
-  tag: "bind-mount",
-  name: config.name,
-  env: config.env ?? {},
-  sandboxHomedir: config.sandboxHomedir,
-  create: config.create,
-});
-
-/**
- * Create an isolated sandbox provider from a config object.
- * The returned provider can be passed to `run()` or `createSandbox()`.
- */
+/** Construct the isolated provider contract used by Docker. */
 export const createIsolatedSandboxProvider = (
   config: IsolatedSandboxProviderConfig,
 ): IsolatedSandboxProvider => ({
@@ -347,23 +143,21 @@ export const createIsolatedSandboxProvider = (
   create: config.create,
 });
 
-/** @internal Adapt isolated file transfer to the existing agent-session boundary. */
+/** Adapt Docker file transfer to the agent session storage interface. */
 export const toSessionTransferHandle = (
-  handle:
-    | BindMountSandboxHandle
-    | IsolatedSandboxHandle
-    | NoSandboxHandle
-    | undefined,
-): BindMountSandboxHandle | undefined => {
-  if (handle === undefined || !("copyFileOut" in handle)) return undefined;
-  if ("copyFileIn" in handle) return handle;
-  return {
-    worktreePath: handle.worktreePath,
-    exec: (command, options) => handle.exec(command, options),
-    interactiveExec: handle.interactiveExec?.bind(handle),
-    copyFileIn: (source, destination) => handle.copyIn(source, destination),
-    copyFileOut: (source, destination) =>
-      handle.copyFileOut(source, destination),
-    close: () => handle.close(),
-  };
-};
+  handle: IsolatedSandboxHandle | SessionTransferHandle | undefined,
+): SessionTransferHandle | undefined =>
+  handle === undefined
+    ? undefined
+    : "copyFileIn" in handle
+      ? handle
+      : {
+          worktreePath: handle.worktreePath,
+          exec: (command, options) => handle.exec(command, options),
+          interactiveExec: handle.interactiveExec?.bind(handle),
+          copyFileIn: (source, destination) =>
+            handle.copyIn(source, destination),
+          copyFileOut: (source, destination) =>
+            handle.copyFileOut(source, destination),
+          close: () => handle.close(),
+        };

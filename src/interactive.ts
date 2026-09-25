@@ -1,32 +1,23 @@
 import { NodeContext, NodeFileSystem } from "@effect/platform-node";
-import { join } from "node:path";
 import * as clack from "@clack/prompts";
 import { Effect } from "effect";
 import type { AgentProvider } from "./AgentProvider.js";
 import { ClackDisplay, Display } from "./Display.js";
 import { preprocessPrompt } from "./PromptPreprocessor.js";
 import { resolvePrompt } from "./PromptResolver.js";
-import {
-  makeSandboxFromHandle,
-  resolveGitMounts,
-  SANDBOX_REPO_DIR,
-} from "./SandboxFactory.js";
-import { patchGitMountsForWindows } from "./mountUtils.js";
+import { makeSandboxFromHandle } from "./SandboxFactory.js";
 import {
   withSandboxLifecycle,
   runHostHooks,
   type SandboxHooks,
 } from "./SandboxLifecycle.js";
 import type {
-  AnySandboxProvider,
+  SandboxProvider,
   BranchStrategy,
-  BindMountSandboxHandle,
   IsolatedSandboxHandle,
-  NoSandboxHandle,
 } from "./SandboxProvider.js";
 import { resolveEnv } from "./EnvResolver.js";
 import { mergeProviderEnv } from "./mergeProviderEnv.js";
-import { copyToWorktree } from "./CopyToWorktree.js";
 import { startSandbox } from "./startSandbox.js";
 import { syncOut } from "./syncOut.js";
 import * as WorktreeManager from "./WorktreeManager.js";
@@ -39,7 +30,6 @@ import {
   findMissingPromptArgKeys,
   BUILT_IN_PROMPT_ARG_KEYS,
 } from "./PromptArgumentSubstitution.js";
-import { noSandbox } from "./sandboxes/no-sandbox.js";
 import { raceAbortSignal } from "./raceAbortSignal.js";
 import { resolveCwd } from "./resolveCwd.js";
 import type { Timeouts } from "./run.js";
@@ -48,20 +38,19 @@ import { CLI_NAME } from "./runtimeNames.js";
 export interface InteractiveOptions {
   /** Agent provider to use (e.g. codex(CODEX_MODELS.routine)) */
   readonly agent: AgentProvider;
-  /** Sandbox provider (e.g. docker(), noSandbox()). */
-  readonly sandbox?: AnySandboxProvider;
+  /** Docker sandbox provider. */
+  readonly sandbox: SandboxProvider;
   /** Inline prompt string (mutually exclusive with promptFile). */
   readonly prompt?: string;
   /** Path to a prompt file (mutually exclusive with prompt). */
   readonly promptFile?: string;
   /** Optional name for the interactive session. */
   readonly name?: string;
-  /** Branch strategy — controls how the agent's changes relate to branches.
-   * Defaults to { type: "head" } for bind-mount providers and { type: "merge-to-head" } for isolated providers. */
+  /** Branch strategy; defaults to merge-to-head. */
   readonly branchStrategy?: BranchStrategy;
   /** Hooks to run during sandbox lifecycle */
   readonly hooks?: SandboxHooks;
-  /** Paths relative to the host repo root to copy into the worktree before sandbox start. */
+  /** Paths relative to the host repo root to copy into Docker after Git sync. */
   readonly copyToWorktree?: string[];
   /** Key-value map for {{KEY}} placeholder substitution in prompts */
   readonly promptArgs?: PromptArgs;
@@ -120,33 +109,11 @@ export const interactive = async (
 
   const { prompt, promptFile, hooks, agent: provider } = options;
 
-  const resolvedSandbox = options.sandbox ?? noSandbox();
+  const resolvedSandbox = options.sandbox;
 
-  // Derive branch strategy
-  const branchStrategy: BranchStrategy =
-    options.branchStrategy ??
-    (resolvedSandbox.tag === "isolated"
-      ? { type: "merge-to-head" }
-      : { type: "head" }); // "bind-mount" and "none" both default to head
-
-  // Validate: head strategy is not supported with isolated providers
-  if (branchStrategy.type === "head" && resolvedSandbox.tag === "isolated") {
-    throw new Error(
-      "head branch strategy is not supported with isolated providers",
-    );
-  }
-
-  // Validate: copyToWorktree is incompatible with head strategy
-  if (
-    branchStrategy.type === "head" &&
-    options.copyToWorktree &&
-    options.copyToWorktree.length > 0
-  ) {
-    throw new Error(
-      "copyToWorktree is not supported with head branch strategy. " +
-        "In head mode the host working directory is bind-mounted directly.",
-    );
-  }
+  const branchStrategy: BranchStrategy = options.branchStrategy ?? {
+    type: "merge-to-head",
+  };
 
   // Validate buildInteractiveArgs is available
   if (!provider.buildInteractiveArgs) {
@@ -158,7 +125,6 @@ export const interactive = async (
   const branch: string | undefined =
     branchStrategy.type === "branch" ? branchStrategy.branch : undefined;
 
-  const isHeadMode = branchStrategy.type === "head";
   const sandboxProvider = resolvedSandbox;
 
   const inner = Effect.gen(function* () {
@@ -185,10 +151,7 @@ export const interactive = async (
     // 3. Capture host's current branch
     const currentHostBranch = yield* getCurrentBranch(hostRepoDir);
 
-    const resolvedBranch =
-      branchStrategy.type === "head"
-        ? currentHostBranch
-        : (branch ?? generateTempBranchName(options.name));
+    const resolvedBranch = branch ?? generateTempBranchName(options.name);
 
     // 4. Validate prompt args and collect missing ones interactively (skip when no prompt).
     // Inline prompts pass through literally — skip scanning, substitution, and built-in args.
@@ -235,8 +198,7 @@ export const interactive = async (
       yield* validateNoArgsWithInlinePrompt(userArgs);
     }
 
-    // In head mode, pass the host branch so SandboxLifecycle skips the merge step.
-    const lifecycleBranch = isHeadMode ? currentHostBranch : branch;
+    const lifecycleBranch = branch;
 
     // Display intro and summary
     yield* d.intro(options.name ?? `${CLI_NAME} interactive`);
@@ -246,100 +208,36 @@ export const interactive = async (
       Branch: resolvedBranch,
     });
 
-    // 5. Create worktree (unless head mode)
-    let worktreeInfo: WorktreeManager.WorktreeInfo | undefined;
-
-    if (!isHeadMode) {
-      worktreeInfo = yield* d.taskLog("Creating worktree", () =>
-        WorktreeManager.pruneStale(hostRepoDir).pipe(
-          Effect.catchAll(() => Effect.void),
-          Effect.andThen(
-            branch
-              ? WorktreeManager.create(hostRepoDir, { branch })
-              : WorktreeManager.create(hostRepoDir, { name: options.name }),
-          ),
+    // 5. Create a worktree for the Docker sandbox.
+    const worktreeInfo = yield* d.taskLog("Creating worktree", () =>
+      WorktreeManager.pruneStale(hostRepoDir).pipe(
+        Effect.catchAll(() => Effect.void),
+        Effect.andThen(
+          branch
+            ? WorktreeManager.create(hostRepoDir, { branch })
+            : WorktreeManager.create(hostRepoDir, { name: options.name }),
         ),
-      );
-    }
+      ),
+    );
 
     // 6. Prepare the worktree and start the sandbox. If any step fails after the
     // worktree exists (copying, hooks, or sandbox start), remove the worktree so
     // it is not orphaned on disk.
-    const handle:
-      | BindMountSandboxHandle
-      | IsolatedSandboxHandle
-      | NoSandboxHandle = yield* Effect.gen(function* () {
-      if (!isHeadMode) {
-        // Copy files to worktree (bind-mount and no-sandbox, non-head)
-        if (
-          (sandboxProvider.tag === "bind-mount" ||
-            sandboxProvider.tag === "none") &&
-          options.copyToWorktree &&
-          options.copyToWorktree.length > 0
-        ) {
-          yield* d.taskLog("Copying files to worktree", () =>
-            copyToWorktree(
-              options.copyToWorktree!,
-              hostRepoDir,
-              worktreeInfo!.path,
-              options.timeouts?.copyToWorktreeMs,
-            ),
-          );
-        }
-
-        // Run host.onWorktreeReady hooks
-        if (hooks?.host?.onWorktreeReady?.length) {
-          yield* runHostHooks(hooks.host.onWorktreeReady, worktreeInfo!.path);
-        }
-      } else if (hooks?.host?.onWorktreeReady?.length) {
-        // Head strategy: cwd is the host repo root
-        yield* runHostHooks(hooks.host.onWorktreeReady, hostRepoDir);
+    const handle: IsolatedSandboxHandle = yield* Effect.gen(function* () {
+      if (hooks?.host?.onWorktreeReady?.length) {
+        yield* runHostHooks(hooks.host.onWorktreeReady, worktreeInfo.path);
       }
-
-      // Start sandbox
-      if (sandboxProvider.tag === "none") {
-        // No-sandbox: run directly on the host, no container
-        const worktreePath = isHeadMode ? hostRepoDir : worktreeInfo!.path;
-        return yield* Effect.promise(() =>
-          sandboxProvider.create({
-            worktreePath,
-            env: effectiveEnv,
-          }),
-        );
-      } else if (sandboxProvider.tag === "isolated") {
-        const startResult = yield* d.taskLog("Starting sandbox", () =>
-          startSandbox({
-            provider: sandboxProvider,
-            hostRepoDir: worktreeInfo!.path,
-            sourceRepoDir: hostRepoDir,
-            env: effectiveEnv,
-            copyPaths: options.copyToWorktree,
-          }),
-        );
-        return startResult.handle;
-      } else {
-        const gitPath = join(hostRepoDir, ".git");
-        const rawGitMounts = yield* resolveGitMounts(gitPath);
-        const worktreeOrRepoPath = isHeadMode
-          ? hostRepoDir
-          : worktreeInfo!.path;
-        const gitMounts = yield* patchGitMountsForWindows(
-          rawGitMounts,
-          worktreeOrRepoPath,
-          SANDBOX_REPO_DIR,
-        );
-        const startResult = yield* d.taskLog("Starting sandbox", () =>
-          startSandbox({
-            provider: sandboxProvider,
-            hostRepoDir,
-            env: effectiveEnv,
-            worktreeOrRepoPath,
-            gitMounts,
-            repoDir: SANDBOX_REPO_DIR,
-          }),
-        );
-        return startResult.handle;
-      }
+      const startResult = yield* d.taskLog("Starting sandbox", () =>
+        startSandbox({
+          provider: sandboxProvider,
+          hostRepoDir: worktreeInfo.path,
+          sourceRepoDir: hostRepoDir,
+          env: effectiveEnv,
+          copyPaths: options.copyToWorktree,
+          copyTimeoutMs: options.timeouts?.copyToWorktreeMs,
+        }),
+      );
+      return startResult.handle;
     }).pipe(
       Effect.tapError(() =>
         worktreeInfo
@@ -352,7 +250,7 @@ export const interactive = async (
 
     // Run lifecycle with guaranteed cleanup of handle and worktree
     return yield* Effect.gen(function* () {
-      // Check interactiveExec is available (no-sandbox always has it; bind-mount/isolated it's optional)
+      // The Docker provider must support interactive sessions.
       if (!handle.interactiveExec) {
         throw new Error(
           `Sandbox provider does not support interactiveExec. ` +
@@ -365,10 +263,7 @@ export const interactive = async (
       const sandbox = makeSandboxFromHandle(handle);
       const worktreePath = handle.worktreePath;
 
-      const applyToHost =
-        sandboxProvider.tag === "isolated" && worktreeInfo
-          ? () => syncOut(worktreeInfo!.path, handle as IsolatedSandboxHandle)
-          : () => Effect.void; // bind-mount and no-sandbox don't need sync
+      const applyToHost = () => syncOut(worktreeInfo.path, handle);
 
       const lifecycleEffect = withSandboxLifecycle(
         {
@@ -376,7 +271,7 @@ export const interactive = async (
           sandboxRepoDir: worktreePath,
           hooks,
           branch: lifecycleBranch,
-          hostWorktreePath: isHeadMode ? hostRepoDir : worktreeInfo?.path,
+          hostWorktreePath: worktreeInfo.path,
           applyToHost,
           timeouts: options.timeouts,
         },
@@ -397,7 +292,7 @@ export const interactive = async (
             // Build interactive args and run the session
             const interactiveArgs = provider.buildInteractiveArgs!({
               prompt: fullPrompt,
-              dangerouslySkipPermissions: sandboxProvider.tag !== "none",
+              dangerouslySkipPermissions: true,
             });
 
             const result = yield* raceAbortSignal(
@@ -421,7 +316,7 @@ export const interactive = async (
 
       const exitCode = lifecycleResult.result;
 
-      // Check for uncommitted changes (worktree mode only)
+      // Check for uncommitted changes
       let preservedWorktreePath: string | undefined;
       if (worktreeInfo) {
         const hasUncommitted = yield* WorktreeManager.hasUncommittedChanges(

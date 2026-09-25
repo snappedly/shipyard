@@ -29,9 +29,9 @@ import type { AgentProvider } from "./AgentProvider.js";
 import { Output, StructuredOutputError } from "./Output.js";
 import { claudeHostSessionPath } from "./SessionStore.js";
 import { defaultImageName } from "./sandboxes/docker.js";
-import * as shipyard from "./SandboxProvider.js";
-import { createBindMountSandboxProvider } from "./SandboxProvider.js";
+import { createIsolatedSandboxProvider } from "./SandboxProvider.js";
 import { testStubProvider } from "./sandboxes/test-shared.js";
+import { testIsolated } from "./sandboxes/test-isolated.js";
 
 const testSandbox = testStubProvider({ name: "test" }).provider;
 const nonResumableAgent: AgentProvider = {
@@ -276,7 +276,7 @@ describe("signal (AbortSignal)", () => {
         agent: claudeCode("claude-opus-4-8"),
         sandbox: testSandbox,
         prompt: "test",
-        branchStrategy: { type: "head" },
+        branchStrategy: { type: "merge-to-head" },
         signal: ac.signal,
       }),
     ).rejects.toThrow("cancelled before start");
@@ -291,7 +291,7 @@ describe("signal (AbortSignal)", () => {
         agent: claudeCode("claude-opus-4-8"),
         sandbox: testSandbox,
         prompt: "test",
-        branchStrategy: { type: "head" },
+        branchStrategy: { type: "merge-to-head" },
         signal: ac.signal,
       });
       expect.unreachable("should have thrown");
@@ -310,7 +310,7 @@ describe("resumeSession validation", () => {
           agent: claudeCode("claude-opus-4-8"),
           sandbox: testSandbox,
           prompt: "test",
-          branchStrategy: { type: "head" },
+          branchStrategy: { type: "merge-to-head" },
           maxIterations,
         }),
       ).rejects.toThrow("maxIterations must be a positive safe integer");
@@ -323,7 +323,7 @@ describe("resumeSession validation", () => {
         agent: claudeCode("claude-opus-4-8"),
         sandbox: testSandbox,
         prompt: "test",
-        branchStrategy: { type: "head" },
+        branchStrategy: { type: "merge-to-head" },
         resumeSession: "abc-123",
         maxIterations: 2,
       }),
@@ -338,7 +338,7 @@ describe("resumeSession validation", () => {
         agent: claudeCode("claude-opus-4-8"),
         sandbox: testSandbox,
         prompt: "test",
-        branchStrategy: { type: "head" },
+        branchStrategy: { type: "merge-to-head" },
         resumeSession: "nonexistent-session-id",
       }),
     ).rejects.toThrow('resumeSession "nonexistent-session-id" not found');
@@ -352,7 +352,7 @@ describe("resumeSession validation", () => {
         agent: claudeCode("claude-opus-4-8"),
         sandbox: testSandbox,
         prompt: "test",
-        branchStrategy: { type: "head" },
+        branchStrategy: { type: "merge-to-head" },
         resumeSession: "abc-123",
       }),
     ).rejects.toThrow('resumeSession "abc-123" not found');
@@ -366,55 +366,13 @@ describe("forkSession validation", () => {
         agent: claudeCode("claude-opus-4-8"),
         sandbox: testSandbox,
         prompt: "test",
-        branchStrategy: { type: "head" },
+        branchStrategy: { type: "merge-to-head" },
         // forkSession is @internal; the user-facing surface is RunResult.fork().
         // This guard exists so a caller setting the internal flag directly gets
         // a clear error instead of a silently-ignored fork flag.
         forkSession: true,
       } as RunOptions),
     ).rejects.toThrow("forkSession requires resumeSession");
-  });
-});
-
-describe("copyToWorktree with head branch strategy", () => {
-  it("throws a runtime error when copyToWorktree is provided with head strategy", async () => {
-    await expect(
-      run({
-        agent: claudeCode("claude-opus-4-8"),
-        sandbox: testSandbox,
-        prompt: "test",
-        branchStrategy: { type: "head" },
-        copyToWorktree: [".env"],
-      }),
-    ).rejects.toThrow(
-      "copyToWorktree is not supported with head branch strategy",
-    );
-  });
-});
-
-describe("branchStrategy on RunOptions", () => {
-  it("throws when head strategy is used with an isolated provider", async () => {
-    const isolatedSandbox = shipyard.createIsolatedSandboxProvider({
-      name: "test-isolated",
-      create: async () => ({
-        worktreePath: "/workspace",
-        exec: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
-        copyIn: async () => {},
-        copyFileOut: async () => {},
-        close: async () => {},
-      }),
-    });
-
-    await expect(
-      run({
-        agent: claudeCode("claude-opus-4-8"),
-        sandbox: isolatedSandbox,
-        prompt: "test",
-        branchStrategy: { type: "head" },
-      }),
-    ).rejects.toThrow(
-      "head branch strategy is not supported with isolated providers",
-    );
   });
 });
 
@@ -609,7 +567,7 @@ describe("promptFile resolution with cwd", () => {
         agent: claudeCode("claude-opus-4-8"),
         sandbox: testSandbox,
         promptFile: relativePromptFile,
-        branchStrategy: { type: "head" },
+        branchStrategy: { type: "merge-to-head" },
         cwd: cwdDir,
       }),
     ).rejects.toThrow(relativePromptFile);
@@ -623,7 +581,7 @@ describe("inline prompt passthrough", () => {
         agent: claudeCode("claude-opus-4-8"),
         sandbox: testSandbox,
         prompt: "do the work",
-        branchStrategy: { type: "head" },
+        branchStrategy: { type: "merge-to-head" },
         promptArgs: { ISSUE_NUMBER: "42" },
       }),
     ).rejects.toThrow("promptArgs is only supported with promptFile");
@@ -640,7 +598,7 @@ describe("inline prompt passthrough", () => {
       agent: claudeCode("claude-opus-4-8"),
       sandbox: testSandbox,
       prompt: "Issue body mentions {{BRANCH}} in its content.",
-      branchStrategy: { type: "head" },
+      branchStrategy: { type: "merge-to-head" },
     });
 
     await promise.catch((err: Error) => {
@@ -657,7 +615,7 @@ describe("inline prompt passthrough", () => {
       agent: claudeCode("claude-opus-4-8"),
       sandbox: testSandbox,
       prompt: "do the work",
-      branchStrategy: { type: "head" },
+      branchStrategy: { type: "merge-to-head" },
       promptArgs: {},
     });
 
@@ -690,7 +648,7 @@ describe("run() error logging to file", () => {
         agent: claudeCode("claude-opus-4-8"),
         sandbox: testSandbox,
         promptFile,
-        branchStrategy: { type: "head" },
+        branchStrategy: { type: "merge-to-head" },
         promptArgs: { SOURCE_BRANCH: "override" },
         logging: { type: "file", path: logPath },
       }),
@@ -712,7 +670,7 @@ describe("run() error logging to file", () => {
         agent: claudeCode("claude-opus-4-8"),
         sandbox: testSandbox,
         promptFile,
-        branchStrategy: { type: "head" },
+        branchStrategy: { type: "merge-to-head" },
         promptArgs: { SOURCE_BRANCH: "override" },
         logging: { type: "file", path: logPath },
       }),
@@ -897,7 +855,7 @@ describe("structured output entry-time validation", () => {
         agent: claudeCode("claude-opus-4-8"),
         sandbox: testSandbox,
         prompt: "emit <result>...</result>",
-        branchStrategy: { type: "head" },
+        branchStrategy: { type: "merge-to-head" },
         output: Output.object({ tag: "result", schema: mockSchema() }),
         maxIterations: 2,
       }),
@@ -911,7 +869,7 @@ describe("structured output entry-time validation", () => {
         agent: claudeCode("claude-opus-4-8"),
         sandbox: testSandbox,
         prompt: "emit <result>...</result>",
-        branchStrategy: { type: "head" },
+        branchStrategy: { type: "merge-to-head" },
         output: Output.object({ tag: "result", schema: mockSchema() }),
       }),
     ).rejects.not.toThrow("output requires maxIterations to be 1");
@@ -923,7 +881,7 @@ describe("structured output entry-time validation", () => {
         agent: claudeCode("claude-opus-4-8"),
         sandbox: testSandbox,
         prompt: "do some work",
-        branchStrategy: { type: "head" },
+        branchStrategy: { type: "merge-to-head" },
         output: Output.object({ tag: "result", schema: mockSchema() }),
       }),
     ).rejects.toThrow("output tag <result> not found in the resolved prompt");
@@ -937,7 +895,7 @@ describe("structured output entry-time validation", () => {
         agent: claudeCode("claude-opus-4-8"),
         sandbox: testSandbox,
         prompt: "emit your answer inside <result> tags",
-        branchStrategy: { type: "head" },
+        branchStrategy: { type: "merge-to-head" },
         output: Output.object({ tag: "result", schema: mockSchema() }),
       }),
     ).rejects.not.toThrow("not found in the resolved prompt");
@@ -949,7 +907,7 @@ describe("structured output entry-time validation", () => {
         agent: claudeCode("claude-opus-4-8"),
         sandbox: testSandbox,
         prompt: "do some work",
-        branchStrategy: { type: "head" },
+        branchStrategy: { type: "merge-to-head" },
         output: Output.string({ tag: "summary" }),
       }),
     ).rejects.toThrow("output tag <summary> not found in the resolved prompt");
@@ -965,7 +923,7 @@ describe("structured output entry-time validation", () => {
         agent: claudeCode("claude-opus-4-8"),
         sandbox: testSandbox,
         promptFile,
-        branchStrategy: { type: "head" },
+        branchStrategy: { type: "merge-to-head" },
         output: Output.object({ tag: "answer", schema: mockSchema() }),
       }),
     ).rejects.toThrow("output tag <answer> not found in the resolved prompt");
@@ -986,28 +944,26 @@ describe("structured output error carries the failed session id", () => {
   // a Claude Code init line carrying a session id, followed by a result line
   // whose <result> tag holds malformed JSON. Extraction then fails and the
   // session id must survive onto the thrown error.
-  const sessionEmittingSandbox = createBindMountSandboxProvider({
+  const sessionEmittingSandbox = createIsolatedSandboxProvider({
     name: "session-emitting",
-    create: async () => ({
-      worktreePath: "/home/agent/workspace",
-      exec: async (
-        _command: string,
-        options?: { onLine?: (line: string) => void },
-      ) => {
-        if (options?.onLine) {
-          options.onLine(
-            '{"type":"system","subtype":"init","session_id":"sess-abc-123"}',
-          );
-          options.onLine(
-            '{"type":"result","result":"<result>not valid json</result>"}',
-          );
-        }
-        return { stdout: "", stderr: "", exitCode: 0 };
-      },
-      copyFileIn: async () => {},
-      copyFileOut: async () => {},
-      close: async () => {},
-    }),
+    create: async (options) => {
+      const base = await testIsolated().create(options);
+      return {
+        ...base,
+        exec: async (command, execOptions) => {
+          if (execOptions?.onLine && command.startsWith("claude ")) {
+            execOptions.onLine(
+              '{"type":"system","subtype":"init","session_id":"sess-abc-123"}',
+            );
+            execOptions.onLine(
+              '{"type":"result","result":"<result>not valid json</result>"}',
+            );
+            return { stdout: "", stderr: "", exitCode: 0 };
+          }
+          return base.exec(command, execOptions);
+        },
+      };
+    },
   });
 
   it("threads iterations[].sessionId onto StructuredOutputError", async () => {
@@ -1018,7 +974,7 @@ describe("structured output error carries the failed session id", () => {
         agent: claudeCode("claude-opus-4-8", { captureSessions: false }),
         sandbox: sessionEmittingSandbox,
         prompt: "emit your answer inside <result> tags",
-        branchStrategy: { type: "head" },
+        branchStrategy: { type: "merge-to-head" },
         output: Output.object({ tag: "result", schema: mockSchema() }),
       });
       expect.unreachable("should have thrown StructuredOutputError");
@@ -1051,7 +1007,7 @@ describe("output.maxRetries entry-time validation", () => {
         agent: nonResumableAgent,
         sandbox: testSandbox,
         prompt: "emit your answer inside <result> tags",
-        branchStrategy: { type: "head" },
+        branchStrategy: { type: "merge-to-head" },
         output: Output.object({
           tag: "result",
           schema: mockSchema(),
@@ -1069,7 +1025,7 @@ describe("output.maxRetries entry-time validation", () => {
         agent: nonResumableAgent,
         sandbox: testSandbox,
         prompt: "emit your answer inside <result> tags",
-        branchStrategy: { type: "head" },
+        branchStrategy: { type: "merge-to-head" },
         output: Output.string({ tag: "result", maxRetries: 1 }),
       }),
     ).rejects.toThrow(
@@ -1083,7 +1039,7 @@ describe("output.maxRetries entry-time validation", () => {
         agent: nonResumableAgent,
         sandbox: testSandbox,
         prompt: "emit your answer inside <result> tags",
-        branchStrategy: { type: "head" },
+        branchStrategy: { type: "merge-to-head" },
         output: Output.object({
           tag: "result",
           schema: mockSchema(),
@@ -1101,7 +1057,7 @@ describe("output.maxRetries entry-time validation", () => {
         agent: nonResumableAgent,
         sandbox: testSandbox,
         prompt: "emit your answer inside <result> tags",
-        branchStrategy: { type: "head" },
+        branchStrategy: { type: "merge-to-head" },
         output: Output.object({
           tag: "result",
           schema: mockSchema(),
@@ -1117,7 +1073,7 @@ describe("output.maxRetries entry-time validation", () => {
         agent: claudeCode("claude-opus-4-8"),
         sandbox: testSandbox,
         prompt: "emit your answer inside <result> tags",
-        branchStrategy: { type: "head" },
+        branchStrategy: { type: "merge-to-head" },
         output: Output.object({
           tag: "result",
           schema: mockSchema(),
@@ -1133,7 +1089,7 @@ describe("output.maxRetries entry-time validation", () => {
         agent: claudeCode("claude-opus-4-8"),
         sandbox: testSandbox,
         prompt: "emit your answer inside <result> tags",
-        branchStrategy: { type: "head" },
+        branchStrategy: { type: "merge-to-head" },
         output: Output.object({
           tag: "result",
           schema: mockSchema(),
@@ -1265,29 +1221,23 @@ describe("output.maxRetries end-to-end", () => {
    *  advance the stage cursor — git setup execs do not. */
   const stagedAgentSandbox = (stages: string[][]) => {
     let agentCallCount = 0;
-    return createBindMountSandboxProvider({
+    return createIsolatedSandboxProvider({
       name: "staged-agent",
-      create: async () => ({
-        worktreePath: process.cwd(),
-        exec: async (
-          _command: string,
-          options?: { onLine?: (line: string) => void },
-        ) => {
-          if (options?.onLine) {
-            const stage = stages[agentCallCount];
-            agentCallCount += 1;
-            if (stage) {
-              for (const line of stage) {
-                options.onLine(line);
-              }
+      create: async (options) => {
+        const base = await testIsolated().create(options);
+        return {
+          ...base,
+          exec: async (command, execOptions) => {
+            if (execOptions?.onLine && command.startsWith("claude ")) {
+              const stage = stages[agentCallCount];
+              agentCallCount += 1;
+              if (stage) for (const line of stage) execOptions.onLine(line);
+              return { stdout: "", stderr: "", exitCode: 0 };
             }
-          }
-          return { stdout: "", stderr: "", exitCode: 0 };
-        },
-        copyFileIn: async () => {},
-        copyFileOut: async () => {},
-        close: async () => {},
-      }),
+            return base.exec(command, execOptions);
+          },
+        };
+      },
     });
   };
 
@@ -1311,11 +1261,14 @@ describe("output.maxRetries end-to-end", () => {
       const result = await run({
         agent: claudeCode("claude-opus-4-8", {
           captureSessions: false,
-          sessionStorage: { hostProjectsDir },
+          sessionStorage: {
+            hostProjectsDir,
+            sandboxProjectsDir: join(hostProjectsDir, "sandbox-projects"),
+          },
         }),
         sandbox,
         prompt: "emit your answer inside <result> tags",
-        branchStrategy: { type: "head" },
+        branchStrategy: { type: "merge-to-head" },
         output: Output.object({
           tag: "result",
           schema: mockSchema(),
@@ -1344,11 +1297,14 @@ describe("output.maxRetries end-to-end", () => {
       await run({
         agent: claudeCode("claude-opus-4-8", {
           captureSessions: false,
-          sessionStorage: { hostProjectsDir },
+          sessionStorage: {
+            hostProjectsDir,
+            sandboxProjectsDir: join(hostProjectsDir, "sandbox-projects"),
+          },
         }),
         sandbox,
         prompt: "emit your answer inside <result> tags",
-        branchStrategy: { type: "head" },
+        branchStrategy: { type: "merge-to-head" },
         output: Output.object({
           tag: "result",
           schema: mockSchema(),
@@ -1383,7 +1339,7 @@ describe("output.maxRetries end-to-end", () => {
         agent: claudeCode("claude-opus-4-8", { captureSessions: false }),
         sandbox,
         prompt: "emit your answer inside <result> tags",
-        branchStrategy: { type: "head" },
+        branchStrategy: { type: "merge-to-head" },
         output: Output.object({ tag: "result", schema: mockSchema() }),
       }),
     ).rejects.toBeInstanceOf(StructuredOutputError);

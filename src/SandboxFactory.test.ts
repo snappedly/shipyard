@@ -10,21 +10,17 @@ import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { AgentError, AgentIdleTimeoutError } from "./errors.js";
 import { SilentDisplay, type DisplayEntry } from "./Display.js";
 import {
-  createBindMountSandboxProvider,
   createIsolatedSandboxProvider,
   type SandboxProvider,
   type BranchStrategy,
-  type NoSandboxProvider,
 } from "./SandboxProvider.js";
 import { testIsolated } from "./sandboxes/test-isolated.js";
 import { testStubProvider } from "./sandboxes/test-shared.js";
-import { noSandbox } from "./sandboxes/no-sandbox.js";
 
 import {
   SandboxFactory,
   SandboxConfig,
   WorktreeDockerSandboxFactory,
-  SANDBOX_REPO_DIR,
 } from "./SandboxFactory.js";
 
 const execAsync = promisify(exec);
@@ -71,7 +67,7 @@ const branchAt = async (dir: string): Promise<string> => {
   return stdout.trim();
 };
 
-/** Create a mock sandbox provider that records calls and delegates to a no-op handle. */
+/** Create a mock sandbox provider that records calls. */
 const makeMockProvider = (): {
   provider: SandboxProvider;
   createCalls: any[];
@@ -79,7 +75,6 @@ const makeMockProvider = (): {
 } => {
   const stub = testStubProvider({
     name: "test-provider",
-    worktreePath: SANDBOX_REPO_DIR,
   });
   return {
     provider: stub.provider,
@@ -172,7 +167,7 @@ describe("WorktreeDockerSandboxFactory", () => {
     (provider as any).create = async (opts: any) => {
       callOrder.push("provider-create");
       // Verify the worktree directory already exists at this point
-      if (existsSync(opts.worktreePath)) {
+      if (existsSync(opts.hostRepoPath)) {
         callOrder.push("worktree-exists-before-provider-create");
       }
       return origCreate(opts);
@@ -202,7 +197,7 @@ describe("WorktreeDockerSandboxFactory", () => {
     expect(callOrder).toContain("worktree-exists-before-provider-create");
   });
 
-  it("passes worktree path and git mounts to provider.create", async () => {
+  it("passes the worktree path and environment to provider.create", async () => {
     let observedWorktree: string | undefined;
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -218,14 +213,8 @@ describe("WorktreeDockerSandboxFactory", () => {
     expect(mockProvider.createCalls).toHaveLength(1);
     const opts = mockProvider.createCalls[0];
     expect(observedWorktree).toBeDefined();
-    expect(opts.mounts).toContainEqual({
-      hostPath: observedWorktree,
-      sandboxPath: SANDBOX_REPO_DIR,
-    });
-    expect(opts.mounts).toContainEqual({
-      hostPath: `${hostRepoDir}/.git`,
-      sandboxPath: `${hostRepoDir}/.git`,
-    });
+    expect(opts.hostRepoPath).toBe(hostRepoDir);
+    expect(opts.env).toEqual({ FOO: "bar" });
   });
 
   it("removes the worktree after the effect completes (clean state)", async () => {
@@ -341,10 +330,8 @@ describe("WorktreeDockerSandboxFactory", () => {
     );
   });
 
-  it("logs copy-to-sandbox as a spinner when copyToWorktree paths are provided", async () => {
+  it("copies selected untracked files into the Docker sandbox", async () => {
     await writeFile(join(hostRepoDir, "some-file.txt"), "content");
-
-    const ref = Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([]);
     const layerWithCopy = Layer.provide(
       WorktreeDockerSandboxFactory.layer,
       Layer.mergeAll(
@@ -356,22 +343,18 @@ describe("WorktreeDockerSandboxFactory", () => {
           branchStrategy: { type: "merge-to-head" },
         }),
         NodeFileSystem.layer,
-        SilentDisplay.layer(ref),
+        SilentDisplay.layer(Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([])),
       ),
     );
-
-    await Effect.runPromise(
+    const content = await Effect.runPromise(
       Effect.gen(function* () {
         const factory = yield* SandboxFactory;
-        yield* factory.withSandbox(() => Effect.void);
+        return yield* factory.withSandbox((_info, sandbox) =>
+          sandbox.exec("cat some-file.txt"),
+        );
       }).pipe(Effect.provide(layerWithCopy)),
     );
-
-    const entries = await Effect.runPromise(Ref.get(ref));
-    const spinnerEntry = entries.find(
-      (e) => e._tag === "spinner" && e.message === "Copying to worktree",
-    );
-    expect(spinnerEntry).toBeDefined();
+    expect(content.value.stdout).toBe("content");
   });
 
   it("removes worktree silently on success with clean worktree", async () => {
@@ -459,7 +442,7 @@ describe("WorktreeDockerSandboxFactory", () => {
   });
 
   it("removes worktree when sandbox start fails (e.g. missing image)", async () => {
-    const failingProvider = createBindMountSandboxProvider({
+    const failingProvider = createIsolatedSandboxProvider({
       name: "failing-provider",
       create: async () => {
         throw new Error("Image 'shipyard:test' not found locally");
@@ -536,71 +519,6 @@ describe("WorktreeDockerSandboxFactory", () => {
     expect(
       (exit.cause.error as AgentIdleTimeoutError).preservedWorktreePath,
     ).toBeUndefined();
-  });
-
-  describe("head branch strategy", () => {
-    const makeHeadLayer = (
-      displayRef = Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([]),
-    ) => makeLayer(displayRef, { type: "head" });
-
-    it("does not create a worktree", async () => {
-      await Effect.runPromise(
-        Effect.gen(function* () {
-          const factory = yield* SandboxFactory;
-          yield* factory.withSandbox(() => Effect.void);
-        }).pipe(Effect.provide(makeHeadLayer())),
-      );
-
-      const worktree = await findCreatedWorktree(hostRepoDir);
-      expect(worktree).toBeUndefined();
-    });
-
-    it("passes host repo dir and git mounts to provider", async () => {
-      await Effect.runPromise(
-        Effect.gen(function* () {
-          const factory = yield* SandboxFactory;
-          yield* factory.withSandbox(() => Effect.void);
-        }).pipe(Effect.provide(makeHeadLayer())),
-      );
-
-      expect(mockProvider.createCalls).toHaveLength(1);
-      const opts = mockProvider.createCalls[0];
-      expect(opts.mounts).toContainEqual({
-        hostPath: hostRepoDir,
-        sandboxPath: SANDBOX_REPO_DIR,
-      });
-      expect(opts.mounts).toContainEqual({
-        hostPath: `${hostRepoDir}/.git`,
-        sandboxPath: `${hostRepoDir}/.git`,
-      });
-    });
-
-    it("returns undefined preservedWorktreePath", async () => {
-      const result = await Effect.runPromise(
-        Effect.gen(function* () {
-          const factory = yield* SandboxFactory;
-          return yield* factory.withSandbox(() => Effect.succeed("done"));
-        }).pipe(Effect.provide(makeHeadLayer())),
-      );
-
-      expect(result.preservedWorktreePath).toBeUndefined();
-      expect(result.value).toBe("done");
-    });
-
-    it("passes hostWorktreePath pointing to host repo dir", async () => {
-      let receivedInfo: { hostWorktreePath?: string } | undefined;
-      await Effect.runPromise(
-        Effect.gen(function* () {
-          const factory = yield* SandboxFactory;
-          yield* factory.withSandbox((info) => {
-            receivedInfo = info;
-            return Effect.void;
-          });
-        }).pipe(Effect.provide(makeHeadLayer())),
-      );
-
-      expect(receivedInfo?.hostWorktreePath).toBe(hostRepoDir);
-    });
   });
 
   it("returns undefined preservedWorktreePath on success with clean worktree", async () => {
@@ -960,128 +878,5 @@ describe("WorktreeDockerSandboxFactory — isolated providers", () => {
       cwd: hostDir,
     });
     expect(stdout).toContain("sandbox commit");
-  });
-});
-
-describe("WorktreeDockerSandboxFactory — no-sandbox provider", () => {
-  const tempDirs: string[] = [];
-
-  const makeNoSandboxLayer = (
-    hostRepoDir: string,
-    branchStrategy: BranchStrategy = { type: "head" },
-  ) =>
-    Layer.provide(
-      WorktreeDockerSandboxFactory.layer,
-      Layer.mergeAll(
-        Layer.succeed(SandboxConfig, {
-          env: {},
-          hostRepoDir,
-          sandboxProvider: noSandbox(),
-          branchStrategy,
-        }),
-        NodeFileSystem.layer,
-        SilentDisplay.layer(Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([])),
-      ),
-    );
-
-  afterEach(async () => {
-    await Promise.all(
-      tempDirs.map((d) => rm(d, { recursive: true, force: true })),
-    );
-    tempDirs.length = 0;
-  });
-
-  it("head mode: does not create a worktree and runs in hostRepoDir", async () => {
-    const hostDir = await mkdtemp(join(tmpdir(), "shipyard-test-"));
-    tempDirs.push(hostDir);
-    await initRepoWithCommit(hostDir);
-    await commitFile(hostDir, "hello.txt", "hi", "add hello");
-
-    let receivedInfo: { hostWorktreePath?: string } | undefined;
-    let execOut = "";
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const factory = yield* SandboxFactory;
-        yield* factory.withSandbox((info, sandbox) => {
-          receivedInfo = info;
-          return Effect.gen(function* () {
-            const r = yield* sandbox.exec("cat hello.txt");
-            execOut = r.stdout.trim();
-          });
-        });
-      }).pipe(Effect.provide(makeNoSandboxLayer(hostDir))),
-    );
-
-    const worktree = await findCreatedWorktree(hostDir);
-    expect(worktree).toBeUndefined();
-    expect(receivedInfo?.hostWorktreePath).toBe(hostDir);
-    expect(execOut).toBe("hi");
-  });
-
-  it("worktree mode: creates worktree, runs in it, cleans up on success", async () => {
-    const hostDir = await mkdtemp(join(tmpdir(), "shipyard-test-"));
-    tempDirs.push(hostDir);
-    await initRepoWithCommit(hostDir);
-
-    let observedWorktreePath: string | undefined;
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const factory = yield* SandboxFactory;
-        yield* factory.withSandbox((info) =>
-          Effect.sync(() => {
-            observedWorktreePath = info.hostWorktreePath;
-          }),
-        );
-      }).pipe(
-        Effect.provide(makeNoSandboxLayer(hostDir, { type: "merge-to-head" })),
-      ),
-    );
-
-    expect(observedWorktreePath).toBeDefined();
-    expect(observedWorktreePath).toContain(
-      join(hostDir, ".shipyard", "worktrees"),
-    );
-    expect(existsSync(observedWorktreePath!)).toBe(false);
-  });
-
-  it("worktree mode: removes worktree when sandbox start fails", async () => {
-    const hostDir = await mkdtemp(join(tmpdir(), "shipyard-test-"));
-    tempDirs.push(hostDir);
-    await initRepoWithCommit(hostDir);
-
-    const failingProvider: NoSandboxProvider = {
-      tag: "none",
-      name: "failing-no-sandbox",
-      env: {},
-      create: async () => {
-        throw new Error("no-sandbox create failed");
-      },
-    };
-
-    const layer = Layer.provide(
-      WorktreeDockerSandboxFactory.layer,
-      Layer.mergeAll(
-        Layer.succeed(SandboxConfig, {
-          env: {},
-          hostRepoDir: hostDir,
-          sandboxProvider: failingProvider,
-          branchStrategy: { type: "merge-to-head" },
-        }),
-        NodeFileSystem.layer,
-        SilentDisplay.layer(Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([])),
-      ),
-    );
-
-    await expect(
-      Effect.runPromise(
-        Effect.gen(function* () {
-          const factory = yield* SandboxFactory;
-          yield* factory.withSandbox(() => Effect.void);
-        }).pipe(Effect.provide(layer)),
-      ),
-    ).rejects.toThrow();
-
-    const worktree = await findCreatedWorktree(hostDir);
-    expect(worktree).toBeUndefined();
   });
 });

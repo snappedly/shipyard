@@ -38,6 +38,19 @@ const CODEX_CHATGPT_AUTH_OPTIONS = `{
   ],
 }`;
 
+const roleModelEnvExample = (agentName: string): string =>
+  agentName === "codex"
+    ? `# Optional model choices for Shipyard workflows.
+# Choose models available to your Codex CLI account: https://learn.chatgpt.com/docs/models
+# The provider must support each value. Aliases can change their target over time.
+# SHIPYARD_ROUTINE_MODEL=gpt-6-luna
+# SHIPYARD_STRONG_MODEL=gpt-6-sol`
+    : `# Optional model choices for Shipyard workflows.
+# Choose aliases or model IDs available to your Claude Code provider: https://code.claude.com/docs/en/model-config
+# The provider must support each value. Aliases can change their target over time.
+# SHIPYARD_ROUTINE_MODEL=sonnet
+# SHIPYARD_STRONG_MODEL=opus`;
+
 export interface TemplateMetadata {
   name: string;
   description: string;
@@ -51,10 +64,6 @@ export interface TemplateMetadata {
 }
 
 const TEMPLATES: TemplateMetadata[] = [
-  {
-    name: "blank",
-    description: "Bare scaffold — write your own prompt and orchestration",
-  },
   {
     name: "simple-loop",
     description: "Implements standalone issues one by one and opens review PRs",
@@ -231,7 +240,7 @@ RUN apt-get update && apt-get install -y \\
 
 # Build-args for UID/GID alignment: shipyard docker build-image
 # defaults these to the host user's UID/GID so image-built files
-# and bind-mounted files share an owner without runtime chown.
+# and explicit mounted files share an owner without runtime chown.
 ARG AGENT_UID=1000
 ARG AGENT_GID=1000
 
@@ -247,8 +256,8 @@ ENV PATH="/home/agent/.local/bin:$PATH"
 
 WORKDIR /home/agent
 
-# In worktree sandbox mode, Shipyard bind-mounts the git worktree at ${SANDBOX_REPO_DIR}
-# and overrides the working directory to ${SANDBOX_REPO_DIR} at container start.
+# Shipyard syncs Git history into a sandbox-owned repository at ${SANDBOX_REPO_DIR}
+# and runs agent commands from ${SANDBOX_REPO_DIR}.
 # Structure your Dockerfile so that ${SANDBOX_REPO_DIR} can serve as the project root.
 ENTRYPOINT ["sleep", "infinity"]
 `;
@@ -266,7 +275,7 @@ RUN apt-get update && apt-get install -y \\
 
 # Build-args for UID/GID alignment: shipyard docker build-image
 # defaults these to the host user's UID/GID so image-built files
-# and bind-mounted files share an owner without runtime chown.
+# and explicit mounted files share an owner without runtime chown.
 ARG AGENT_UID=1000
 ARG AGENT_GID=1000
 
@@ -280,8 +289,8 @@ USER \${AGENT_UID}:\${AGENT_GID}
 
 WORKDIR /home/agent
 
-# In worktree sandbox mode, Shipyard bind-mounts the git worktree at ${SANDBOX_REPO_DIR}
-# and overrides the working directory to ${SANDBOX_REPO_DIR} at container start.
+# Shipyard syncs Git history into a sandbox-owned repository at ${SANDBOX_REPO_DIR}
+# and runs agent commands from ${SANDBOX_REPO_DIR}.
 # Structure your Dockerfile so that ${SANDBOX_REPO_DIR} can serve as the project root.
 ENTRYPOINT ["sleep", "infinity"]
 `;
@@ -486,6 +495,7 @@ const rewriteMainTs = (
   configDir: string,
   agent: AgentEntry,
   model: string,
+  modelExplicit: boolean,
   sandboxProvider: SandboxProviderEntry,
   mainFilename: string,
   codexAuth: CodexAuthMode,
@@ -503,48 +513,23 @@ const rewriteMainTs = (
       .readFileString(mainTsPath)
       .pipe(Effect.mapError((e) => new Error(e.message)));
 
-    // Templates use main.mts as the canonical filename in comments.
-    // When the target is main.ts, rewrite those references.
-    if (mainFilename === "main.ts") {
-      content = content.replace(/main\.mts/g, "main.ts");
-    }
-
-    // Replace the default factory function name in imports.
-    // and all factory calls with the correct model.
+    // Replace the default factory function name in calls.
     // Templates always use Codex as the placeholder factory.
     content = content.replace(
       new RegExp(`\\b${TEMPLATE_AGENT_FACTORY}\\b`, "g"),
       agent.factoryImport,
     );
-    // Replace model arguments in factory calls. The built-in Codex templates
-    // use CODEX_MODELS references so the central model configuration remains
-    // live in a default Codex scaffold.
-    const factoryCallRe = new RegExp(
-      `${agent.factoryImport}\\(([^)\\n]*)\\)`,
-      "g",
-    );
     content = content.replace(
-      factoryCallRe,
-      (match, modelExpression: string) => {
-        const keepsConfiguredModel =
-          agent.name === "codex" &&
-          model === CODEX_MODELS.routine.model &&
-          /^(?:[A-Za-z_$][\w$]*\.)*CODEX_MODELS\.[A-Za-z_$][\w$]*$/.test(
-            modelExpression.trim(),
-          );
-        return keepsConfiguredModel
-          ? match
-          : `${agent.factoryImport}("${model}")`;
-      },
+      "const CODEX_PROVIDER = true;",
+      `const CODEX_PROVIDER = ${agent.name === "codex"};`,
     );
-
-    // CODEX_MODELS is only needed when the generated file continues using
-    // the central Codex configuration. Remove it from named imports when a
-    // custom model or another provider has replaced every reference.
-    if (agent.name !== "codex" || model !== CODEX_MODELS.routine.model) {
-      content = content.replace(/\bCODEX_MODELS,\s*/g, "");
+    if (agent.name !== "codex" || modelExplicit) {
+      const modelLiteral = JSON.stringify(model);
+      content = content.replace(
+        /shipyard\.CODEX_MODELS\.(?:routine|strong)/g,
+        modelLiteral,
+      );
     }
-
     // ChatGPT subscription auth is stored by the host Codex CLI. Mount the
     // file into the sandbox read-only so Codex can use it without exposing an
     // API key through the generated .env file.
@@ -637,10 +622,19 @@ const substituteTemplateArgs = (
 export interface ScaffoldOptions {
   agent: AgentEntry;
   model: string;
+  /** Whether `model` came from an explicit `init --model` option. */
+  modelExplicit?: boolean;
   templateName?: string;
   issueTracker?: IssueTrackerEntry;
   sandboxProvider?: SandboxProviderEntry;
   codexAuth?: CodexAuthMode;
+  onProgress?: (update: ScaffoldProgressUpdate) => void;
+}
+
+export interface ScaffoldProgressUpdate {
+  readonly current: number;
+  readonly total: number;
+  readonly message: string;
 }
 
 export interface ScaffoldResult {
@@ -680,11 +674,19 @@ export const scaffold = (
     const {
       agent,
       model,
-      templateName = "blank",
+      modelExplicit = false,
+      templateName = "simple-loop",
       issueTracker = ISSUE_TRACKER_REGISTRY[0]!, // default: github-issues
       sandboxProvider = SANDBOX_PROVIDER_REGISTRY[0]!, // default: docker
       codexAuth = "api-key",
     } = options;
+    const totalProgressSteps = 5;
+    const reportProgress = (current: number, message: string): void =>
+      options.onProgress?.({
+        current,
+        total: totalProgressSteps,
+        message,
+      });
     if (codexAuth === "chatgpt" && agent.name !== "codex") {
       return yield* Effect.fail(
         new Error(
@@ -697,12 +699,14 @@ export const scaffold = (
     const configDir = join(repoDir, CONFIG_DIR);
 
     const mainFilename = yield* detectMainFilename(repoDir);
+    reportProgress(1, "Validated repository and configuration");
 
     yield* fs
       .makeDirectory(configDir, { recursive: false })
       .pipe(Effect.mapError((e) => new Error(e.message)));
 
     const templateDir = yield* getTemplateDir(templateName);
+    reportProgress(2, `Prepared ${CONFIG_DIR}/ directory`);
 
     // Build .env.example from agent + issue tracker env blocks
     const envExampleParts = [
@@ -710,6 +714,7 @@ export const scaffold = (
         ? CODEX_CHATGPT_ENV_EXAMPLE
         : agent.envExample,
     ];
+    envExampleParts.push(roleModelEnvExample(agent.name));
     if (issueTracker.envExample) {
       envExampleParts.push(issueTracker.envExample);
     }
@@ -737,19 +742,23 @@ export const scaffold = (
       ],
       { concurrency: "unbounded" },
     );
+    reportProgress(3, "Wrote configuration and template files");
 
     // Rewrite main file with the selected agent factory, model, and sandbox provider
     yield* rewriteMainTs(
       configDir,
       agent,
       model,
+      modelExplicit,
       sandboxProvider,
       mainFilename,
       codexAuth,
     );
+    reportProgress(4, "Configured selected agent and sandbox");
 
     // Replace issue tracker template arguments in all text files.
     yield* substituteTemplateArgs(configDir, issueTracker);
+    reportProgress(5, "Applied issue tracker settings");
 
     return { mainFilename };
   });

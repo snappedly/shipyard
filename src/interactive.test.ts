@@ -11,13 +11,13 @@ import { tmpdir } from "node:os";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { interactive, type InteractiveOptions } from "./interactive.js";
 import {
-  createBindMountSandboxProvider,
-  type BindMountSandboxHandle,
+  createIsolatedSandboxProvider,
   type InteractiveExecOptions,
 } from "./SandboxProvider.js";
 import { claudeCode, codex } from "./AgentProvider.js";
 import { CODEX_MODELS } from "./modelConfig.js";
 import { silenceTerminalOutput } from "./testTerminalOutput.js";
+import { testIsolated } from "./sandboxes/test-isolated.js";
 
 silenceTerminalOutput();
 
@@ -88,7 +88,7 @@ describe("interactive()", () => {
   });
 
   /**
-   * Create a test bind-mount provider with a fake interactiveExec.
+   * Create an isolated test provider with a fake interactiveExec.
    * The fakeInteractiveExec callback simulates an interactive session.
    */
   const makeTestProvider = (
@@ -96,26 +96,16 @@ describe("interactive()", () => {
       args: string[],
       opts: InteractiveExecOptions,
     ) => Promise<{ exitCode: number }>,
+    onCreate?: (hostWorktreePath: string) => void,
   ) =>
-    createBindMountSandboxProvider({
+    createIsolatedSandboxProvider({
       name: "test-interactive",
       create: async (options) => {
-        const handle: BindMountSandboxHandle = {
-          worktreePath: options.worktreePath,
-          exec: async (command) => {
-            const result = execSync(command, {
-              cwd: options.worktreePath,
-              encoding: "utf-8",
-              stdio: ["pipe", "pipe", "pipe"],
-            });
-            return { stdout: result, stderr: "", exitCode: 0 };
-          },
+        onCreate?.(options.hostRepoPath!);
+        return {
+          ...(await testIsolated().create(options)),
           interactiveExec: fakeInteractiveExec,
-          copyFileIn: async () => {},
-          copyFileOut: async () => {},
-          close: async () => {},
         };
-        return handle;
       },
     });
 
@@ -193,23 +183,9 @@ describe("interactive()", () => {
   });
 
   it("throws when provider does not implement interactiveExec", async () => {
-    const provider = createBindMountSandboxProvider({
+    const provider = createIsolatedSandboxProvider({
       name: "no-interactive",
-      create: async (options) => ({
-        worktreePath: options.worktreePath,
-        exec: async (command) => {
-          const result = execSync(command, {
-            cwd: options.worktreePath,
-            encoding: "utf-8",
-            stdio: ["pipe", "pipe", "pipe"],
-          });
-          return { stdout: result, stderr: "", exitCode: 0 };
-        },
-        // No interactiveExec
-        copyFileIn: async () => {},
-        copyFileOut: async () => {},
-        close: async () => {},
-      }),
+      create: (options) => testIsolated().create(options),
     });
 
     await expect(
@@ -219,32 +195,6 @@ describe("interactive()", () => {
         prompt: "test",
       }),
     ).rejects.toThrow("interactiveExec");
-  });
-
-  it("throws when provider is isolated (not bind-mount)", async () => {
-    const { createIsolatedSandboxProvider } =
-      await import("./SandboxProvider.js");
-    const isolatedProvider = createIsolatedSandboxProvider({
-      name: "test-isolated",
-      create: async () => ({
-        worktreePath: "/workspace",
-        exec: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
-        copyIn: async () => {},
-        copyFileOut: async () => {},
-        close: async () => {},
-      }),
-    });
-
-    // Isolated provider with default strategy (merge-to-head) should work in principle,
-    // but head strategy is not supported
-    await expect(
-      interactive({
-        agent: claudeCode("claude-opus-4-8"),
-        sandbox: isolatedProvider,
-        prompt: "test",
-        branchStrategy: { type: "head" },
-      }),
-    ).rejects.toThrow("head branch strategy is not supported with isolated");
   });
 
   it("receives stdin/stdout/stderr streams in interactiveExec options", async () => {
@@ -457,31 +407,6 @@ describe("interactive()", () => {
 
   // --- Branch strategy tests ---
 
-  it("head strategy: commits land on current branch directly", async () => {
-    const provider = makeTestProvider(async (_args, opts) => {
-      const cwd = opts.cwd!;
-      execSync('echo "head change" > headfile.txt', { cwd });
-      execSync("git add headfile.txt", { cwd });
-      execSync('git commit -m "head commit"', { cwd });
-      return { exitCode: 0 };
-    });
-
-    const currentBranch = execSync("git rev-parse --abbrev-ref HEAD", {
-      cwd: hostDir,
-      encoding: "utf-8",
-    }).trim();
-
-    const result = await interactive({
-      agent: claudeCode("claude-opus-4-8"),
-      sandbox: provider,
-      prompt: "test",
-      branchStrategy: { type: "head" },
-    });
-
-    expect(result.branch).toBe(currentBranch);
-    expect(result.commits.length).toBe(1);
-  });
-
   it("merge-to-head strategy: commits merge back to head", async () => {
     const provider = makeTestProvider(async (_args, opts) => {
       const cwd = opts.cwd!;
@@ -572,7 +497,7 @@ describe("interactive()", () => {
   });
 
   it("removes the worktree when sandbox start fails (no orphan)", async () => {
-    const provider = createBindMountSandboxProvider({
+    const provider = createIsolatedSandboxProvider({
       name: "failing-create",
       create: async () => {
         throw new Error("Image 'shipyard:test' not found locally");
@@ -596,22 +521,6 @@ describe("interactive()", () => {
 
   // --- copyToWorktree tests ---
 
-  it("throws when copyToWorktree used with head strategy", async () => {
-    const provider = makeTestProvider(async () => ({ exitCode: 0 }));
-
-    await expect(
-      interactive({
-        agent: claudeCode("claude-opus-4-8"),
-        sandbox: provider,
-        prompt: "test",
-        branchStrategy: { type: "head" },
-        copyToWorktree: ["node_modules"],
-      }),
-    ).rejects.toThrow("copyToWorktree is not supported with head");
-  });
-
-  // --- AbortSignal tests ---
-
   it("rejects immediately with pre-aborted signal without doing setup", async () => {
     const ac = new AbortController();
     ac.abort("cancelled before start");
@@ -625,7 +534,7 @@ describe("interactive()", () => {
         agent: claudeCode("claude-opus-4-8"),
         sandbox: provider,
         prompt: "test",
-        branchStrategy: { type: "head" },
+        branchStrategy: { type: "merge-to-head" },
         signal: ac.signal,
       }),
     ).rejects.toThrow("cancelled before start");
@@ -645,7 +554,7 @@ describe("interactive()", () => {
         agent: claudeCode("claude-opus-4-8"),
         sandbox: provider,
         prompt: "test",
-        branchStrategy: { type: "head" },
+        branchStrategy: { type: "merge-to-head" },
         signal: ac.signal,
       });
       expect.unreachable("should have thrown");
@@ -659,16 +568,20 @@ describe("interactive()", () => {
     let providerObservedAbort = false;
     let worktreePath: string | undefined;
 
-    const provider = makeTestProvider(async (_args, opts) => {
-      worktreePath = opts.cwd;
-      return new Promise<{ exitCode: number }>((_resolve, reject) => {
-        opts.signal?.addEventListener("abort", () => {
-          providerObservedAbort = true;
-          reject(opts.signal?.reason);
+    const provider = makeTestProvider(
+      async (_args, opts) => {
+        return new Promise<{ exitCode: number }>((_resolve, reject) => {
+          opts.signal?.addEventListener("abort", () => {
+            providerObservedAbort = true;
+            reject(opts.signal?.reason);
+          });
+          setTimeout(() => ac.abort("mid-session abort"), 20);
         });
-        setTimeout(() => ac.abort("mid-session abort"), 20);
-      });
-    });
+      },
+      (path) => {
+        worktreePath = path;
+      },
+    );
 
     await expect(
       interactive({
@@ -688,6 +601,7 @@ describe("interactive()", () => {
     const opts: InteractiveOptions = {
       agent: claudeCode("claude-opus-4-8"),
       prompt: "test",
+      sandbox: testIsolated(),
     };
     expect(opts.signal).toBeUndefined();
   });
@@ -697,6 +611,7 @@ describe("interactive()", () => {
     const opts: InteractiveOptions = {
       agent: claudeCode("claude-opus-4-8"),
       prompt: "test",
+      sandbox: testIsolated(),
       signal: ac.signal,
     };
     expect(opts.signal).toBe(ac.signal);
@@ -722,10 +637,14 @@ describe("interactive()", () => {
 
     let worktreeCwd: string | undefined;
 
-    const provider = makeTestProvider(async (_args, opts) => {
-      worktreeCwd = opts.cwd;
-      return { exitCode: 0 };
-    });
+    const provider = makeTestProvider(
+      async (_args) => {
+        return { exitCode: 0 };
+      },
+      (path) => {
+        worktreeCwd = path;
+      },
+    );
 
     const result = await interactive({
       agent: claudeCode("claude-opus-4-8"),
@@ -743,10 +662,14 @@ describe("interactive()", () => {
   it("without cwd behaves identically to process.cwd()", async () => {
     let worktreeCwd: string | undefined;
 
-    const provider = makeTestProvider(async (_args, opts) => {
-      worktreeCwd = opts.cwd;
-      return { exitCode: 0 };
-    });
+    const provider = makeTestProvider(
+      async (_args) => {
+        return { exitCode: 0 };
+      },
+      (path) => {
+        worktreeCwd = path;
+      },
+    );
 
     const result = await interactive({
       agent: claudeCode("claude-opus-4-8"),

@@ -7,15 +7,11 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { SilentDisplay, type DisplayEntry } from "./Display.js";
-import {
-  createBindMountSandboxProvider,
-  type BindMountSandboxHandle,
-  type SandboxProvider,
-} from "./SandboxProvider.js";
+import type { SandboxProvider } from "./SandboxProvider.js";
+import { testIsolated } from "./sandboxes/test-isolated.js";
 import {
   SandboxConfig,
   SandboxFactory,
-  SANDBOX_REPO_DIR,
   WorktreeDockerSandboxFactory,
 } from "./SandboxFactory.js";
 
@@ -38,20 +34,7 @@ const commitFile = async (
   await execAsync(`git commit -m "${message}"`, { cwd: dir });
 };
 
-const noopProvider = (): SandboxProvider =>
-  createBindMountSandboxProvider({
-    name: "test-provider",
-    create: async () => {
-      const handle: BindMountSandboxHandle = {
-        worktreePath: SANDBOX_REPO_DIR,
-        exec: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
-        copyFileIn: async () => {},
-        copyFileOut: async () => {},
-        close: async () => {},
-      };
-      return handle;
-    },
-  });
+const noopProvider = (): SandboxProvider => testIsolated();
 
 describe("WorktreeDockerSandboxFactory — baseBranch (real git)", () => {
   const tempDirs: string[] = [];

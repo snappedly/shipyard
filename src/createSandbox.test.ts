@@ -1,5 +1,5 @@
 import { exec } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync } from "node:fs";
 import {
   copyFile,
   mkdir,
@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { Effect, Layer } from "effect";
+import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import { claudeCode, codex } from "./AgentProvider.js";
 import {
@@ -22,9 +22,8 @@ import {
 } from "./createSandbox.js";
 import type { SandboxService } from "./SandboxFactory.js";
 import {
-  createBindMountSandboxProvider,
   createIsolatedSandboxProvider,
-  type BindMountSandboxHandle,
+  type SessionTransferHandle,
 } from "./SandboxProvider.js";
 import { encodeProjectPath } from "./SessionStore.js";
 import { testIsolated } from "./sandboxes/test-isolated.js";
@@ -33,17 +32,8 @@ import { silenceTerminalOutput } from "./testTerminalOutput.js";
 
 silenceTerminalOutput();
 
-/** Dummy sandbox provider used to satisfy the required `sandbox` field in test mode. */
-const testSandbox = createBindMountSandboxProvider({
-  name: "test",
-  create: async () => ({
-    worktreePath: "/home/agent/workspace",
-    exec: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
-    copyFileIn: async () => {},
-    copyFileOut: async () => {},
-    close: async () => {},
-  }),
-});
+/** Docker-shaped test provider; test mode bypasses its create method. */
+const testSandbox = testIsolated();
 
 const execAsync = promisify(exec);
 
@@ -347,9 +337,9 @@ describe("createSandbox", () => {
 
     const sandboxBaseDir = mkdtempSync(join(tmpdir(), "sandbox-claude-sb-"));
 
-    // Fake bind-mount handle whose copyFileOut/copyFileIn are filesystem copies.
+    // Fake bind-mount handle whose copyFileOut/copyIn are filesystem copies.
     // captureToHost reads the session JSONL out of the sandbox via this handle.
-    const fakeHandle: BindMountSandboxHandle = {
+    const fakeHandle: SessionTransferHandle = {
       worktreePath: sandboxBaseDir,
       exec: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
       copyFileIn: async (hostPath, sandboxPath) => {
@@ -439,7 +429,7 @@ describe("createSandbox", () => {
       cwd: hostDir,
       _test: {
         buildSandbox,
-        bindMountHandle: fakeHandle,
+        sessionTransferHandle: fakeHandle,
       },
     });
 
@@ -524,7 +514,7 @@ describe("createSandbox", () => {
     const mockSessionId = "resume-sandbox-session-1";
     const sandboxBaseDir = mkdtempSync(join(tmpdir(), "sandbox-resume-sb-"));
 
-    const fakeHandle: BindMountSandboxHandle = {
+    const fakeHandle: SessionTransferHandle = {
       worktreePath: sandboxBaseDir,
       exec: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
       copyFileIn: async (hostPath, sandboxPath) => {
@@ -614,7 +604,7 @@ describe("createSandbox", () => {
       cwd: hostDir,
       _test: {
         buildSandbox,
-        bindMountHandle: fakeHandle,
+        sessionTransferHandle: fakeHandle,
       },
     });
 
@@ -894,45 +884,37 @@ describe("createSandbox", () => {
     await initRepo(hostDir);
     await commitFile(hostDir, "init.txt", "init", "initial commit");
 
-    const gitTmpDir = mkdtempSync(join(tmpdir(), "test-gitconfig-"));
-    const globalConfigPath = join(gitTmpDir, ".gitconfig");
-    writeFileSync(globalConfigPath, "");
-    const isolatedEnv = {
-      ...process.env,
-      GIT_CONFIG_GLOBAL: globalConfigPath,
-    };
-
     let userExecCmd: string | undefined;
     let userExecCwd: string | undefined;
+    let sandboxRepoPath: string | undefined;
 
-    const spyProvider = createBindMountSandboxProvider({
+    const spyProvider = createIsolatedSandboxProvider({
       name: "spy-exec",
-      create: async (opts) => ({
-        worktreePath: opts.worktreePath,
-        exec: async (cmd, execOpts) => {
-          // Shipyard issues a `git config --global --add safe.directory ...`
-          // command before user code can run; only record the user-issued one.
-          if (cmd === "echo hello-from-provider") {
-            userExecCmd = cmd;
-            userExecCwd = execOpts?.cwd;
-            return {
-              stdout: "hello-from-provider\n",
-              stderr: "",
-              exitCode: 0,
-            };
-          }
-          const cwd = execOpts?.cwd ?? opts.worktreePath;
-          const result = await execAsync(cmd, { cwd, env: isolatedEnv });
-          return {
-            stdout: result.stdout,
-            stderr: result.stderr,
-            exitCode: 0,
-          };
-        },
-        copyFileIn: async () => {},
-        copyFileOut: async () => {},
-        close: async () => {},
-      }),
+      create: async (opts) => {
+        const base = await testIsolated().create(opts);
+        sandboxRepoPath = base.worktreePath;
+        return {
+          ...base,
+          worktreePath: base.worktreePath,
+          exec: async (cmd, execOpts) => {
+            // Shipyard issues a `git config --global --add safe.directory ...`
+            // command before user code can run; only record the user-issued one.
+            if (cmd === "echo hello-from-provider") {
+              userExecCmd = cmd;
+              userExecCwd = execOpts?.cwd;
+              return {
+                stdout: "hello-from-provider\n",
+                stderr: "",
+                exitCode: 0,
+              };
+            }
+            return base.exec(cmd, execOpts);
+          },
+          copyIn: base.copyIn,
+          copyFileOut: base.copyFileOut,
+          close: base.close,
+        };
+      },
     });
 
     const sandbox = await createSandbox({
@@ -946,11 +928,10 @@ describe("createSandbox", () => {
       expect(result.stdout).toBe("hello-from-provider\n");
       expect(userExecCmd).toBe("echo hello-from-provider");
       // cwd should default to the provider's worktreePath.
-      expect(userExecCwd).toBe(sandbox.worktreePath);
+      expect(userExecCwd).toBe(sandboxRepoPath);
     } finally {
       await sandbox.close();
       await rm(hostDir, { recursive: true, force: true });
-      await rm(gitTmpDir, { recursive: true, force: true });
     }
   });
 
@@ -1307,21 +1288,22 @@ describe("createSandbox", () => {
     await initRepo(hostDir);
     await commitFile(hostDir, "init.txt", "init", "initial commit");
     let closed = false;
-    const provider = createBindMountSandboxProvider({
+    const provider = createIsolatedSandboxProvider({
       name: "failed-setup",
-      create: async () => ({
-        worktreePath: hostDir,
-        exec: async (command) => ({
-          stdout: "",
-          stderr: command === "exit 17" ? "failed install" : "",
-          exitCode: command === "exit 17" ? 17 : 0,
-        }),
-        copyFileIn: async () => {},
-        copyFileOut: async () => {},
-        close: async () => {
-          closed = true;
-        },
-      }),
+      create: async (opts) => {
+        const base = await testIsolated().create(opts);
+        return {
+          ...base,
+          exec: async (command, options) =>
+            command === "exit 17"
+              ? { stdout: "", stderr: "failed install", exitCode: 17 }
+              : base.exec(command, options),
+          close: async () => {
+            closed = true;
+            await base.close();
+          },
+        };
+      },
     });
     try {
       await expect(
@@ -1347,24 +1329,16 @@ describe("createSandbox", () => {
     let createCallCount = 0;
     let closeCallCount = 0;
 
-    // Isolated git config so global writes don't pollute developer config
-    const gitTmpDir = mkdtempSync(join(tmpdir(), "test-gitconfig-"));
-    const globalConfigPath = join(gitTmpDir, ".gitconfig");
-    writeFileSync(globalConfigPath, "");
-    const isolatedEnv = {
-      ...process.env,
-      GIT_CONFIG_GLOBAL: globalConfigPath,
-    };
-
-    const spyProvider = createBindMountSandboxProvider({
+    const spyProvider = createIsolatedSandboxProvider({
       name: "spy",
       create: async (opts) => {
         createCallCount++;
-        const workDir = opts.worktreePath;
+        const base = await testIsolated().create(opts);
+        const workDir = base.worktreePath;
         return {
+          ...base,
           worktreePath: workDir,
           exec: async (cmd, execOpts) => {
-            const cwd = execOpts?.cwd ?? workDir;
             if (cmd.startsWith("claude ") && execOpts?.onLine) {
               const onLine = execOpts.onLine;
               const output = toStreamJson("mock output");
@@ -1374,21 +1348,13 @@ describe("createSandbox", () => {
             if (cmd.startsWith("claude ")) {
               return { stdout: "mock", stderr: "", exitCode: 0 };
             }
-            const result = await execAsync(cmd, { cwd, env: isolatedEnv });
-            if (execOpts?.onLine) {
-              for (const line of result.stdout.split("\n"))
-                execOpts.onLine(line);
-            }
-            return {
-              stdout: result.stdout,
-              stderr: result.stderr,
-              exitCode: 0,
-            };
+            return base.exec(cmd, execOpts);
           },
-          copyFileIn: async () => {},
-          copyFileOut: async () => {},
+          copyIn: base.copyIn,
+          copyFileOut: base.copyFileOut,
           close: async () => {
             closeCallCount++;
+            await base.close();
           },
         };
       },
@@ -1420,7 +1386,6 @@ describe("createSandbox", () => {
       await sandbox.close();
       expect(closeCallCount).toBe(1);
       await rm(hostDir, { recursive: true, force: true });
-      await rm(gitTmpDir, { recursive: true, force: true });
     }
   });
 
@@ -1431,41 +1396,32 @@ describe("createSandbox", () => {
 
     let providerClosed = false;
 
-    const gitTmpDir = mkdtempSync(join(tmpdir(), "test-gitconfig-"));
-    const globalConfigPath = join(gitTmpDir, ".gitconfig");
-    writeFileSync(globalConfigPath, "");
-    const isolatedEnv = {
-      ...process.env,
-      GIT_CONFIG_GLOBAL: globalConfigPath,
-    };
-
-    const spyProvider = createBindMountSandboxProvider({
+    const spyProvider = createIsolatedSandboxProvider({
       name: "spy-close",
-      create: async (opts) => ({
-        worktreePath: opts.worktreePath,
-        exec: async (cmd, execOpts) => {
-          const cwd = execOpts?.cwd ?? opts.worktreePath;
-          if (cmd.startsWith("claude ") && execOpts?.onLine) {
-            const onLine = execOpts.onLine;
-            const output = toStreamJson("mock");
-            for (const line of output.split("\n")) onLine(line);
-            return { stdout: output, stderr: "", exitCode: 0 };
-          }
-          if (cmd.startsWith("claude "))
-            return { stdout: "mock", stderr: "", exitCode: 0 };
-          const result = await execAsync(cmd, { cwd, env: isolatedEnv });
-          return {
-            stdout: result.stdout,
-            stderr: result.stderr,
-            exitCode: 0,
-          };
-        },
-        copyFileIn: async () => {},
-        copyFileOut: async () => {},
-        close: async () => {
-          providerClosed = true;
-        },
-      }),
+      create: async (opts) => {
+        const base = await testIsolated().create(opts);
+        return {
+          ...base,
+          worktreePath: base.worktreePath,
+          exec: async (cmd, execOpts) => {
+            if (cmd.startsWith("claude ") && execOpts?.onLine) {
+              const onLine = execOpts.onLine;
+              const output = toStreamJson("mock");
+              for (const line of output.split("\n")) onLine(line);
+              return { stdout: output, stderr: "", exitCode: 0 };
+            }
+            if (cmd.startsWith("claude "))
+              return { stdout: "mock", stderr: "", exitCode: 0 };
+            return base.exec(cmd, execOpts);
+          },
+          copyIn: base.copyIn,
+          copyFileOut: base.copyFileOut,
+          close: async () => {
+            providerClosed = true;
+            await base.close();
+          },
+        };
+      },
     });
 
     const sandbox = await createSandbox({
@@ -1479,7 +1435,6 @@ describe("createSandbox", () => {
     expect(providerClosed).toBe(true);
 
     await rm(hostDir, { recursive: true, force: true });
-    await rm(gitTmpDir, { recursive: true, force: true });
   });
 
   it("state persists between runs — file created in run 1 exists in run 2", async () => {
@@ -1672,30 +1627,25 @@ describe("createSandbox", () => {
     const receivedArgs: string[] = [];
 
     // Create a provider that has interactiveExec
-    const interactiveProvider = createBindMountSandboxProvider({
+    const interactiveProvider = createIsolatedSandboxProvider({
       name: "test-interactive",
-      create: async (opts) => ({
-        worktreePath: opts.worktreePath,
-        exec: async (cmd, execOpts) => {
-          const cwd = execOpts?.cwd ?? opts.worktreePath;
-          const result = await execAsync(cmd, { cwd });
-          if (execOpts?.onLine) {
-            for (const line of result.stdout.split("\n")) execOpts.onLine(line);
-          }
-          return {
-            stdout: result.stdout,
-            stderr: result.stderr,
-            exitCode: 0,
-          };
-        },
-        interactiveExec: async (args, _opts) => {
-          receivedArgs.push(...args);
-          return { exitCode: 0 };
-        },
-        copyFileIn: async () => {},
-        copyFileOut: async () => {},
-        close: async () => {},
-      }),
+      create: async (opts) => {
+        const base = await testIsolated().create(opts);
+        return {
+          ...base,
+          worktreePath: base.worktreePath,
+          exec: async (cmd, execOpts) => {
+            return base.exec(cmd, execOpts);
+          },
+          interactiveExec: async (args, _opts) => {
+            receivedArgs.push(...args);
+            return { exitCode: 0 };
+          },
+          copyIn: base.copyIn,
+          copyFileOut: base.copyFileOut,
+          close: base.close,
+        };
+      },
     });
 
     const sandbox = await createSandbox({
@@ -1726,25 +1676,21 @@ describe("createSandbox", () => {
 
     let createCallCount = 0;
 
-    const interactiveProvider = createBindMountSandboxProvider({
+    const interactiveProvider = createIsolatedSandboxProvider({
       name: "test-interactive-reuse",
       create: async (opts) => {
         createCallCount++;
+        const base = await testIsolated().create(opts);
         return {
-          worktreePath: opts.worktreePath,
+          ...base,
+          worktreePath: base.worktreePath,
           exec: async (cmd, execOpts) => {
-            const cwd = execOpts?.cwd ?? opts.worktreePath;
-            const result = await execAsync(cmd, { cwd });
-            return {
-              stdout: result.stdout,
-              stderr: result.stderr,
-              exitCode: 0,
-            };
+            return base.exec(cmd, execOpts);
           },
           interactiveExec: async () => ({ exitCode: 0 }),
-          copyFileIn: async () => {},
-          copyFileOut: async () => {},
-          close: async () => {},
+          copyIn: base.copyIn,
+          copyFileOut: base.copyFileOut,
+          close: base.close,
         };
       },
     });
@@ -1778,34 +1724,32 @@ describe("createSandbox", () => {
     await initRepo(hostDir);
     await commitFile(hostDir, "init.txt", "init", "initial commit");
 
-    const interactiveProvider = createBindMountSandboxProvider({
+    const interactiveProvider = createIsolatedSandboxProvider({
       name: "test-interactive-commits",
-      create: async (opts) => ({
-        worktreePath: opts.worktreePath,
-        exec: async (cmd, execOpts) => {
-          const cwd = execOpts?.cwd ?? opts.worktreePath;
-          const result = await execAsync(cmd, { cwd });
-          return {
-            stdout: result.stdout,
-            stderr: result.stderr,
-            exitCode: 0,
-          };
-        },
-        interactiveExec: async (_args, opts) => {
-          // Simulate agent making a commit
-          const cwd = opts.cwd!;
-          await writeFile(
-            join(cwd, "interactive-file.txt"),
-            "interactive content",
-          );
-          await execAsync("git add interactive-file.txt", { cwd });
-          await execAsync('git commit -m "interactive commit"', { cwd });
-          return { exitCode: 0 };
-        },
-        copyFileIn: async () => {},
-        copyFileOut: async () => {},
-        close: async () => {},
-      }),
+      create: async (opts) => {
+        const base = await testIsolated().create(opts);
+        return {
+          ...base,
+          worktreePath: base.worktreePath,
+          exec: async (cmd, execOpts) => {
+            return base.exec(cmd, execOpts);
+          },
+          interactiveExec: async (_args, opts) => {
+            // Simulate agent making a commit
+            const cwd = opts.cwd!;
+            await writeFile(
+              join(cwd, "interactive-file.txt"),
+              "interactive content",
+            );
+            await execAsync("git add interactive-file.txt", { cwd });
+            await execAsync('git commit -m "interactive commit"', { cwd });
+            return { exitCode: 0 };
+          },
+          copyIn: base.copyIn,
+          copyFileOut: base.copyFileOut,
+          close: base.close,
+        };
+      },
     });
 
     const sandbox = await createSandbox({
@@ -1834,23 +1778,21 @@ describe("createSandbox", () => {
     await commitFile(hostDir, "init.txt", "init", "initial commit");
 
     // Provider without interactiveExec
-    const noInteractiveProvider = createBindMountSandboxProvider({
+    const noInteractiveProvider = createIsolatedSandboxProvider({
       name: "test-no-interactive",
-      create: async (opts) => ({
-        worktreePath: opts.worktreePath,
-        exec: async (cmd, execOpts) => {
-          const cwd = execOpts?.cwd ?? opts.worktreePath;
-          const result = await execAsync(cmd, { cwd });
-          return {
-            stdout: result.stdout,
-            stderr: result.stderr,
-            exitCode: 0,
-          };
-        },
-        copyFileIn: async () => {},
-        copyFileOut: async () => {},
-        close: async () => {},
-      }),
+      create: async (opts) => {
+        const base = await testIsolated().create(opts);
+        return {
+          ...base,
+          worktreePath: base.worktreePath,
+          exec: async (cmd, execOpts) => {
+            return base.exec(cmd, execOpts);
+          },
+          copyIn: base.copyIn,
+          copyFileOut: base.copyFileOut,
+          close: base.close,
+        };
+      },
     });
 
     const sandbox = await createSandbox({
@@ -1879,27 +1821,25 @@ describe("createSandbox", () => {
 
     const receivedArgs: string[] = [];
 
-    const interactiveProvider = createBindMountSandboxProvider({
+    const interactiveProvider = createIsolatedSandboxProvider({
       name: "test-interactive-args",
-      create: async (opts) => ({
-        worktreePath: opts.worktreePath,
-        exec: async (cmd, execOpts) => {
-          const cwd = execOpts?.cwd ?? opts.worktreePath;
-          const result = await execAsync(cmd, { cwd });
-          return {
-            stdout: result.stdout,
-            stderr: result.stderr,
-            exitCode: 0,
-          };
-        },
-        interactiveExec: async (args, _opts) => {
-          receivedArgs.push(...args);
-          return { exitCode: 0 };
-        },
-        copyFileIn: async () => {},
-        copyFileOut: async () => {},
-        close: async () => {},
-      }),
+      create: async (opts) => {
+        const base = await testIsolated().create(opts);
+        return {
+          ...base,
+          worktreePath: base.worktreePath,
+          exec: async (cmd, execOpts) => {
+            return base.exec(cmd, execOpts);
+          },
+          interactiveExec: async (args, _opts) => {
+            receivedArgs.push(...args);
+            return { exitCode: 0 };
+          },
+          copyIn: base.copyIn,
+          copyFileOut: base.copyFileOut,
+          close: base.close,
+        };
+      },
     });
 
     const sandbox = await createSandbox({
@@ -2066,24 +2006,22 @@ describe("createSandbox", () => {
     await initRepo(hostDir);
     await commitFile(hostDir, "init.txt", "init", "initial commit");
 
-    const interactiveProvider = createBindMountSandboxProvider({
+    const interactiveProvider = createIsolatedSandboxProvider({
       name: "test-interactive-signal",
-      create: async (opts) => ({
-        worktreePath: opts.worktreePath,
-        exec: async (cmd, execOpts) => {
-          const cwd = execOpts?.cwd ?? opts.worktreePath;
-          const result = await execAsync(cmd, { cwd });
-          return {
-            stdout: result.stdout,
-            stderr: result.stderr,
-            exitCode: 0,
-          };
-        },
-        interactiveExec: async () => ({ exitCode: 0 }),
-        copyFileIn: async () => {},
-        copyFileOut: async () => {},
-        close: async () => {},
-      }),
+      create: async (opts) => {
+        const base = await testIsolated().create(opts);
+        return {
+          ...base,
+          worktreePath: base.worktreePath,
+          exec: async (cmd, execOpts) => {
+            return base.exec(cmd, execOpts);
+          },
+          interactiveExec: async () => ({ exitCode: 0 }),
+          copyIn: base.copyIn,
+          copyFileOut: base.copyFileOut,
+          close: base.close,
+        };
+      },
     });
 
     const sandbox = await createSandbox({
@@ -2110,24 +2048,22 @@ describe("createSandbox", () => {
     await initRepo(hostDir);
     await commitFile(hostDir, "init.txt", "init", "initial commit");
 
-    const interactiveProvider = createBindMountSandboxProvider({
+    const interactiveProvider = createIsolatedSandboxProvider({
       name: "test-interactive-preabort",
-      create: async (opts) => ({
-        worktreePath: opts.worktreePath,
-        exec: async (cmd, execOpts) => {
-          const cwd = execOpts?.cwd ?? opts.worktreePath;
-          const result = await execAsync(cmd, { cwd });
-          return {
-            stdout: result.stdout,
-            stderr: result.stderr,
-            exitCode: 0,
-          };
-        },
-        interactiveExec: async () => ({ exitCode: 0 }),
-        copyFileIn: async () => {},
-        copyFileOut: async () => {},
-        close: async () => {},
-      }),
+      create: async (opts) => {
+        const base = await testIsolated().create(opts);
+        return {
+          ...base,
+          worktreePath: base.worktreePath,
+          exec: async (cmd, execOpts) => {
+            return base.exec(cmd, execOpts);
+          },
+          interactiveExec: async () => ({ exitCode: 0 }),
+          copyIn: base.copyIn,
+          copyFileOut: base.copyFileOut,
+          close: base.close,
+        };
+      },
     });
 
     const sandbox = await createSandbox({
@@ -2204,7 +2140,7 @@ describe("createSandbox", () => {
     await initRepo(hostDir);
     await commitFile(hostDir, "init.txt", "init", "initial commit");
 
-    const failingProvider = createBindMountSandboxProvider({
+    const failingProvider = createIsolatedSandboxProvider({
       name: "failing-create",
       create: async () => {
         throw new Error("Image 'shipyard:test' not found locally");
@@ -2234,7 +2170,7 @@ describe("createSandbox", () => {
     }
   });
 
-  it("copyToWorktree copies files into the worktree at creation time", async () => {
+  it("copyToWorktree copies files into the Docker sandbox", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "sandbox-test-"));
     await initRepo(hostDir);
     await commitFile(hostDir, "init.txt", "init", "initial commit");
@@ -2247,17 +2183,11 @@ describe("createSandbox", () => {
       sandbox: testSandbox,
       copyToWorktree: ["config.json"],
       cwd: hostDir,
-      _test: {
-        buildSandbox: (sandboxDir) => makeLocalSandbox(sandboxDir),
-      },
     });
 
     try {
-      const copied = await readFile(
-        join(sandbox.worktreePath, "config.json"),
-        "utf-8",
-      );
-      expect(JSON.parse(copied)).toEqual({ key: "value" });
+      const copied = await sandbox.exec("cat config.json");
+      expect(JSON.parse(copied.stdout)).toEqual({ key: "value" });
     } finally {
       await sandbox.close();
       await rm(hostDir, { recursive: true, force: true });

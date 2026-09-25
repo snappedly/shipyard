@@ -151,8 +151,7 @@ export interface SandboxLifecycleOptions {
    *  is a sandbox path that doesn't exist on the host (e.g. /home/agent/workspace). */
   readonly hostWorktreePath?: string;
   /** Called after agent work completes but before host-side git operations (merge, commit collection).
-   *  For isolated providers, this syncs changes from the sandbox to the host worktree.
-   *  For bind-mount providers, this is a no-op (filesystem is already shared). */
+   *  Syncs changes from the Docker sandbox to the host worktree. */
   readonly applyToHost?: () => Effect.Effect<void, SyncError>;
   /** AbortSignal passed through to lifecycle hooks so they can cooperatively cancel.
    *  When omitted, hooks receive a never-aborted signal. */
@@ -232,9 +231,7 @@ export const withSandboxLifecycle = <A>(
     let resolvedBranch = "";
     yield* display.taskLog("Setting up sandbox", (message) =>
       Effect.gen(function* () {
-        // The bind-mounted worktree may be owned by a different UID (host user
-        // vs sandbox user). Mark it safe so git doesn't reject it with
-        // "dubious ownership".
+        // Allow the sandbox user to use its synced Git workspace.
         yield* execOkWithGitTimeout(
           sandbox,
           `git config --global --add safe.directory ${shellQuote(sandboxRepoDir)}`,
@@ -258,7 +255,7 @@ export const withSandboxLifecycle = <A>(
           );
         }
 
-        // Repo is bind-mounted — discover branch directly
+        // Discover the branch in the synced sandbox repository
         resolvedBranch = (yield* execOkWithGitTimeout(
           sandbox,
           "git rev-parse --abbrev-ref HEAD",
@@ -371,10 +368,8 @@ export const withSandboxLifecycle = <A>(
 
     const targetBranch = branch ?? resolvedBranch;
 
-    // Record base HEAD from the host worktree (not the sandbox).
-    // For bind-mount providers, these are the same. For isolated providers,
-    // the host-side SHA is the correct baseline for git rev-list after applyToHost
-    // syncs commits back (syncOut creates new SHAs via format-patch/am).
+    // Record base HEAD from the host worktree. syncOut may rewrite commit SHAs
+    // through format-patch/am, so the host SHA is the merge baseline.
     const baseHead = yield* Effect.promise(async () => {
       return (
         await execHostGit(["rev-parse", "HEAD"], hostSideWorktreePath)

@@ -1,5 +1,5 @@
 /**
- * User-facing mount configuration for bind-mount sandbox providers.
+ * User-facing mount configuration for Docker.
  *
  * Each entry describes a host directory to mount into the sandbox container.
  */

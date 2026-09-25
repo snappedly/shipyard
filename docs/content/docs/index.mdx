@@ -8,8 +8,7 @@ description: Run an AI coding agent in a sandbox with Shipyard.
 Shipyard is a TypeScript library and CLI for running AI coding agents in
 sandboxes. Your script chooses an agent, a sandbox provider, a prompt, and a
 branch strategy. Shipyard manages the sandbox lifecycle and collects the
-agent's commits. Start with a single run; reusable sandboxes and parallel
-workflows are available when you need them.
+agent's commits. The bundled templates provide issue workflows you can adapt.
 
 ## Quick start
 
@@ -26,7 +25,7 @@ npm install --save-dev @snappedly-tools/shipyard
 ### 2. Initialize the target repository
 
 ```sh
-npx shipyard init --template blank --agent codex --codex-auth chatgpt --sandbox docker \
+npx shipyard init --template simple-loop --agent codex --codex-auth chatgpt --sandbox docker \
   --issue-tracker github-issues --build-image false
 ```
 
@@ -38,39 +37,30 @@ any required credentials there. In a non-interactive environment, run
 `codex login` before this command.
 Leave `OPENAI_API_KEY` out of `.shipyard/.env` in this mode. To use API-key
 authentication instead, use `--codex-auth api-key` and set the key in `.env`.
-Set the scaffold's `GH_TOKEN` entry if your prompt accesses GitHub. Edit
-`.shipyard/prompt.md` with the task, verification instructions, and a request
-to commit the changes. Init always attempts to create or update the lowercase
+Set the scaffold's `GH_TOKEN` entry for GitHub Issues access. Review
+`.shipyard/prompt.md` and adapt the issue workflow to your repository. Init
+always attempts to create or update the lowercase
 `shipyard` label; built-in issue workflows select only open issues carrying
 that label.
 
 ### 3. Configure and run
 
 Init generates `.shipyard/main.ts` for ESM projects (`"type": "module"`),
-otherwise `.shipyard/main.mts`. That file configures `run()`; there is no
+otherwise `.shipyard/main.mts`. That file configures the workflow; there is no
 `config.json`.
 
-Docker keeps Git storage inside the sandbox and syncs changes back. Its default
-`merge-to-head` strategy merges transferred commits into your
-current branch. To retain changes on a separate branch for inspection, add:
-
-```ts
-branchStrategy: { type: "branch", branch: "agent/first-task" },
-logging: { type: "stdout" },
-```
-
-Commit the setup files you want available on that branch, leaving `.env`
-untracked. Run the configured workflow with one command:
+Commit the setup files, leaving `.env` untracked. Label an issue `shipyard`
+and `ready-for-agent`, then run the selected workflow:
 
 ```sh
 npx shipyard run
 ```
 
 The command detects `main.ts` or `main.mts`, finds the generated `Dockerfile`,
-builds the cached image, and starts
-the workflow. Use `npx shipyard run --skip-build` when the image definition has
-not changed. Inspect commits with `git log HEAD..agent/first-task` and changes
-with `git diff HEAD...agent/first-task`. Merge when ready.
+builds the cached image, and starts the workflow. The `simple-loop` template
+implements eligible issues on separate branches and opens pull requests for
+review. Use `npx shipyard run --skip-build` when the image definition has not
+changed.
 
 You can add `"shipyard": "shipyard run"` to the target project's scripts if
 you prefer `npm run shipyard`. Shipyard's own repository script runs its
@@ -82,8 +72,8 @@ advanced multi-agent workflow instead.
 - [Agent providers](/docs/agents): choose an agent and configure authentication.
 - [Repository runner](/docs/repository-runner): wake a foreground Shipyard
   controller from labelled GitHub Issues.
-- Try the `simple-loop`, `sequential-reviewer`, `parallel-planner`, or
-  `parallel-planner-with-review` templates after reviewing their prompts.
+- Review the `simple-loop`, `sequential-reviewer`, `parallel-planner`, and
+  `parallel-planner-with-review` templates before running them.
 
 The optional workflow coordinator APIs support more elaborate hosted automation.
 They are not required to run the library or its templates; ordinary use needs

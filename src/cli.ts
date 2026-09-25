@@ -37,7 +37,9 @@ import {
   type CodexAuthMode,
 } from "./CodexAuth.js";
 import { requireCanonicalConfigDir } from "./runtimeConfig.js";
+import { runEffectPromise } from "./runEffectPromise.js";
 import {
+  installRepositoryRunnerWithReplacement,
   installRepositoryRunner,
   RunnerInstallError,
 } from "./RepositoryRunner.js";
@@ -289,7 +291,7 @@ const runCommand = Command.make(
 
 const templateOption = Options.text("template").pipe(
   Options.withDescription(
-    "Template to scaffold (e.g. blank, simple-loop, parallel-planner)",
+    "Template to scaffold (e.g. simple-loop, parallel-planner)",
   ),
   Options.optional,
 );
@@ -574,33 +576,10 @@ const initCommand = Command.make(
         });
       }
 
-      // Resolve sandbox provider: CLI flag > interactive select (no default — user must choose)
-      const sandboxProviders = listSandboxProviders();
-      let selectedSandboxProvider: SandboxProviderEntry;
-      if (sandboxFlag._tag === "Some") {
-        selectedSandboxProvider = getSandboxProvider(sandboxFlag.value)!;
-      } else {
-        if (!isInteractive) {
-          yield* failIfNonInteractive("--sandbox");
-        }
-        const selected = yield* Effect.promise(() =>
-          clack.select({
-            message: "Select a sandbox provider:",
-            options: sandboxProviders.map((p) => ({
-              value: p.name,
-              label: p.label,
-            })),
-          }),
-        );
-        if (clack.isCancel(selected)) {
-          yield* Effect.fail(
-            new InitError({
-              message: "Sandbox provider selection cancelled.",
-            }),
-          );
-        }
-        selectedSandboxProvider = getSandboxProvider(selected as string)!;
-      }
+      // Docker is the sole supported provider. Keep --sandbox docker accepted
+      // for existing non-interactive init scripts.
+      const selectedSandboxProvider: SandboxProviderEntry =
+        getSandboxProvider("docker")!;
 
       // Resolve issue tracker: CLI flag > interactive select (already validated above)
       const issueTrackers = listIssueTrackers();
@@ -642,7 +621,7 @@ const initCommand = Command.make(
         const selected = yield* Effect.promise(() =>
           clack.select({
             message: "Select a template:",
-            initialValue: "blank",
+            initialValue: "simple-loop",
             options: templates.map((tmpl) => ({
               value: tmpl.name,
               label: tmpl.name,
@@ -706,23 +685,26 @@ const initCommand = Command.make(
         }
       }
 
-      const scaffoldResult = yield* d.spinner(
+      yield* d.progress(
         `Scaffolding ${CONFIG_DIR}/ config directory...`,
-        scaffold(cwd, {
-          agent: selectedAgent,
-          model: selectedModel,
-          templateName: selectedTemplate,
-          issueTracker: selectedIssueTracker,
-          sandboxProvider: selectedSandboxProvider,
-          codexAuth: selectedCodexAuth,
-        }).pipe(
-          Effect.mapError(
-            (e) =>
-              new InitError({
-                message: `${e instanceof Error ? e.message : e}`,
-              }),
+        (report) =>
+          scaffold(cwd, {
+            agent: selectedAgent,
+            model: selectedModel,
+            modelExplicit: modelFlag._tag === "Some",
+            templateName: selectedTemplate,
+            issueTracker: selectedIssueTracker,
+            sandboxProvider: selectedSandboxProvider,
+            codexAuth: selectedCodexAuth,
+            onProgress: report,
+          }).pipe(
+            Effect.mapError(
+              (e) =>
+                new InitError({
+                  message: `${e instanceof Error ? e.message : e}`,
+                }),
+            ),
           ),
-        ),
       );
 
       // Detect the host package manager so the zod offer below and the next
@@ -805,24 +787,35 @@ const initCommand = Command.make(
               return confirmed === true;
             },
             install: () =>
-              Effect.runPromise(
-                d.progress("Installing repository runner", (report) =>
-                  Effect.tryPromise({
-                    try: () =>
-                      installRepositoryRunner({
-                        repoDir: cwd,
-                        onProgress: report,
-                      }),
-                    catch: (error) =>
-                      new InitError({
-                        message:
+              installRepositoryRunnerWithReplacement({
+                repoDir: cwd,
+                interactive: isInteractive,
+                confirmReplacement: async (conflict) => {
+                  const confirmed = await clack.confirm({
+                    message: conflict.confirmationMessage,
+                    initialValue: false,
+                  });
+                  return !clack.isCancel(confirmed) && confirmed === true;
+                },
+                install: () =>
+                  runEffectPromise(
+                    d.progress("Installing repository runner", (report) =>
+                      Effect.tryPromise({
+                        try: () =>
+                          installRepositoryRunner({
+                            repoDir: cwd,
+                            onProgress: report,
+                          }),
+                        catch: (error) =>
                           error instanceof RunnerInstallError
-                            ? error.message
-                            : `Repository runner installation failed: ${error instanceof Error ? error.message : String(error)}`,
+                            ? error
+                            : new InitError({
+                                message: `Repository runner installation failed: ${error instanceof Error ? error.message : String(error)}`,
+                              }),
                       }),
-                  }),
-                ),
-              ),
+                    ),
+                  ),
+              }),
           }),
         catch: (error) =>
           error instanceof InitError

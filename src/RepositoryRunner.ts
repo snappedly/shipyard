@@ -14,12 +14,7 @@ import { constants } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import {
-  ACTIVATION_LABEL,
-  CONFIG_DIR,
-  RUNNER_DIR,
-  RUNNER_SANDBOX_MASK_DIR,
-} from "./runtimeNames.js";
+import { ACTIVATION_LABEL, CONFIG_DIR, RUNNER_DIR } from "./runtimeNames.js";
 import {
   assertProtectedDirectoryIdentities,
   repositoryRunnerEnvironment,
@@ -42,7 +37,37 @@ const RELEASES_API =
   "https://api.github.com/repos/actions/runner/releases/latest";
 
 export class RunnerInstallError extends Error {
-  readonly name = "RunnerInstallError";
+  readonly name: string = "RunnerInstallError";
+}
+
+export interface ExistingRepositoryRunnerRegistration {
+  readonly id: number | undefined;
+  readonly name: string;
+  readonly status: string;
+  readonly busy: boolean;
+}
+
+export class RunnerInstallConflictError extends RunnerInstallError {
+  override readonly name = "RunnerInstallConflictError";
+
+  readonly confirmationMessage: string;
+
+  constructor(
+    readonly repository: string,
+    readonly runners: readonly ExistingRepositoryRunnerRegistration[],
+  ) {
+    const names = runners.map(({ name }) => name).join(", ");
+    super(
+      `A repository runner labeled \`${ACTIVATION_LABEL}\` is already registered for ${repository}: ${names}. Remove it before installing another.`,
+    );
+    const details = runners
+      .map(
+        ({ id, name, status, busy }) =>
+          `${name}${id === undefined ? "" : ` (#${id})`} (${status}${busy ? ", busy" : ""})`,
+      )
+      .join(", ");
+    this.confirmationMessage = `GitHub has ${runners.length} repository runner${runners.length === 1 ? "" : "s"} labeled \`${ACTIVATION_LABEL}\` for ${repository}: ${details}. Delete ${runners.length === 1 ? "this registration" : "these registrations"} and install a replacement?`;
+  }
 }
 
 export interface RunnerInstallOptions {
@@ -261,9 +286,7 @@ const appendRunnerIgnores = async (
     ? await adapters.readText(gitignorePath)
     : "";
   const lines = new Set(current.split(/\r?\n/));
-  const additions = [`${RUNNER_DIR}/`, `${RUNNER_SANDBOX_MASK_DIR}/`].filter(
-    (line) => !lines.has(line),
-  );
+  const additions = [`${RUNNER_DIR}/`].filter((line) => !lines.has(line));
   if (additions.length === 0) return;
   const prefix =
     current.length === 0 || current.endsWith("\n") ? current : `${current}\n`;
@@ -282,6 +305,128 @@ const reportProgress = (
   message: string,
 ): void => options.onProgress?.({ current, total, message });
 
+const parseExistingRunnerRegistrations = (
+  stdout: string,
+): readonly ExistingRepositoryRunnerRegistration[] => {
+  const lines = stdout.trim().split(/\r?\n/).filter(Boolean);
+  return lines.map((line) => {
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      // Accept the earlier name-only response format from injected adapters.
+      // Such a result can block an install, but cannot be deleted without an ID.
+      return { id: undefined, name: line, status: "unknown", busy: false };
+    }
+    if (typeof value !== "object" || value === null) {
+      throw new RunnerInstallError(
+        "GitHub returned invalid repository runner information.",
+      );
+    }
+    const registration = value as Record<string, unknown>;
+    if (
+      typeof registration.id !== "number" ||
+      !Number.isInteger(registration.id) ||
+      registration.id <= 0 ||
+      typeof registration.name !== "string" ||
+      registration.name.length === 0 ||
+      typeof registration.status !== "string" ||
+      typeof registration.busy !== "boolean"
+    ) {
+      throw new RunnerInstallError(
+        "GitHub returned invalid repository runner information.",
+      );
+    }
+    return {
+      id: registration.id,
+      name: registration.name,
+      status: registration.status,
+      busy: registration.busy,
+    };
+  });
+};
+
+export const removeExistingRepositoryRunnerRegistrations = async (
+  options: {
+    readonly repoDir: string;
+    readonly conflict: RunnerInstallConflictError;
+  },
+  adapters: RunnerInstallAdapters = defaultAdapters,
+): Promise<void> => {
+  if (options.conflict.runners.some(({ id }) => id === undefined)) {
+    throw new RunnerInstallError(
+      "GitHub did not provide runner IDs, so Shipyard cannot safely remove the existing registrations. Remove them in GitHub Settings > Actions > Runners, then retry.",
+    );
+  }
+
+  const environment = adapters.environment();
+  const removed: string[] = [];
+  for (const runner of options.conflict.runners) {
+    try {
+      await adapters.run(
+        "gh",
+        [
+          "api",
+          "--method",
+          "DELETE",
+          `repos/${options.conflict.repository}/actions/runners/${runner.id}`,
+        ],
+        { cwd: options.repoDir, env: environment },
+      );
+      removed.push(runner.name);
+    } catch (error) {
+      const previous =
+        removed.length === 0
+          ? ""
+          : ` Earlier registrations were already removed: ${removed.join(", ")}.`;
+      throw new RunnerInstallError(
+        `${
+          commandFailure(
+            `Removing GitHub runner ${runner.name} (#${runner.id}) from ${options.conflict.repository}`,
+            error,
+          ).message
+        }${previous}`,
+      );
+    }
+  }
+};
+
+export const installRepositoryRunnerWithReplacement = async (
+  options: {
+    readonly repoDir: string;
+    readonly interactive: boolean;
+    readonly install: () => Promise<RunnerInstallResult>;
+    readonly confirmReplacement: (
+      conflict: RunnerInstallConflictError,
+    ) => Promise<boolean>;
+  },
+  adapters: RunnerInstallAdapters = defaultAdapters,
+): Promise<RunnerInstallResult> => {
+  try {
+    return await options.install();
+  } catch (error) {
+    if (
+      !(error instanceof RunnerInstallConflictError) ||
+      !options.interactive
+    ) {
+      throw error;
+    }
+    if (!(await options.confirmReplacement(error))) {
+      throw new RunnerInstallError(
+        `${error.message} Existing runner registrations were left unchanged; installation cancelled.`,
+      );
+    }
+    await removeExistingRepositoryRunnerRegistrations(
+      {
+        repoDir: options.repoDir,
+        conflict: error,
+      },
+      adapters,
+    );
+    return options.install();
+  }
+};
+
 export const installRepositoryRunner = async (
   options: RunnerInstallOptions,
   adapters: RunnerInstallAdapters = defaultAdapters,
@@ -294,7 +439,6 @@ export const installRepositoryRunner = async (
 
   const configDir = join(options.repoDir, CONFIG_DIR);
   const runnerDir = join(configDir, RUNNER_DIR);
-  const maskDir = join(configDir, RUNNER_SANDBOX_MASK_DIR);
   if (!(await adapters.exists(configDir))) {
     throw new RunnerInstallError(
       `No ${CONFIG_DIR}/ found. Run \`shipyard init\` in this repository first.`,
@@ -358,7 +502,6 @@ export const installRepositoryRunner = async (
         {
           repoDir: options.repoDir,
           runnerDir,
-          maskDir,
           repository,
           runnerName,
         },
@@ -373,10 +516,8 @@ export const installRepositoryRunner = async (
     }
     await appendRunnerIgnores(join(configDir, ".gitignore"), adapters);
     await adapters.chmod(runnerDir, 0o700);
-    await adapters.chmod(maskDir, 0o700);
     await assertProtectedDirectoryIdentities(
       runnerDir,
-      maskDir,
       adapters.inspectDirectory,
     ).catch((error) => {
       throw commandFailure("Validating protected runner directories", error);
@@ -409,7 +550,7 @@ export const installRepositoryRunner = async (
         "--paginate",
         `repos/${repository}/actions/runners`,
         "--jq",
-        `.runners[] | select(any(.labels[]; .name == \"${ACTIVATION_LABEL}\")) | .name`,
+        `.runners[] | select(any(.labels[]; .name == \"${ACTIVATION_LABEL}\")) | {id, name, status, busy}`,
       ],
       { cwd: options.repoDir, env: hostEnv },
     )
@@ -419,10 +560,11 @@ export const installRepositoryRunner = async (
         error,
       );
     });
-  if (existing.stdout.trim().length > 0) {
-    throw new RunnerInstallError(
-      `A repository runner labeled \`${ACTIVATION_LABEL}\` is already registered for ${repository}. Remove it before installing another.`,
-    );
+  const existingRegistrations = parseExistingRunnerRegistrations(
+    existing.stdout,
+  );
+  if (existingRegistrations.length > 0) {
+    throw new RunnerInstallConflictError(repository, existingRegistrations);
   }
   reportProgress(
     options,
@@ -500,18 +642,13 @@ export const installRepositoryRunner = async (
   await adapters.makeDirectory(runnerDir).catch((error) => {
     throw commandFailure("Creating the protected runner directory", error);
   });
-  if (!(await adapters.exists(maskDir))) {
-    await adapters.makeDirectory(maskDir);
-  }
   await assertProtectedDirectoryIdentities(
     runnerDir,
-    maskDir,
     adapters.inspectDirectory,
   ).catch((error) => {
     throw commandFailure("Validating protected runner directories", error);
   });
   await adapters.chmod(runnerDir, 0o700);
-  await adapters.chmod(maskDir, 0o700);
   reportProgress(
     options,
     5,
@@ -553,17 +690,14 @@ export const installRepositoryRunner = async (
       { cwd: runnerDir, env: repositoryRunnerEnvironment(hostEnv) },
     );
   } catch {
-    const cleanup = await Promise.allSettled([
-      adapters.remove(runnerDir),
-      adapters.remove(maskDir),
-    ]);
+    const cleanup = await Promise.allSettled([adapters.remove(runnerDir)]);
     const cleanupSucceeded = cleanup.every(
       (result) => result.status === "fulfilled",
     );
     throw new RunnerInstallError(
       cleanupSucceeded
         ? `Registering ${runnerName} failed. Partial local runner files were removed so installation can be retried. Check GitHub Settings > Actions > Runners for an orphan registration; the one-time token was not stored.`
-        : `Registering ${runnerName} failed and partial local runner files could not be fully removed. Remove only ${runnerDir} and ${maskDir}, check GitHub Settings > Actions > Runners for an orphan registration, then retry. The one-time token was not stored.`,
+        : `Registering ${runnerName} failed and partial local runner files could not be fully removed. Remove only ${runnerDir}, check GitHub Settings > Actions > Runners for an orphan registration, then retry. The one-time token was not stored.`,
     );
   }
   reportProgress(options, 7, progressTotal, "Registered runner with GitHub");

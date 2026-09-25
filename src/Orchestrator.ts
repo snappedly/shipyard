@@ -9,7 +9,7 @@ import {
 } from "./errors.js";
 import type { SandboxError } from "./errors.js";
 import type { SandboxService } from "./SandboxFactory.js";
-import { SandboxFactory, SANDBOX_REPO_DIR } from "./SandboxFactory.js";
+import { SandboxFactory } from "./SandboxFactory.js";
 import { withSandboxLifecycle, type SandboxHooks } from "./SandboxLifecycle.js";
 import type { AgentProvider, IterationUsage } from "./AgentProvider.js";
 import type { Timeouts } from "./run.js";
@@ -392,7 +392,12 @@ export const orchestrate = (
 
       const sandboxResult = yield* factory.withSandbox(
         (
-          { hostWorktreePath, sandboxRepoPath, applyToHost, bindMountHandle },
+          {
+            hostWorktreePath,
+            sandboxRepoPath,
+            applyToHost,
+            sessionTransferHandle,
+          },
           sandbox,
         ) =>
           withSandboxLifecycle(
@@ -417,7 +422,7 @@ export const orchestrate = (
                   i === 1 ? options.forkSession : undefined;
                 if (
                   iterationResumeSession &&
-                  bindMountHandle &&
+                  sessionTransferHandle &&
                   provider.sessionStorage
                 ) {
                   yield* display.status(label("Resuming session"), "info");
@@ -427,7 +432,7 @@ export const orchestrate = (
                         hostCwd: hostRepoDir,
                         sandboxCwd: ctx.sandboxRepoDir,
                         sessionId: iterationResumeSession,
-                        handle: bindMountHandle,
+                        handle: sessionTransferHandle,
                       }),
                     catch: (e) =>
                       new SessionCaptureError({
@@ -543,7 +548,7 @@ export const orchestrate = (
                   provider.captureSessions &&
                   provider.sessionStorage &&
                   sessionId &&
-                  bindMountHandle
+                  sessionTransferHandle
                 ) {
                   yield* display.status(label("Capturing session"), "info");
                   yield* Effect.tryPromise({
@@ -552,7 +557,7 @@ export const orchestrate = (
                         hostCwd: hostRepoDir,
                         sandboxCwd: ctx.sandboxRepoDir,
                         sessionId,
-                        handle: bindMountHandle,
+                        handle: sessionTransferHandle,
                       }),
                     catch: (e) =>
                       new SessionCaptureError({
