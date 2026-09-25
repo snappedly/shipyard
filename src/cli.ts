@@ -1014,7 +1014,9 @@ const uninstallCommand = Command.make(
           runnerInstalled
             ? "unregister and remove the repository runner"
             : null,
-          configDirExists ? `remove generated ${CONFIG_DIR}/ code` : null,
+          configDirExists
+            ? `remove all of ${CONFIG_DIR}/, including .env and runtime data`
+            : null,
           workflowExists ? "remove the generated runner wake workflow" : null,
           packageInstalled
             ? `remove ${SHIPYARD_PACKAGE_NAME} from package.json`
@@ -1023,7 +1025,7 @@ const uninstallCommand = Command.make(
         const confirmation = yield* Effect.tryPromise({
           try: () =>
             clack.confirm({
-              message: `Uninstall Shipyard from ${repoDir}? This will ${actions.join(", ")}. It keeps any existing ${CONFIG_DIR}/.env and runtime data, and leaves GitHub issues and labels unchanged.`,
+              message: `Uninstall Shipyard from ${repoDir}? This will ${actions.join(", ")}. It leaves GitHub issues and labels unchanged.`,
               initialValue: false,
             }),
           catch: (error) =>
@@ -1060,8 +1062,8 @@ const uninstallCommand = Command.make(
             message: `Could not remove Shipyard repository files: ${error instanceof Error ? error.message : String(error)}`,
           }),
       });
-      if (configDirExists) {
-        yield* d.status("Shipyard configuration code removed.", "success");
+      if (files.configDirectoryRemoved) {
+        yield* d.status(`Removed all of ${CONFIG_DIR}/.`, "success");
       }
       if (files.workflowRemoved) {
         yield* d.status(
@@ -1078,10 +1080,6 @@ const uninstallCommand = Command.make(
           "warn",
         );
       }
-      if (files.configDirectoryRetained) {
-        yield* d.status(`Preserved remaining data in ${CONFIG_DIR}/.`, "info");
-      }
-
       if (packageInstalled) {
         const packageManager = yield* detectPackageManager(repoDir);
         const command = removeDependencyCommand(

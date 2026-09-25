@@ -3,7 +3,6 @@ import {
   mkdir,
   mkdtemp,
   readFile,
-  readdir,
   rm,
   symlink,
   writeFile,
@@ -44,14 +43,14 @@ describe("removeShipyardRepositoryFiles", () => {
         expect(result).toEqual({
           workflowRemoved: false,
           workflowPreserved: false,
-          configDirectoryRetained: false,
+          configDirectoryRemoved: true,
         });
         await expect(access(configDir)).rejects.toThrow();
       });
     },
   );
 
-  it("removes Shipyard logic and wake workflow while preserving credentials and runtime data", async () => {
+  it("removes the entire Shipyard directory and generated wake workflow", async () => {
     await withTempRepository(async (repoDir) => {
       const configDir = join(repoDir, ".shipyard");
       const logsDir = join(configDir, "logs");
@@ -83,25 +82,9 @@ describe("removeShipyardRepositoryFiles", () => {
       expect(result).toEqual({
         workflowRemoved: true,
         workflowPreserved: false,
-        configDirectoryRetained: true,
+        configDirectoryRemoved: true,
       });
-      expect(await readdir(configDir)).toEqual([
-        ".env",
-        ".gitignore",
-        "locks",
-        "logs",
-        "patches",
-        "worktrees",
-      ]);
-      await expect(readFile(join(configDir, ".env"), "utf8")).resolves.toBe(
-        "GH_TOKEN=keep-me\n",
-      );
-      await expect(readFile(join(logsDir, "run.log"), "utf8")).resolves.toBe(
-        "evidence",
-      );
-      await expect(
-        readFile(join(worktreeDir, "uncommitted.txt"), "utf8"),
-      ).resolves.toBe("work");
+      await expect(access(configDir)).rejects.toThrow();
       await expect(access(workflowPath)).rejects.toThrow();
     });
   });

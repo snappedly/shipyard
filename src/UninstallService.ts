@@ -1,32 +1,17 @@
-import { lstat, readdir, readFile, rm, rmdir } from "node:fs/promises";
+import { lstat, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import {
-  CONFIG_DIR,
-  LOCKS_DIR,
-  LOGS_DIR,
-  PATCHES_DIR,
-  RUNNER_DIR,
-  WORKTREES_DIR,
-} from "./runtimeNames.js";
+import { CONFIG_DIR, RUNNER_DIR } from "./runtimeNames.js";
 import {
   REPOSITORY_RUNNER_WORKFLOW,
   REPOSITORY_RUNNER_WORKFLOW_PATH,
 } from "./RepositoryRunnerWake.js";
 
 export const SHIPYARD_PACKAGE_NAME = "@snappedly-tools/shipyard";
-const PRESERVED_CONFIG_ENTRIES = new Set([
-  ".env",
-  ".gitignore",
-  LOGS_DIR,
-  WORKTREES_DIR,
-  PATCHES_DIR,
-  LOCKS_DIR,
-]);
 
 export interface ShipyardRepositoryUninstallResult {
   readonly workflowRemoved: boolean;
   readonly workflowPreserved: boolean;
-  readonly configDirectoryRetained: boolean;
+  readonly configDirectoryRemoved: boolean;
 }
 
 const isMissingPath = (error: unknown): boolean =>
@@ -98,9 +83,8 @@ const removeWakeWorkflow = async (
 };
 
 /**
- * Remove the target repository's Shipyard code and generated wake workflow.
- * Credentials, runtime evidence, worktrees, patches, and locks remain in place.
- * The repository runner must be unregistered before this function is called.
+ * Remove the target repository's entire Shipyard config directory and generated
+ * wake workflow. The repository runner must be unregistered before this runs.
  */
 export const removeShipyardRepositoryFiles = async (options: {
   readonly repoDir: string;
@@ -117,24 +101,13 @@ export const removeShipyardRepositoryFiles = async (options: {
   }
 
   const workflow = await removeWakeWorkflow(options.repoDir);
-  let configDirectoryRetained = false;
-
   if (configDirExists) {
-    const configDir = join(options.repoDir, CONFIG_DIR);
-    const entries = await readdir(configDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (PRESERVED_CONFIG_ENTRIES.has(entry.name)) continue;
-      await rm(join(configDir, entry.name), { recursive: true });
-    }
-
-    const remainingEntries = await readdir(configDir);
-    configDirectoryRetained = remainingEntries.length > 0;
-    if (!configDirectoryRetained) await rmdir(configDir);
+    await rm(join(options.repoDir, CONFIG_DIR), { recursive: true });
   }
 
   return {
     workflowRemoved: workflow.removed,
     workflowPreserved: workflow.preserved,
-    configDirectoryRetained,
+    configDirectoryRemoved: configDirExists,
   };
 };

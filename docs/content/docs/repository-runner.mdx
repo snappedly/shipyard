@@ -150,14 +150,15 @@ repository configuration, run:
 npx shipyard uninstall
 ```
 
-Uninstall unregisters the repository runner, removes Shipyard code and the
-generated wake workflow when it still matches Shipyard's version, and removes
+Uninstall unregisters the repository runner, removes the entire `.shipyard/`
+directory (including `.env` and runtime data), removes the generated wake
+workflow when it still matches Shipyard's version, and removes
 `@snappedly-tools/shipyard` with the repository's detected package manager. It
-preserves `.shipyard/.env`, logs, worktrees, patches, locks, issues, and GitHub
-labels. Commit and push the workflow deletion to disable it on GitHub. If the
-workflow was customized, uninstall preserves it for manual review. In a
-non-interactive shell, pass `--yes`; if GitHub unregistration fails, local
-runner files stay in place unless `--force` is passed.
+leaves GitHub issues and labels unchanged. Commit and push the workflow deletion
+to disable it on GitHub. If the workflow was customized, uninstall preserves it
+for manual review. In a non-interactive shell, pass `--yes`; if GitHub
+unregistration fails, local runner files stay in place unless `--force` is
+passed.
 
 `runner purge` removes all dated default run-log folders and regular root-level
 `.log` files regardless of age. Root-level `.log` files in `.shipyard/logs/`

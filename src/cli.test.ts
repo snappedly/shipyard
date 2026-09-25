@@ -1,5 +1,6 @@
 import { exec } from "node:child_process";
 import {
+  access,
   chmod,
   mkdir,
   mkdtemp,
@@ -197,7 +198,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     );
   });
 
-  it("uninstall removes generated setup and preserves secrets and runtime data", async () => {
+  it("uninstall removes the entire Shipyard directory and wake workflow", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-uninstall-"));
     const configDir = join(hostDir, ".shipyard");
     const logsDir = join(configDir, "logs");
@@ -229,18 +230,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     );
 
     expect(Exit.isSuccess(result)).toBe(true);
-    await expect(
-      readFile(join(configDir, "main.ts"), "utf8"),
-    ).rejects.toThrow();
-    await expect(readFile(join(configDir, ".env"), "utf8")).resolves.toBe(
-      "GH_TOKEN=keep-me\n",
-    );
-    await expect(readFile(join(logsDir, "run.log"), "utf8")).resolves.toBe(
-      "evidence",
-    );
-    await expect(
-      readFile(join(worktreeDir, "uncommitted.txt"), "utf8"),
-    ).resolves.toBe("work");
+    await expect(access(configDir)).rejects.toThrow();
     await expect(readFile(workflowPath, "utf8")).rejects.toThrow();
     expect(await Ref.get(displayRef).pipe(Effect.runPromise)).toContainEqual({
       _tag: "status",
@@ -379,9 +369,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
         readFile(join(fixture.runnerDir, RUNNER_INSTALL_METADATA), "utf8"),
       ).rejects.toThrow();
       await expect(readFile(fixture.workflowPath, "utf8")).rejects.toThrow();
-      await expect(
-        readFile(join(fixture.configDir, ".env"), "utf8"),
-      ).resolves.toBe("GH_TOKEN=keep-me\n");
+      await expect(access(fixture.configDir)).rejects.toThrow();
       await expect(readFile(npmCalls, "utf8")).resolves.toBe(
         "uninstall @snappedly-tools/shipyard",
       );
@@ -431,6 +419,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
       await expect(
         readFile(join(configDir, "main.ts"), "utf8"),
       ).rejects.toThrow();
+      await expect(access(configDir)).rejects.toThrow();
       const packageJson = JSON.parse(
         await readFile(join(hostDir, "package.json"), "utf8"),
       ) as { devDependencies: Record<string, string> };
