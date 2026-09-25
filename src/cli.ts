@@ -84,13 +84,6 @@ const defaultUidBuildArgs = (): Record<string, string> => {
   return args;
 };
 
-// --- Config directory check ---
-
-const requireConfigDir = (
-  cwd: string,
-): ReturnType<typeof requireCanonicalConfigDir> =>
-  requireCanonicalConfigDir(cwd);
-
 /**
  * Apply the default log-retention policy without making an agent run depend on
  * maintenance. Explicit `runner purge` remains available when an operator
@@ -257,7 +250,7 @@ const runCommand = Command.make(
     Effect.gen(function* () {
       const d = yield* Display;
       const cwd = process.cwd();
-      const configDir = yield* requireConfigDir(cwd);
+      const configDir = yield* requireCanonicalConfigDir(cwd);
       yield* purgeRunLogsBestEffort(d, cwd);
       const resolvedEntrypoint = resolveRunEntrypoint(
         cwd,
@@ -1083,7 +1076,7 @@ const buildImageCommand = Command.make(
     Effect.gen(function* () {
       const d = yield* Display;
       const cwd = process.cwd();
-      yield* requireConfigDir(cwd);
+      yield* requireCanonicalConfigDir(cwd);
 
       const imageName = resolveImageName(imageNameFlag, cwd);
 

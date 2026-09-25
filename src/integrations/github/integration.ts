@@ -986,37 +986,34 @@ export class GitHubIntegration {
   }
 }
 
+const includesCaseInsensitive = (
+  candidates: readonly string[],
+  value: string,
+): boolean =>
+  candidates.some(
+    (candidate) => candidate.toLowerCase() === value.toLowerCase(),
+  );
+
 const allowedRepository = (
   policy: GitHubAuthorizationPolicy,
   repository: string,
-): boolean =>
-  policy.allowedRepositories.some(
-    (candidate) => candidate.toLowerCase() === repository.toLowerCase(),
-  );
+): boolean => includesCaseInsensitive(policy.allowedRepositories, repository);
 
 const allowedSender = (
   policy: GitHubAuthorizationPolicy,
   source: GitHubActor,
-): boolean =>
-  policy.allowedSenders.some(
-    (candidate) => candidate.toLowerCase() === source.login.toLowerCase(),
-  );
+): boolean => includesCaseInsensitive(policy.allowedSenders, source.login);
 
 const allowedReviewer = (
   policy: GitHubAuthorizationPolicy,
   source: GitHubActor,
-): boolean =>
-  policy.allowedReviewers.some(
-    (candidate) => candidate.toLowerCase() === source.login.toLowerCase(),
-  );
+): boolean => includesCaseInsensitive(policy.allowedReviewers, source.login);
 
 const isBot = (
   source: GitHubActor,
   policy: GitHubAuthorizationPolicy,
 ): boolean =>
   source.type === "Bot" ||
-  policy.botLogins?.some(
-    (candidate) => candidate.toLowerCase() === source.login.toLowerCase(),
-  ) === true;
+  includesCaseInsensitive(policy.botLogins ?? [], source.login);
 
 export { InMemoryGitHubStore } from "./store.js";

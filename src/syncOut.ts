@@ -31,7 +31,6 @@ import type { ExecResult, SandboxService } from "./SandboxFactory.js";
 import type { IsolatedSandboxHandle } from "./SandboxProvider.js";
 import { buildRecoveryMessage, type FailedStep } from "./RecoveryMessage.js";
 import { SyncError } from "./errors.js";
-import { execHostGit as execSafeHostGit } from "./hostGit.js";
 import {
   assertNoSymlinkComponents,
   assertSafePathSegment,
@@ -46,6 +45,7 @@ import {
   SYNC_BASE_REF,
 } from "./runtimeNames.js";
 import { assertExcludesRepositoryRunner } from "./runnerSecurity.js";
+import { execHostGit, execOk, execSandbox } from "./syncCommands.js";
 
 export { SYNC_BASE_REF } from "./runtimeNames.js";
 
@@ -54,70 +54,6 @@ export { SYNC_BASE_REF } from "./runtimeNames.js";
  * git repo (not the host's), survives across `run()` calls on the same handle,
  * and never crosses to the host — sync-out ships commits, not refs. ADR 0017.
  */
-
-/**
- * Execute a command on the host side, returning stdout.
- * Fails with SyncError on non-zero exit.
- */
-const execHostGit = (
-  args: string[],
-  cwd: string,
-): Effect.Effect<string, SyncError> =>
-  Effect.tryPromise({
-    try: () => execSafeHostGit(args, cwd),
-    catch: (e) =>
-      new SyncError({
-        message: `Host command failed: git ${args.join(" ")}\n${e instanceof Error ? e.message : String(e)}`,
-      }),
-  });
-
-/**
- * Execute a command in the sandbox, failing with SyncError if it exits non-zero.
- */
-const execOk = (
-  handle: IsolatedSandboxHandle,
-  command: string,
-  options?: { cwd?: string },
-): Effect.Effect<
-  { stdout: string; stderr: string; exitCode: number },
-  SyncError
-> =>
-  Effect.tryPromise({
-    try: () => handle.exec(command, options),
-    catch: (e) =>
-      new SyncError({
-        message: `Sandbox exec failed: ${command}\n${e instanceof Error ? e.message : String(e)}`,
-      }),
-  }).pipe(
-    Effect.flatMap((result) =>
-      result.exitCode !== 0
-        ? Effect.fail(
-            new SyncError({
-              message: `Sandbox command failed (exit ${result.exitCode}): ${command}\n${result.stderr}`,
-            }),
-          )
-        : Effect.succeed(result),
-    ),
-  );
-
-/**
- * Execute a command in the sandbox, returning the result without failing on non-zero exit.
- */
-const execSandbox = (
-  handle: IsolatedSandboxHandle,
-  command: string,
-  options?: { cwd?: string },
-): Effect.Effect<
-  { stdout: string; stderr: string; exitCode: number },
-  SyncError
-> =>
-  Effect.tryPromise({
-    try: () => handle.exec(command, options),
-    catch: (e) =>
-      new SyncError({
-        message: `Sandbox exec failed: ${command}\n${e instanceof Error ? e.message : String(e)}`,
-      }),
-  });
 
 /**
  * Check if a patch file is empty or header-only.

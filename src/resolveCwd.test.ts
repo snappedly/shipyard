@@ -14,6 +14,16 @@ describe("resolveCwd", () => {
     expect(result).toBe(resolve(process.cwd()));
   });
 
+  it("does not treat null as an omitted cwd", async () => {
+    await expect(
+      Effect.runPromise(
+        resolveCwd(null as unknown as string).pipe(
+          Effect.provide(NodeContext.layer),
+        ),
+      ),
+    ).rejects.toThrow();
+  });
+
   it("resolves a relative path against process.cwd()", async () => {
     const result = await Effect.runPromise(
       resolveCwd(".").pipe(Effect.provide(NodeContext.layer)),

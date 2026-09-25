@@ -9,7 +9,7 @@ import {
   type ReviewEvidence,
   type WorkBrief,
 } from "../contracts/index.js";
-import { deepFreeze, sameRevision } from "../shared.js";
+import { deepFreeze, isBlockingFinding, sameRevision } from "../shared.js";
 
 export type ReviewRunOutcome =
   | "passed"
@@ -190,10 +190,6 @@ const deduplicateFindings = (findings: readonly Finding[]): Finding[] => {
   }
   return [...byKey.values()];
 };
-
-const blockingFinding = (finding: Finding): boolean =>
-  finding.severity !== "info" &&
-  (finding.disposition === "open" || finding.disposition === "deferred");
 
 const candidateIsStale = (
   expected: ReviewCandidate,
@@ -481,7 +477,7 @@ export const runIndependentReview = async (
     }
   }
 
-  const hasBlockingFindings = findings.some(blockingFinding);
+  const hasBlockingFindings = findings.some(isBlockingFinding);
   const requestedOutcome = response.outcome;
   if (requestedOutcome === "passed" && hasBlockingFindings) {
     return result({

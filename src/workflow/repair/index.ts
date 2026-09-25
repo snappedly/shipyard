@@ -27,7 +27,7 @@ import type {
   GitHubPublicationResult,
   GitHubPullRequestSnapshot,
 } from "../../integrations/github/index.js";
-import { sameRevision } from "../shared.js";
+import { isBlockingFinding, sameRevision } from "../shared.js";
 
 export interface RepairCandidate {
   readonly base: RevisionReference;
@@ -135,14 +135,10 @@ const defaultNow = (): string => new Date().toISOString();
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
-const actionable = (finding: Finding): boolean =>
-  finding.severity !== "info" &&
-  (finding.disposition === "open" || finding.disposition === "deferred");
-
 const normalizedFindings = (findings: readonly Finding[]): Finding[] => {
   const byKey = new Map<string, Finding>();
   for (const finding of findings) {
-    if (!actionable(finding)) continue;
+    if (!isBlockingFinding(finding)) continue;
     const key = JSON.stringify([
       finding.axis,
       finding.title,
