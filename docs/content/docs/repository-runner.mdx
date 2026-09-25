@@ -22,9 +22,18 @@ administrative checks, including reading the published wake workflow. When
 Shipyard runs in Docker, the runtime token is passed into that sandbox for
 its GitHub issue operations; it is not the runner's administrative login.
 
-Interactive `npx shipyard init` offers runner installation after scaffolding
-and defaults to Yes. Non-interactive init skips it unless you pass
-`--install-runner true`. You can install later:
+`npx shipyard init` automatically installs the repository runner after
+scaffolding on supported Apple Silicon macOS hosts. Runner installation is
+required for init to complete. Init stops with an error if the host is
+unsupported or installation fails, and does not report completion. It keeps the
+generated configuration and image; fix the reported issue, then run
+`npx shipyard runner install` to retry against that setup.
+
+After the runner installs, interactive init offers to commit and push
+`.shipyard/` and the wake workflow to the current branch. It defaults to Yes
+and leaves `.shipyard/.env` untracked. Non-interactive init skips this unless
+you pass `--commit-setup true`. Runner start requires the wake workflow on the
+default branch, so merge it there if init pushed another branch.
 
 ```sh
 npx shipyard runner install
@@ -42,8 +51,9 @@ entries.
 does not replace administrative `gh` access, which is required to verify that
 the repository has no conflicting `shipyard` runner.
 
-Installation never commits or pushes. Start requires the exact generated
-workflow on the default branch. It validates the platform, repository,
+The standalone `shipyard runner install` command never commits or pushes.
+`shipyard runner start` requires the exact generated workflow on the default
+branch. It validates the platform, repository,
 installation, local Shipyard package, Docker, GitHub access, activation label,
 credentials, and published workflow.
 
@@ -135,6 +145,23 @@ preserving Shipyard configuration, workflow, activation label, issues, logs,
 and worktrees. If unregistration fails, local state is preserved. Use
 `runner remove --force` only when necessary, then remove the named orphaned
 registration in GitHub.
+
+To remove the full Shipyard setup, including the package dependency and
+repository configuration, run:
+
+```sh
+npx shipyard uninstall
+```
+
+Uninstall unregisters the repository runner, removes the entire `.shipyard/`
+directory (including `.env` and runtime data), removes the generated wake
+workflow when it still matches Shipyard's version, and removes
+`@snappedly-tools/shipyard` with the repository's detected package manager. It
+leaves GitHub issues and labels unchanged. Commit and push the workflow deletion
+to disable it on GitHub. If the workflow was customized, uninstall preserves it
+for manual review. In a non-interactive shell, pass `--yes`; if GitHub
+unregistration fails, local runner files stay in place unless `--force` is
+passed.
 
 `runner purge` removes all dated default run-log folders and regular root-level
 `.log` files regardless of age. Root-level `.log` files in `.shipyard/logs/`

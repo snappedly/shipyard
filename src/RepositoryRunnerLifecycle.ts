@@ -43,7 +43,7 @@ export interface RunnerInstallMetadata {
   readonly version: string;
 }
 
-interface RunnerControllerLock {
+export interface RunnerControllerLock {
   readonly schemaVersion: 1;
   readonly pid: number;
   readonly repository: string;
@@ -137,7 +137,7 @@ const defaultAdapters: RunnerLifecycleAdapters = {
     new Promise((resolve) => setTimeout(resolve, milliseconds)),
 };
 
-const lockOwnsProcess = async (
+export const lockOwnsProcess = async (
   lock: RunnerControllerLock | undefined,
   adapters: Pick<
     RunnerLifecycleAdapters,
@@ -575,6 +575,23 @@ export const removeRepositoryRunner = async (
     throw new RunnerLifecycleError(
       `No repository runner is installed at ${runnerDir}.`,
     );
+  }
+  try {
+    await assertProtectedDirectoryIdentities(
+      runnerDir,
+      adapters.inspectDirectory,
+    );
+  } catch (error) {
+    if (!options.force) {
+      throw lifecycleFailure("Validating protected runner directory", error);
+    }
+    await adapters.remove(runnerDir);
+    return {
+      removed: true,
+      forced: true,
+      manualCleanup:
+        "Check GitHub Settings > Actions > Runners and manually remove any orphan repository runner registration.",
+    };
   }
   let metadata: RunnerInstallMetadata;
   try {

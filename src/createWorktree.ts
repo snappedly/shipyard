@@ -5,7 +5,7 @@ import type { AgentProvider } from "./AgentProvider.js";
 import { ClackDisplay, Display, FileDisplay } from "./Display.js";
 import { preprocessPrompt } from "./PromptPreprocessor.js";
 import { resolvePrompt } from "./PromptResolver.js";
-import { SandboxFactory, makeSandboxFromHandle } from "./SandboxFactory.js";
+import { makeSandboxFromHandle } from "./SandboxFactory.js";
 import { assertNoSymlinkComponents } from "./pathSecurity.js";
 import {
   withSandboxLifecycle,
@@ -20,16 +20,10 @@ import type {
 import type { CloseResult, Sandbox } from "./createSandbox.js";
 import { createSandboxFromWorktree } from "./createSandbox.js";
 import type { InteractiveResult } from "./interactive.js";
-import {
-  buildAgentStreamHandler,
-  buildCompletionMessage,
-  buildContextWindowLines,
-  buildDefaultLogPath,
-  printFileDisplayStartup,
-} from "./run.js";
+import { buildDefaultLogPath, printFileDisplayStartup } from "./run.js";
 import type { LoggingOption } from "./run.js";
-import { orchestrate, type IterationResult } from "./Orchestrator.js";
-import { agentStreamEmitterLayer } from "./AgentStreamEmitter.js";
+import type { IterationResult } from "./Orchestrator.js";
+import { runInExistingSandbox } from "./RunInExistingSandbox.js";
 import { resolveEnv } from "./EnvResolver.js";
 import { mergeProviderEnv } from "./mergeProviderEnv.js";
 import { startSandbox } from "./startSandbox.js";
@@ -38,13 +32,8 @@ import * as WorktreeManager from "./WorktreeManager.js";
 import { copyToWorktree } from "./CopyToWorktree.js";
 import { resolveCwd } from "./resolveCwd.js";
 import { assertResumeSessionExists } from "./resumePrecheck.js";
-import {
-  type PromptArgs,
-  substitutePromptArgs,
-  validateNoArgsWithInlinePrompt,
-  validateNoBuiltInArgOverride,
-  BUILT_IN_PROMPT_ARG_KEYS,
-} from "./PromptArgumentSubstitution.js";
+import { type PromptArgs } from "./PromptArgumentSubstitution.js";
+import { preparePrompt } from "./PromptPreparation.js";
 import { raceAbortSignal } from "./raceAbortSignal.js";
 import { validateMaxIterations } from "./validateMaxIterations.js";
 import type { Timeouts } from "./run.js";
@@ -294,8 +283,6 @@ export const createWorktree = async (
       const resolved = hasPromptSource
         ? yield* resolvePrompt({ prompt, promptFile })
         : undefined;
-      const rawPrompt = resolved?.text ?? "";
-      const isInlinePrompt = resolved?.source === "inline";
 
       // 2. Resolve env vars
       const resolvedEnv = yield* resolveEnv(hostRepoDir);
@@ -306,26 +293,13 @@ export const createWorktree = async (
       });
       const effectiveEnv = { ...env, ...(opts.env ?? {}) };
 
-      // 3. Prompt args substitution (skip when no prompt, or when inline passthrough)
-      let substitutedPrompt = rawPrompt;
-      if (hasPromptSource && !isInlinePrompt) {
-        const userArgs = opts.promptArgs ?? {};
-        yield* validateNoBuiltInArgOverride(userArgs);
-
-        const effectiveArgs = {
-          SOURCE_BRANCH: worktreeInfo.branch,
-          TARGET_BRANCH: worktreeInfo.branch,
-          ...userArgs,
-        };
-        const builtInArgKeysSet = new Set<string>(BUILT_IN_PROMPT_ARG_KEYS);
-        substitutedPrompt = yield* substitutePromptArgs(
-          rawPrompt,
-          effectiveArgs,
-          builtInArgKeysSet,
-        );
-      } else if (isInlinePrompt) {
-        yield* validateNoArgsWithInlinePrompt(opts.promptArgs ?? {});
-      }
+      // 3. Apply the shared inline/template argument rules.
+      const preparedPrompt = yield* preparePrompt({
+        resolved,
+        promptArgs: opts.promptArgs,
+        sourceBranch: worktreeInfo.branch,
+        targetBranch: worktreeInfo.branch,
+      });
 
       // Display intro
       yield* d.intro(opts.name ?? `${CLI_NAME} interactive`);
@@ -380,14 +354,13 @@ export const createWorktree = async (
           sandbox,
           (ctx) =>
             Effect.gen(function* () {
-              const fullPrompt =
-                !hasPromptSource || isInlinePrompt
-                  ? substitutedPrompt
-                  : yield* preprocessPrompt(
-                      substitutedPrompt,
-                      ctx.sandbox,
-                      ctx.sandboxRepoDir,
-                    );
+              const fullPrompt = preparedPrompt.expandsShellExpressions
+                ? yield* preprocessPrompt(
+                    preparedPrompt.text,
+                    ctx.sandbox,
+                    ctx.sandboxRepoDir,
+                  )
+                : preparedPrompt.text;
 
               const interactiveArgs = provider.buildInteractiveArgs!({
                 prompt: fullPrompt,
@@ -478,8 +451,6 @@ export const createWorktree = async (
     const inner = Effect.gen(function* () {
       // 1. Resolve prompt
       const resolved = yield* resolvePrompt({ prompt, promptFile });
-      const rawPrompt = resolved.text;
-      const isInlinePrompt = resolved.source === "inline";
 
       // 2. Resolve env vars
       const resolvedEnv = yield* resolveEnv(hostRepoDir);
@@ -490,26 +461,13 @@ export const createWorktree = async (
       });
       const effectiveEnv = { ...env, ...(opts.env ?? {}) };
 
-      // 3. Prompt args substitution (skipped for inline prompts — passthrough)
-      const userArgs = opts.promptArgs ?? {};
-      let resolvedPrompt: string;
-      if (isInlinePrompt) {
-        yield* validateNoArgsWithInlinePrompt(userArgs);
-        resolvedPrompt = rawPrompt;
-      } else {
-        yield* validateNoBuiltInArgOverride(userArgs);
-        const effectiveArgs = {
-          SOURCE_BRANCH: worktreeInfo.branch,
-          TARGET_BRANCH: worktreeInfo.branch,
-          ...userArgs,
-        };
-        const builtInArgKeysSet = new Set<string>(BUILT_IN_PROMPT_ARG_KEYS);
-        resolvedPrompt = yield* substitutePromptArgs(
-          rawPrompt,
-          effectiveArgs,
-          builtInArgKeysSet,
-        );
-      }
+      // 3. Apply the shared inline/template argument rules.
+      const preparedPrompt = yield* preparePrompt({
+        resolved,
+        promptArgs: opts.promptArgs,
+        sourceBranch: worktreeInfo.branch,
+        targetBranch: worktreeInfo.branch,
+      });
 
       // 4. Start sandbox
       const startResult = yield* startSandbox({
@@ -569,45 +527,13 @@ export const createWorktree = async (
 
       const sessionTransferHandle = toSessionTransferHandle(handle);
 
-      // 6. Build a SandboxFactory that reuses the started sandbox
-      const reuseFactoryLayer = Layer.succeed(SandboxFactory, {
-        withSandbox: (makeEffect) =>
-          makeEffect(
-            {
-              hostWorktreePath: worktreeInfo.path,
-              sandboxRepoPath: sandboxRepoDir,
-              applyToHost,
-              sessionTransferHandle,
-            },
-            sandbox,
-          ).pipe(
-            Effect.map((value) => ({
-              value,
-              preservedWorktreePath: undefined,
-            })),
-          ) as any,
-      });
-
-      const streamEmitterLayer = agentStreamEmitterLayer(
-        buildAgentStreamHandler(resolvedLogging),
-      );
-
-      const runLayer = Layer.mergeAll(
-        reuseFactoryLayer,
-        runDisplayLayer,
-        streamEmitterLayer,
-      );
-
-      // 7. Run orchestration
-      const result = yield* Effect.gen(function* () {
-        const display = yield* Display;
-        yield* display.intro(opts.name ?? CLI_NAME);
-
-        const orchestrateResult = yield* orchestrate({
+      // 6. Run orchestration against the already-open sandbox.
+      const result = yield* runInExistingSandbox({
+        orchestration: {
           hostRepoDir,
           iterations: maxIterations,
           hooks,
-          prompt: resolvedPrompt,
+          prompt: preparedPrompt.text,
           // merge-to-head: pass `undefined` so the lifecycle records the host's
           // current branch and routes through the merge step. branch strategy:
           // pin to the worktree's branch so commits stay there.
@@ -619,26 +545,20 @@ export const createWorktree = async (
           name: opts.name,
           resumeSession: opts.resumeSession,
           signal: opts.signal,
-          skipPromptExpansion: isInlinePrompt,
+          skipPromptExpansion: !preparedPrompt.expandsShellExpressions,
           timeouts: options.timeouts,
           keepSourceBranch: isMergeToHead,
-        });
-
-        const completion = buildCompletionMessage(
-          orchestrateResult.completionSignal,
-          orchestrateResult.iterations.length,
-        );
-        yield* display.status(completion.message, completion.severity);
-
-        for (const line of buildContextWindowLines(
-          orchestrateResult.iterations,
-        )) {
-          yield* display.text(line);
-        }
-
-        return orchestrateResult;
+        },
+        sandboxInfo: {
+          hostWorktreePath: worktreeInfo.path,
+          sandboxRepoPath: sandboxRepoDir,
+          applyToHost,
+          sessionTransferHandle,
+        },
+        sandbox,
+        logging: resolvedLogging,
       }).pipe(
-        Effect.provide(runLayer),
+        Effect.provide(runDisplayLayer),
         // Always close sandbox handle
         Effect.ensuring(Effect.promise(() => handle.close().catch(() => {}))),
       );

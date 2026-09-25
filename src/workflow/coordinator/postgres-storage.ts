@@ -8,6 +8,7 @@ import {
   type WorkIdentity,
   type WorkflowPhase,
 } from "../contracts/index.js";
+import { sameWorkIdentity } from "../shared.js";
 import type {
   BranchLease,
   CoordinatorStorage,
@@ -114,11 +115,6 @@ const row = <T extends Record<string, unknown>>(
 const optionalRow = <T extends Record<string, unknown>>(
   result: PostgresQueryResult<T>,
 ): T | undefined => result.rows[0];
-
-const sameIdentity = (left: WorkIdentity, right: WorkIdentity): boolean =>
-  left.repository === right.repository &&
-  left.itemId === right.itemId &&
-  left.kind === right.kind;
 
 const parseAssignment = (value: unknown): Assignment => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -244,7 +240,7 @@ const eventFromRow = (value: Record<string, unknown>): StoredEvent => {
     ),
   };
   if (
-    !sameIdentity(brief.identity, {
+    !sameWorkIdentity(brief.identity, {
       repository: key.repository,
       itemId: key.itemId,
       kind: brief.identity.kind,
@@ -301,7 +297,7 @@ const jobFromRow = (value: Record<string, unknown>): WorkflowJob => {
     ),
   };
   if (
-    !sameIdentity(brief.identity, {
+    !sameWorkIdentity(brief.identity, {
       repository: key.repository,
       itemId: key.itemId,
       kind: brief.identity.kind,
@@ -653,7 +649,7 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
   ) {
     const predicates = [
       "j.repository = $1",
-      "(d.status = 'pending' OR (d.status IN ('claimed', 'started') AND d.claim_expires_at <= $2))",
+      "(d.status = 'pending' OR (d.status IN ('claimed', 'started') AND (d.claim_expires_at IS NULL OR d.claim_expires_at <= $2)))",
     ];
     const values: unknown[] = [repository, nowMilliseconds];
     if (selector.jobId !== undefined) {

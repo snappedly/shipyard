@@ -1,4 +1,5 @@
 import type { WorkIdentity } from "../contracts/index.js";
+import { sameWorkIdentity } from "../shared.js";
 import type {
   BranchLease,
   CoordinatorStorage,
@@ -53,11 +54,6 @@ const sameKey = (left: WorkKey, right: WorkKey): boolean =>
   left.phase === right.phase &&
   left.relevantRevision === right.relevantRevision;
 
-const sameIdentity = (left: WorkIdentity, right: WorkIdentity): boolean =>
-  left.repository === right.repository &&
-  left.itemId === right.itemId &&
-  left.kind === right.kind;
-
 const effectKey = (jobId: string, kind: string, marker: string): string =>
   `${jobId}\u0000${kind}\u0000${marker}`;
 
@@ -109,7 +105,7 @@ class MemoryTransaction implements CoordinatorStorageTransaction {
       .filter(
         (candidate) =>
           candidate.control !== "superseded" &&
-          sameIdentity(candidate.brief.identity, identity),
+          sameWorkIdentity(candidate.brief.identity, identity),
       )
       .sort((left, right) => {
         const observed = right.latestObservedAt.localeCompare(
@@ -178,8 +174,8 @@ class MemoryTransaction implements CoordinatorStorageTransaction {
           (candidate.status === "pending" ||
             ((candidate.status === "claimed" ||
               candidate.status === "started") &&
-              candidate.claimExpiresAt !== undefined &&
-              candidate.claimExpiresAt <= nowMilliseconds)),
+              (candidate.claimExpiresAt === undefined ||
+                candidate.claimExpiresAt <= nowMilliseconds))),
       )
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt))[0];
     return dispatch === undefined ? undefined : clone(dispatch);

@@ -10,6 +10,7 @@ import {
   type TriageAssessment,
   type TriageInvestigator,
   type TriageSource,
+  type TriageStore,
 } from "./index.js";
 
 const repository = "snappedly/shipyard";
@@ -74,7 +75,7 @@ const assessment = (
 const run = async (
   inputSource: TriageSource,
   investigator: TriageInvestigator,
-  store = new InMemoryTriageStore(),
+  store: TriageStore = new InMemoryTriageStore(),
 ) =>
   runTriage({
     source: inputSource,
@@ -228,5 +229,93 @@ describe("workflow triage", () => {
     expect(revised.brief?.source.originalBody).toContain(
       "explicitly different",
     );
+  });
+
+  it("holds ambiguous source edits and resumes a queued reply on a newer snapshot", async () => {
+    const store = new InMemoryTriageStore();
+    const receivedReplies: string[] = [];
+    const investigator: TriageInvestigator = async ({ clarificationReply }) => {
+      if (clarificationReply !== undefined) {
+        receivedReplies.push(clarificationReply.body);
+      }
+      return assessment({
+        evidence: [clarificationReply?.body ?? "Initial assessment."],
+      });
+    };
+    const first = await run(source(), investigator, store);
+    const conflictingSource = source({ body: "A concurrent source edit." });
+    const conflict = await run(conflictingSource, investigator, store);
+
+    expect(conflict.outcome).toBe("blocked");
+    expect(conflict.brief).toBeUndefined();
+    expect(conflict.record.source.body).toBe(source().body);
+    expect(conflict.record.sourceConflict).toBeDefined();
+
+    const reply = {
+      id: "comment-conflict",
+      body: "Please retain the new source behavior.",
+      author: "reporter",
+      updatedAt: "2026-09-17T12:01:00.000Z",
+    };
+    const unresolved = await runTriage({
+      source: conflictingSource,
+      policy,
+      base,
+      store,
+      investigator,
+      clarificationReply: reply,
+    });
+    expect(unresolved.record.pendingClarificationReplies).toEqual([reply]);
+
+    const resumed = await runTriage({
+      source: source({
+        body: conflictingSource.body,
+        updatedAt: "2026-09-17T12:02:00.000Z",
+      }),
+      policy,
+      base,
+      store,
+      investigator,
+    });
+
+    expect(resumed.outcome).toBe("completed");
+    expect(resumed.record.sourceConflict).toBeUndefined();
+    expect(resumed.record.clarificationIds).toContain(reply.id);
+    expect(resumed.record.pendingClarificationReplies).toBeUndefined();
+    expect(receivedReplies).toEqual([reply.body]);
+    expect(first.record.id).toBe(resumed.record.id);
+  });
+
+  it("retries triage after a compare-and-save conflict", async () => {
+    const backingStore = new InMemoryTriageStore();
+    let rejectFirstWrite = true;
+    const compareAndSave = vi.fn(
+      (
+        record: Parameters<TriageStore["compareAndSave"]>[0],
+        revision: number | undefined,
+      ) => {
+        if (rejectFirstWrite) {
+          rejectFirstWrite = false;
+          return false;
+        }
+        return backingStore.compareAndSave(record, revision);
+      },
+    );
+    const store: TriageStore = {
+      get: (sourceKey) => backingStore.get(sourceKey),
+      compareAndSave,
+    };
+
+    const result = await run(
+      source(),
+      {
+        investigate: async () => assessment(),
+      },
+      store,
+    );
+
+    expect(result.outcome).toBe("completed");
+    expect(compareAndSave).toHaveBeenCalledTimes(2);
+    expect(backingStore.get(result.record.sourceKey)?.revision).toBe(1);
   });
 });

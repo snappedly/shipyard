@@ -71,7 +71,11 @@ if (
   !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)
 )
   throw new Error("Invalid target branch or GitHub repository");
-process.env.GH_REPO = repository;
+const sandboxAuthOptions = {};
+const sandboxProvider = docker({
+  env: { GH_REPO: repository },
+  ...sandboxAuthOptions,
+});
 const hooks = {
   sandbox: {
     onSandboxReady: [
@@ -167,7 +171,7 @@ const runWorker = async (scope: Scope, ticket: Ticket) => {
   const sandbox = await shipyard.createSandbox({
     branch,
     baseBranch: scope.branch,
-    sandbox: docker(),
+    sandbox: sandboxProvider,
     hooks,
   });
   try {
@@ -226,7 +230,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
   const plannerBranch = await resolvePlannerBranch(localBranches);
   const plan = await shipyard.run({
     hooks,
-    sandbox: docker(),
+    sandbox: sandboxProvider,
     name: "planner",
     branchStrategy: { type: "branch", branch: plannerBranch },
     maxIterations: 1,
@@ -284,7 +288,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
         if (scope.kind === "spec") {
           const seed = await shipyard.createSandbox({
             branch: scope.branch,
-            sandbox: docker(),
+            sandbox: sandboxProvider,
             hooks,
           });
           await closeClean(seed);
@@ -318,7 +322,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
             if (failures.length) throw new TicketFailures(failures);
             const wave = await shipyard.createSandbox({
               branch: scope.branch,
-              sandbox: docker(),
+              sandbox: sandboxProvider,
               hooks,
             });
             try {
@@ -443,7 +447,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
         }
         const integration = await shipyard.createSandbox({
           branch: scope.branch,
-          sandbox: docker(),
+          sandbox: sandboxProvider,
           hooks,
         });
         let handoffEvidence: string;
@@ -519,7 +523,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
         }
         const publication = await shipyard.createSandbox({
           branch: scope.branch,
-          sandbox: docker(),
+          sandbox: sandboxProvider,
         });
         try {
           const scopeIds = [

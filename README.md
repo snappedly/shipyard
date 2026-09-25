@@ -39,9 +39,10 @@ npm install --save-dev @snappedly-tools/shipyard
 npx shipyard init
 ```
 
-During `shipyard init`, choose your agent, **Docker**, the template you want, and install the optional
-[repository runner](docs/content/docs/repository-runner.mdx). Follow
-the authentication prompts.
+During `shipyard init`, choose your agent and template, then follow the
+authentication prompts. GitHub Issues is the built-in tracker. Init builds the
+Docker image and automatically installs the
+[repository runner](docs/content/docs/repository-runner.mdx).
 
 On a local Mac, the repository runner automatically wakes Shipyard when you label an issue.
 It runs as long as its terminal stays open.
@@ -52,25 +53,31 @@ branch options.
 Fill in any credentials required in `.shipyard/.env`.
 `GH_TOKEN` in `.shipyard/.env` to a GH token with Contents, Issues, and Pull
 Requests read/write access and Metadata read access.
+
 Set `SHIPYARD_ROUTINE_MODEL` and `SHIPYARD_STRONG_MODEL` in `.shipyard/.env`
-for the roles your template uses. `simple-loop` uses routine for triage and
+for the roles your template uses.
+
+`simple-loop` uses routine for triage and
 implementation. `sequential-reviewer` also uses strong for issue reviews.
 Parallel planner templates use routine for ticket work and strong for planning,
 conflict resolution, and integration. The review-enabled planner also uses
 strong for ticket and final specification reviews. See
 [agent setup](docs/content/docs/agents.mdx).
 
-Commit the setup and prompt so the sandbox can read them. Make sure the Git ignore file keeps
-`.shipyard/.env` out of the commit.
+```sh
+npx shipyard runner start
+```
+
+To start Shipyard for a single run without the active runner, use:
 
 ```sh
 npx shipyard run
 ```
 
-Or for the automated runner:
+To remove Shipyard from the repository:
 
 ```sh
-npx shipyard runner start
+npx shipyard uninstall
 ```
 
 ## Turn GitHub issues into pull requests
@@ -79,8 +86,8 @@ Then:
 
 1. Write an issue with a clear goal and add the `shipyard` and
    `ready-for-agent` labels.
-2. Make sure the runner is running, or start `npx shipyard run`. Shipyard checks the issue, implements it in Docker,
-   reviews the work, and opens a pull request.
+2. Run Shipyard to check for the issue, implement it in Docker,
+   review the work, and open a pull request.
 3. Inspect the pull request and merge it when you are happy with the result.
 
 ## Choose a workflow
@@ -92,10 +99,13 @@ Then:
 | `parallel-planner`             | Plans and works on independent issues in parallel. |
 | `parallel-planner-with-review` | Adds review to the parallel workflow.              |
 
-Shipyard also exports TypeScript APIs for custom workflows. Configure prompts,
-branches, limits, and hooks in the generated `.shipyard/main.ts` or
-`.shipyard/main.mts`. See [configuration](docs/content/docs/configuration.mdx)
-and [agent setup](docs/content/docs/agents.mdx).
+The package root exports the core run, interactive, and sandbox APIs. Import
+hosted workflow coordination and GitHub integration APIs from
+`@snappedly-tools/shipyard/workflow` and
+`@snappedly-tools/shipyard/integrations/github`. Configure prompts, branches,
+limits, and hooks in the generated `.shipyard/main.ts` or `.shipyard/main.mts`.
+See [configuration](docs/content/docs/configuration.mdx) and
+[agent setup](docs/content/docs/agents.mdx).
 
 ## Safety and license
 

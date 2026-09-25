@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isBlockingFinding } from "../shared.js";
 
 export const WORKFLOW_CONTRACT_VERSION = 1 as const;
 
@@ -915,12 +916,7 @@ export const requireTransition = (
     if (
       context.review?.outcome !== "passed" ||
       context.review.axes.length === 0 ||
-      context.review.findings.some(
-        (finding) =>
-          finding.severity !== "info" &&
-          (finding.disposition === "open" ||
-            finding.disposition === "deferred"),
-      )
+      context.review.findings.some(isBlockingFinding)
     ) {
       throw new ContractValidationError(
         "Human review requires every review axis to pass and blocking findings to be disposed",

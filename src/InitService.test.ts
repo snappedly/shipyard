@@ -116,7 +116,7 @@ describe("InitService scaffold", () => {
       "utf-8",
     );
     expect(envExample).toContain("GH_TOKEN=");
-    expect(envExample).toContain("GH_REPO=\n");
+    expect(envExample).not.toContain("GH_REPO=");
     expect(envExample).toContain(
       "https://github.com/settings/personal-access-tokens/new",
     );
@@ -398,7 +398,7 @@ describe("InitService scaffold", () => {
         "2. If using a model subscription, sign in. For Codex:",
         `   codex --config 'cli_auth_credentials_store="file"' login`,
         "   test -f ~/.codex/auth.json",
-        "3. Start with `npx shipyard runner start` (if installed) or `npx shipyard run`",
+        "3. If the runner installed successfully, start it with `npx shipyard runner start`; otherwise run `npx shipyard run`.",
       ]);
     });
   });
@@ -1051,7 +1051,9 @@ describe("InitService scaffold", () => {
       expect(mainTs).toContain(
         'import { docker } from "@snappedly-tools/shipyard/sandboxes/docker"',
       );
-      expect(mainTs).toContain("sandbox: docker()");
+      expect(mainTs).toContain("const sandboxAuthOptions = {};");
+      expect(mainTs).toContain("env: { GH_REPO: repository }");
+      expect(mainTs).toContain("sandbox: sandboxProvider");
     });
   });
 });

@@ -10,7 +10,7 @@ Init creates `.shipyard/` in the target repository:
 - `main.ts` or `main.mts`: your executable TypeScript configuration.
 - `Dockerfile`: the local sandbox image definition.
 - `prompt.md` (or several template-specific prompts): the agent's task instructions.
-- `.env.example`: environment entries for the chosen agent and issue tracker.
+- `.env.example`: environment entries for the chosen agent and GitHub Issues.
 - `.env`: untracked credentials copied from `.env.example` during init.
 - `.gitignore`: excludes credentials, logs, worktrees, and locks.
 
@@ -133,7 +133,9 @@ Sandbox environment resolution uses `.shipyard/.env`:
 3. Undeclared host environment keys are not forwarded by this resolver.
 
 The repository-root `.env` is not loaded. Provider-level `env` options can also
-supply sandbox variables. Keep `.shipyard/.env` untracked.
+supply sandbox variables. The generated issue workflows detect the repository
+with `gh repo view` and pass it to the sandbox provider. You do not need to set
+`GH_REPO` in `.shipyard/.env`. Keep `.shipyard/.env` untracked.
 
 ## Codex model roles
 

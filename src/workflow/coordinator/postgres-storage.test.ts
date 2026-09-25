@@ -110,6 +110,20 @@ describe("PostgresCoordinatorStorage", () => {
     expect(result.dispatch.assignment).toEqual(legacyAssignment);
   });
 
+  it("includes claimed dispatches with missing expiries in reclaim queries", async () => {
+    const query = vi.fn(async (_text: string) => ({ rows: [] }));
+    const storage = new PostgresCoordinatorStorage({ client: { query } });
+
+    await storage.transaction((transaction) =>
+      transaction.findPendingDispatch(identity.repository, 10),
+    );
+
+    const select = query.mock.calls.find(([text]) =>
+      text.includes("FROM shipyard_dispatches"),
+    )?.[0];
+    expect(select).toContain("d.claim_expires_at IS NULL");
+  });
+
   it("wraps coordinator operations in a transaction and releases pooled clients", async () => {
     const query = vi.fn(
       async (_text: string, _values?: readonly unknown[]) => ({

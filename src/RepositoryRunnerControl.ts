@@ -31,8 +31,10 @@ import {
   RUNNER_WORK_DIR,
   RunnerLifecycleError,
   REPOSITORY_RUNNER_OWNER_ENV,
+  lockOwnsProcess,
   type RunnerInstallMetadata,
   type RunnerLifecycleAdapters,
+  type RunnerControllerLock,
 } from "./RepositoryRunnerLifecycle.js";
 import { ACTIVATION_LABEL, CONFIG_DIR, RUNNER_DIR } from "./runtimeNames.js";
 import {
@@ -117,13 +119,6 @@ export interface RunnerControlAdapters {
     milliseconds: number,
   ) => () => void;
   readonly report: (message: string) => void;
-}
-
-interface RunnerControllerLock {
-  readonly schemaVersion: 1;
-  readonly pid: number;
-  readonly repository: string;
-  readonly processStartedAt: string;
 }
 
 type RunnerControllerStateName =
@@ -590,17 +585,6 @@ const stopChildBounded = async (
     );
   }
 };
-
-const lockOwnsProcess = async (
-  lock: RunnerControllerLock | undefined,
-  adapters: Pick<RunnerControlAdapters, "isProcessRunning" | "processIdentity">,
-): Promise<boolean> =>
-  lock !== undefined &&
-  Number.isInteger(lock.pid) &&
-  typeof lock.processStartedAt === "string" &&
-  lock.processStartedAt.length > 0 &&
-  adapters.isProcessRunning(lock.pid) &&
-  (await adapters.processIdentity(lock.pid)) === lock.processStartedAt;
 
 const bestEffort = async (operation: () => Promise<unknown>): Promise<void> => {
   try {

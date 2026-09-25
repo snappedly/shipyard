@@ -1,5 +1,7 @@
 import { exec } from "node:child_process";
 import {
+  access,
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -8,13 +10,15 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { promisify } from "node:util";
 import { NodeContext } from "@effect/platform-node";
 import { Cause, Effect, Exit, Layer, Ref } from "effect";
 import { describe, expect, it } from "vitest";
 import { cli } from "./cli.js";
 import { ClackDisplay, type DisplayEntry, SilentDisplay } from "./Display.js";
+import { REPOSITORY_RUNNER_WORKFLOW } from "./RepositoryRunnerWake.js";
+import { RUNNER_INSTALL_METADATA } from "./RepositoryRunnerLifecycle.js";
 
 const execAsync = promisify(exec);
 
@@ -38,11 +42,25 @@ const commitFile = async (
 const cliPath = join(import.meta.dirname, "..", "dist", "main.js");
 const cliTestTimeoutMs = 15_000;
 
-const runCli = (args: string, cwd: string, env?: NodeJS.ProcessEnv) =>
-  execAsync(`node ${cliPath} ${args}`, {
-    cwd,
-    env: { ...process.env, ...env },
-  });
+const runCli = async (args: string, cwd: string, env?: NodeJS.ProcessEnv) => {
+  const runEnv = { ...process.env, ...env };
+  if (
+    (args === "init" || args.startsWith("init ")) &&
+    !args.includes("--help")
+  ) {
+    const binDir = join(cwd, ".shipyard-cli-test-bin");
+    await mkdir(binDir, { recursive: true });
+    const dockerArgsFile = join(cwd, ".shipyard-cli-docker-args");
+    await writeFile(
+      join(binDir, "docker"),
+      '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$SHIPYARD_TEST_DOCKER_ARGS"\n',
+      { mode: 0o755 },
+    );
+    runEnv.PATH = `${binDir}:${runEnv.PATH ?? ""}`;
+    runEnv.SHIPYARD_TEST_DOCKER_ARGS = dockerArgsFile;
+  }
+  return execAsync(`node ${cliPath} ${args}`, { cwd, env: runEnv });
+};
 
 // CLI validation checks do not need a packaged-process boundary. Keeping them
 // in-process avoids a flaky child-process wait under CI.
@@ -75,12 +93,78 @@ const runCliInProcessAt = async (
   }
 };
 
+const withEnvironment = async <A>(
+  changes: NodeJS.ProcessEnv,
+  operation: () => Promise<A>,
+): Promise<A> => {
+  const previous = new Map(
+    Object.keys(changes).map((key) => [key, process.env[key]] as const),
+  );
+  for (const [key, value] of Object.entries(changes)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  try {
+    return await operation();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+};
+
+const writePosixCommand = async (path: string, source: string) => {
+  await writeFile(path, `#!/usr/bin/env node\n${source}\n`);
+  await chmod(path, 0o755);
+};
+
+const createRunnerUninstallFixture = async (hostDir: string) => {
+  const configDir = join(hostDir, ".shipyard");
+  const runnerDir = join(configDir, "runner");
+  const workflowPath = join(
+    hostDir,
+    ".github",
+    "workflows",
+    "shipyard-wake.yml",
+  );
+  await Promise.all([
+    mkdir(runnerDir, { recursive: true }),
+    mkdir(join(hostDir, ".github", "workflows"), { recursive: true }),
+  ]);
+  await Promise.all([
+    writeFile(join(configDir, "main.ts"), "export {};\n"),
+    writeFile(join(configDir, ".env"), "GH_TOKEN=keep-me\n"),
+    writeFile(
+      join(runnerDir, RUNNER_INSTALL_METADATA),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        repository: "owner/repo",
+        repositoryUrl: "https://github.com/owner/repo",
+        name: "shipyard-owner-repo-test",
+        label: "shipyard",
+        version: "2.331.0",
+      })}\n`,
+    ),
+    writeFile(workflowPath, REPOSITORY_RUNNER_WORKFLOW),
+    writeFile(
+      join(hostDir, "package.json"),
+      JSON.stringify({
+        packageManager: "npm@12.0.2",
+        devDependencies: { "@snappedly-tools/shipyard": "^0.7.0" },
+      }),
+    ),
+  ]);
+  return { configDir, runnerDir, workflowPath };
+};
+
 describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
   it("shows help with --help flag", async () => {
     const { stdout } = await runCli("--help", process.cwd());
     expect(stdout).toContain("shipyard");
     expect(stdout).toContain("docker");
     expect(stdout).toContain("init");
+    expect(stdout).toContain("uninstall");
     expect(stdout).toContain("run");
     expect(stdout).toContain("runner install");
     expect(stdout).not.toContain("interactive");
@@ -103,6 +187,261 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     expect(stdout).toContain("remove");
     expect(stdout).toContain("purge");
   });
+
+  it("uninstall --help explains confirmation and forced runner cleanup", async () => {
+    const { stdout } = await runCli("uninstall --help", process.cwd());
+    expect(stdout).toContain("--yes");
+    expect(stdout).toContain("--force");
+    expect(stdout).toContain("GitHub unregistration");
+  });
+
+  it("uninstall requires confirmation before changing repository files", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "cli-uninstall-confirm-"));
+    const configDir = join(hostDir, ".shipyard");
+    await mkdir(configDir);
+    await writeFile(join(configDir, "main.ts"), "export {};\n");
+
+    const result = await runCliInProcessAt(["uninstall"], hostDir);
+
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
+      expect(Cause.pretty(result.cause)).toContain("pass --yes");
+    }
+    await expect(readFile(join(configDir, "main.ts"), "utf8")).resolves.toBe(
+      "export {};\n",
+    );
+  });
+
+  it("uninstall removes the entire Shipyard directory and wake workflow", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "cli-uninstall-"));
+    const configDir = join(hostDir, ".shipyard");
+    const logsDir = join(configDir, "logs");
+    const worktreeDir = join(configDir, "worktrees", "active-task");
+    const workflowPath = join(
+      hostDir,
+      ".github",
+      "workflows",
+      "shipyard-wake.yml",
+    );
+    await Promise.all([
+      mkdir(logsDir, { recursive: true }),
+      mkdir(worktreeDir, { recursive: true }),
+      mkdir(join(hostDir, ".github", "workflows"), { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(join(configDir, "main.ts"), "export {};\n"),
+      writeFile(join(configDir, ".env"), "GH_TOKEN=keep-me\n"),
+      writeFile(join(logsDir, "run.log"), "evidence"),
+      writeFile(join(worktreeDir, "uncommitted.txt"), "work"),
+      writeFile(workflowPath, REPOSITORY_RUNNER_WORKFLOW),
+    ]);
+    const displayRef = Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([]);
+
+    const result = await runCliInProcessAt(
+      ["uninstall", "--yes"],
+      hostDir,
+      displayRef,
+    );
+
+    expect(Exit.isSuccess(result)).toBe(true);
+    await expect(access(configDir)).rejects.toThrow();
+    await expect(readFile(workflowPath, "utf8")).rejects.toThrow();
+    expect(await Ref.get(displayRef).pipe(Effect.runPromise)).toContainEqual({
+      _tag: "status",
+      message: "Shipyard uninstalled from this repository.",
+      severity: "success",
+    });
+  });
+
+  it("uninstall removes the declared Shipyard package with the detected manager", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "cli-uninstall-package-"));
+    const binDir = join(hostDir, "bin");
+    const callsPath = join(hostDir, "package-manager-call.txt");
+    await mkdir(binDir);
+    await writeFile(
+      join(hostDir, "package.json"),
+      JSON.stringify({
+        packageManager: "npm@12.0.2",
+        devDependencies: { "@snappedly-tools/shipyard": "^0.7.0" },
+      }),
+    );
+    const npmPath = join(
+      binDir,
+      process.platform === "win32" ? "npm.cmd" : "npm",
+    );
+    await writeFile(
+      npmPath,
+      process.platform === "win32"
+        ? '@echo off\r\n> "%SHIPYARD_NPM_CALLS%" echo %*\r\n'
+        : '#!/usr/bin/env node\nrequire("node:fs").writeFileSync(process.env.SHIPYARD_NPM_CALLS, process.argv.slice(2).join(" "))\n',
+    );
+    if (process.platform !== "win32") await chmod(npmPath, 0o755);
+
+    const originalPath = process.env.PATH;
+    const originalCallsPath = process.env.SHIPYARD_NPM_CALLS;
+    const displayRef = Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([]);
+    process.env.PATH = `${binDir}${delimiter}${originalPath ?? ""}`;
+    process.env.SHIPYARD_NPM_CALLS = callsPath;
+    try {
+      const result = await runCliInProcessAt(
+        ["uninstall", "--yes"],
+        hostDir,
+        displayRef,
+      );
+
+      expect(Exit.isSuccess(result)).toBe(true);
+      await expect(readFile(callsPath, "utf8")).resolves.toBe(
+        "uninstall @snappedly-tools/shipyard",
+      );
+      expect(await Ref.get(displayRef).pipe(Effect.runPromise)).toContainEqual({
+        _tag: "status",
+        message: "Removed @snappedly-tools/shipyard with npm.",
+        severity: "success",
+      });
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      if (originalCallsPath === undefined)
+        delete process.env.SHIPYARD_NPM_CALLS;
+      else process.env.SHIPYARD_NPM_CALLS = originalCallsPath;
+    }
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "uninstall preserves setup when GitHub runner unregistration fails",
+    async () => {
+      const hostDir = await mkdtemp(join(tmpdir(), "cli-uninstall-runner-"));
+      const binDir = join(hostDir, "bin");
+      await mkdir(binDir);
+      const fixture = await createRunnerUninstallFixture(hostDir);
+      await writePosixCommand(join(binDir, "gh"), "process.exit(1);");
+
+      const result = await withEnvironment(
+        { PATH: `${binDir}${delimiter}${process.env.PATH ?? ""}` },
+        () => runCliInProcessAt(["uninstall", "--yes"], hostDir),
+      );
+
+      expect(Exit.isFailure(result)).toBe(true);
+      if (Exit.isFailure(result)) {
+        expect(Cause.pretty(result.cause)).toContain(
+          "Local runner files were preserved",
+        );
+      }
+      await expect(
+        readFile(join(fixture.configDir, "main.ts"), "utf8"),
+      ).resolves.toBe("export {};\n");
+      await expect(
+        readFile(join(fixture.runnerDir, RUNNER_INSTALL_METADATA), "utf8"),
+      ).resolves.toContain('"repository":"owner/repo"');
+      await expect(readFile(fixture.workflowPath, "utf8")).resolves.toBe(
+        REPOSITORY_RUNNER_WORKFLOW,
+      );
+      const packageJson = JSON.parse(
+        await readFile(join(hostDir, "package.json"), "utf8"),
+      ) as { devDependencies: Record<string, string> };
+      expect(packageJson.devDependencies).toHaveProperty(
+        "@snappedly-tools/shipyard",
+      );
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "uninstall --force removes local setup after runner unregistration fails",
+    async () => {
+      const hostDir = await mkdtemp(join(tmpdir(), "cli-uninstall-force-"));
+      const binDir = join(hostDir, "bin");
+      const npmCalls = join(hostDir, "npm-calls.txt");
+      await mkdir(binDir);
+      const fixture = await createRunnerUninstallFixture(hostDir);
+      await Promise.all([
+        writePosixCommand(join(binDir, "gh"), "process.exit(1);"),
+        writePosixCommand(
+          join(binDir, "npm"),
+          'require("node:fs").writeFileSync(process.env.SHIPYARD_NPM_CALLS, process.argv.slice(2).join(" "));',
+        ),
+      ]);
+      const displayRef = Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([]);
+
+      const result = await withEnvironment(
+        {
+          PATH: `${binDir}${delimiter}${process.env.PATH ?? ""}`,
+          SHIPYARD_NPM_CALLS: npmCalls,
+        },
+        () =>
+          runCliInProcessAt(
+            ["uninstall", "--yes", "--force"],
+            hostDir,
+            displayRef,
+          ),
+      );
+
+      expect(Exit.isSuccess(result)).toBe(true);
+      await expect(
+        readFile(join(fixture.configDir, "main.ts"), "utf8"),
+      ).rejects.toThrow();
+      await expect(
+        readFile(join(fixture.runnerDir, RUNNER_INSTALL_METADATA), "utf8"),
+      ).rejects.toThrow();
+      await expect(readFile(fixture.workflowPath, "utf8")).rejects.toThrow();
+      await expect(access(fixture.configDir)).rejects.toThrow();
+      await expect(readFile(npmCalls, "utf8")).resolves.toBe(
+        "uninstall @snappedly-tools/shipyard",
+      );
+      expect(await Ref.get(displayRef).pipe(Effect.runPromise)).toContainEqual(
+        expect.objectContaining({
+          _tag: "status",
+          severity: "warn",
+          message: expect.stringContaining(
+            "Remove runner shipyard-owner-repo-test",
+          ),
+        }),
+      );
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "reports package-manager failure after removing repository setup",
+    async () => {
+      const hostDir = await mkdtemp(
+        join(tmpdir(), "cli-uninstall-package-fail-"),
+      );
+      const configDir = join(hostDir, ".shipyard");
+      const binDir = join(hostDir, "bin");
+      await Promise.all([mkdir(configDir), mkdir(binDir)]);
+      await Promise.all([
+        writeFile(join(configDir, "main.ts"), "export {};\n"),
+        writeFile(
+          join(hostDir, "package.json"),
+          JSON.stringify({
+            devDependencies: { "@snappedly-tools/shipyard": "^0.7.0" },
+          }),
+        ),
+        writePosixCommand(join(binDir, "npm"), "process.exit(7);"),
+      ]);
+
+      const result = await withEnvironment(
+        { PATH: `${binDir}${delimiter}${process.env.PATH ?? ""}` },
+        () => runCliInProcessAt(["uninstall", "--yes"], hostDir),
+      );
+
+      expect(Exit.isFailure(result)).toBe(true);
+      if (Exit.isFailure(result)) {
+        expect(Cause.pretty(result.cause)).toContain(
+          "Rerun the uninstall after resolving the package-manager error",
+        );
+      }
+      await expect(
+        readFile(join(configDir, "main.ts"), "utf8"),
+      ).rejects.toThrow();
+      await expect(access(configDir)).rejects.toThrow();
+      const packageJson = JSON.parse(
+        await readFile(join(hostDir, "package.json"), "utf8"),
+      ) as { devDependencies: Record<string, string> };
+      expect(packageJson.devDependencies).toHaveProperty(
+        "@snappedly-tools/shipyard",
+      );
+    },
+  );
 
   it("runner purge removes all default run logs regardless of age", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-log-purge-"));
@@ -401,9 +740,24 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     }
   });
 
-  it("init --help exposes --issue-tracker flag", async () => {
+  it("init --help omits fixed setup choices", async () => {
     const { stdout } = await runCli("init --help", process.cwd());
-    expect(stdout).toContain("--issue-tracker");
+    expect(stdout).not.toContain("--issue-tracker");
+    expect(stdout).not.toContain("--build-image");
+    expect(stdout).not.toContain("--install-runner");
+  });
+
+  it.each([
+    ["--issue-tracker", "github-issues"],
+    ["--build-image", "false"],
+    ["--install-runner", "false"],
+  ])("init rejects the removed %s option", async (flag, value) => {
+    const result = await runCliInProcess(["init", flag!, value!]);
+
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
+      expect(Cause.pretty(result.cause)).toContain(flag);
+    }
   });
 
   it("init --help does not expose the obsolete --create-label flag", async () => {
@@ -411,59 +765,109 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     expect(stdout).not.toContain("--create-label");
   });
 
-  it("init --help exposes --build-image flag", async () => {
-    const { stdout } = await runCli("init --help", process.cwd());
-    expect(stdout).toContain("--build-image");
-  });
-
   it("init --help exposes --install-template-deps flag", async () => {
     const { stdout } = await runCli("init --help", process.cwd());
     expect(stdout).toContain("--install-template-deps");
   });
 
-  it("init --help exposes the optional repository runner choice", async () => {
-    const { stdout } = await runCli("init --help", process.cwd());
-    expect(stdout).toContain("--install-runner");
-  });
-
-  it("init --issue-tracker nonexistent produces error listing available trackers", async () => {
-    const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
-    await initRepo(hostDir);
-
-    try {
-      await runCli("init --issue-tracker nonexistent", hostDir);
-      expect.fail("Expected command to fail");
-    } catch (err: unknown) {
-      const { stdout, stderr } = err as { stdout: string; stderr: string };
-      const output = stdout + stderr;
-      expect(output).toContain("nonexistent");
-      expect(output).toContain("github-issues");
-      expect(output).not.toContain("beads");
-      expect(output).not.toContain("custom");
-    }
-  });
-
-  it("init with full flag set scaffolds non-interactively in a non-TTY env", async () => {
+  it("fails init when automatic runner installation fails", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
     await initRepo(hostDir);
     await commitFile(hostDir, "hello.txt", "hello", "initial commit");
 
-    // vitest workers have no TTY, so this confirms the fully-non-interactive
-    // path runs to completion without clack crashing on a missing prompt.
-    const { stdout } = await runCli(
-      "init --agent claude-code --template simple-loop --sandbox docker --issue-tracker github-issues --build-image false",
+    // This repo has no origin remote or GitHub runner setup, so init must stop
+    // after scaffolding instead of reporting completion.
+    const failure = await runCli(
+      "init --agent claude-code --template simple-loop",
       hostDir,
-    );
+    ).catch((error: Error & { stdout: string; stderr: string }) => error);
 
-    expect(stdout).toContain("Init complete");
-    expect(stdout).toContain("npx shipyard run");
+    expect(failure).toBeInstanceOf(Error);
+    const output = failure.stdout + failure.stderr;
+    expect(output).toContain("Repository runner installation failed");
+    expect(output).toContain("Init is incomplete");
+    expect(output).not.toContain("Init complete");
+    expect(
+      await readFile(join(hostDir, ".shipyard-cli-docker-args"), "utf8"),
+    ).toContain("build -t");
     const entries = await readdir(join(hostDir, ".shipyard"));
     expect(entries).toContain("Dockerfile");
     expect(entries).toContain("prompt.md");
-    expect(entries).not.toContain("runner");
+    expect(
+      await readFile(join(hostDir, ".shipyard", "Dockerfile"), "utf8"),
+    ).toContain("GitHub CLI");
+    expect(
+      await readFile(join(hostDir, ".shipyard", ".env.example"), "utf8"),
+    ).toContain("GH_TOKEN=");
     expect(
       await readdir(join(hostDir, ".github", "workflows")).catch(() => []),
     ).not.toContain("shipyard-wake.yml");
+  });
+
+  it("init advances one progress bar across setup stages", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "cli-init-progress-"));
+    await initRepo(hostDir);
+    const binDir = join(hostDir, "bin");
+    await mkdir(binDir);
+    await writeFile(join(binDir, "docker"), "#!/bin/sh\nexit 0\n", {
+      mode: 0o755,
+    });
+    await writeFile(join(binDir, "gh"), "#!/bin/sh\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const displayRef = Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([]);
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${previousPath ?? ""}`;
+    let result: Awaited<ReturnType<typeof runCliInProcessAt>>;
+    try {
+      result = await runCliInProcessAt(
+        [
+          "init",
+          "--agent",
+          "claude-code",
+          "--template",
+          "simple-loop",
+          "--commit-setup",
+          "false",
+        ],
+        hostDir,
+        displayRef,
+      );
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+    }
+
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
+      expect(Cause.pretty(result.cause)).toContain(
+        "Repository runner installation failed",
+      );
+    }
+    const entries = await Ref.get(displayRef).pipe(Effect.runPromise);
+    const progressEntries = entries.filter(
+      (entry): entry is Extract<DisplayEntry, { _tag: "progress" }> =>
+        entry._tag === "progress",
+    );
+    expect(progressEntries).toHaveLength(1);
+    const updates = progressEntries[0]!.updates;
+    expect(updates[0]).toMatchObject({
+      current: 6,
+      total: 100,
+      message: "Selected Claude Code",
+    });
+    expect(updates.at(-1)!.current).toBeLessThan(100);
+    expect(updates.at(-1)!.message).toBe("Installing repository runner");
+    expect(updates.map(({ current }) => current)).toEqual(
+      [...updates.map(({ current }) => current)].sort((a, b) => a - b),
+    );
+    expect(updates.map(({ message }) => message)).toContain(
+      "Selected simple-loop template",
+    );
+    expect(updates.map(({ message }) => message)).toContain(
+      "Docker image built",
+    );
   });
 
   it("init requires --codex-auth for Codex in a non-TTY env", async () => {
@@ -471,10 +875,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     await initRepo(hostDir);
 
     try {
-      await runCli(
-        "init --agent codex --template simple-loop --sandbox docker --issue-tracker github-issues --build-image false",
-        hostDir,
-      );
+      await runCli("init --agent codex --template simple-loop", hostDir);
       expect.fail("Expected command to fail");
     } catch (err: unknown) {
       const { stdout, stderr } = err as { stdout: string; stderr: string };
@@ -482,7 +883,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     }
   });
 
-  it("init --codex-auth chatgpt scaffolds the subscription auth mount", async () => {
+  it("init scaffolds Codex ChatGPT auth before reporting runner failure", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
     await initRepo(hostDir);
     await commitFile(hostDir, "hello.txt", "hello", "initial commit");
@@ -490,10 +891,14 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     await mkdir(join(isolatedHome, ".codex"), { recursive: true });
     await writeFile(join(isolatedHome, ".codex", "auth.json"), "{}\n");
 
-    await runCli(
-      "init --agent codex --codex-auth chatgpt --template simple-loop --sandbox docker --issue-tracker github-issues --build-image false",
+    const failure = await runCli(
+      "init --agent codex --codex-auth chatgpt --template simple-loop",
       hostDir,
       { HOME: isolatedHome },
+    ).catch((error: Error & { stdout: string; stderr: string }) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure.stdout + failure.stderr).toContain(
+      "Repository runner installation failed",
     );
 
     const main = await readFile(
@@ -518,7 +923,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     let error: unknown;
     try {
       await runCli(
-        "init --agent codex --codex-auth chatgpt --template simple-loop --sandbox docker --issue-tracker github-issues --build-image false",
+        "init --agent codex --codex-auth chatgpt --template simple-loop",
         hostDir,
         { HOME: isolatedHome },
       );
@@ -562,16 +967,20 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
       { mode: 0o755 },
     );
 
-    const { stdout } = await runCli(
-      "init --agent claude-code --template simple-loop --sandbox docker --issue-tracker github-issues --build-image false",
+    const failure = await runCli(
+      "init --agent claude-code --template simple-loop",
       hostDir,
       {
         PATH: `${binDir}:${process.env.PATH ?? ""}`,
         GH_ARGS_FILE: ghArgsFile,
       },
-    );
+    ).catch((error: Error & { stdout: string; stderr: string }) => error);
 
-    expect(stdout).toContain("Init complete");
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure.stdout + failure.stderr).toContain(
+      "Repository runner installation failed",
+    );
+    expect(failure.stdout + failure.stderr).not.toContain("Init complete");
     const commands = await readFile(ghArgsFile, "utf8");
     for (const label of [
       "shipyard",
@@ -600,12 +1009,17 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
       mode: 0o755,
     });
 
-    const { stdout } = await runCli(
-      "init --agent claude-code --template simple-loop --sandbox docker --issue-tracker github-issues --build-image false",
+    const failure = await runCli(
+      "init --agent claude-code --template simple-loop",
       hostDir,
-      { PATH: `${binDir}:${process.env.PATH ?? ""}` },
+      { PATH: `${binDir}:${process.env.PATH ?? ""}`, GH_REPO: "" },
+    ).catch((error: Error & { stdout: string; stderr: string }) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure.stdout + failure.stderr).toContain(
+      "Repository runner installation failed",
     );
-    expect(stdout).toContain("Init complete");
+    expect(failure.stdout + failure.stderr).not.toContain("Init complete");
+    expect(await readdir(join(hostDir, ".shipyard"))).toContain("Dockerfile");
   });
 
   it("init reports label provisioning failure for a connected repository", async () => {
@@ -622,7 +1036,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     });
 
     const failure = await runCli(
-      "init --agent claude-code --template simple-loop --sandbox docker --issue-tracker github-issues --build-image false",
+      "init --agent claude-code --template simple-loop",
       hostDir,
       { PATH: `${binDir}:${process.env.PATH ?? ""}` },
     ).catch((error: Error & { stdout: string; stderr: string }) => error);

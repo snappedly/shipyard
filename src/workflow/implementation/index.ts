@@ -22,7 +22,7 @@ import type {
   GitHubPullRequestSnapshot,
 } from "../../integrations/github/index.js";
 import type { ReviewCandidate } from "../review/index.js";
-import { sameRevision } from "../shared.js";
+import { requiredCheckNames, sameRevision } from "../shared.js";
 import type {
   BranchLease,
   DispatchIntent,
@@ -128,9 +128,6 @@ const latestAssignmentFor = (
     .reverse()
     .find((assignment) => assignment.phase === phase);
 
-const requiredChecks = (policy: RepositoryPolicy): readonly string[] =>
-  policy.checks.filter((check) => check.required).map((check) => check.name);
-
 const checkByName = (
   checks: readonly CheckEvidence[],
   name: string,
@@ -158,7 +155,7 @@ const checkReadiness = (
   policy: RepositoryPolicy,
   result: PhaseResult,
 ): string | undefined => {
-  for (const required of requiredChecks(policy)) {
+  for (const required of requiredCheckNames(policy)) {
     const check = checkByName(result.checks, required);
     if (check === undefined) return `Required check is missing: ${required}`;
     if (check.status !== "passed") {

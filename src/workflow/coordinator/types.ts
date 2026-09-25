@@ -315,6 +315,7 @@ export interface RepairRequestResult {
   readonly status: "scheduled" | "blocked" | "not-allowed";
   readonly job: WorkflowJob;
   readonly dispatch?: DispatchIntent;
+  readonly dispatchClaimExpired?: boolean;
   readonly reason?: string;
 }
 

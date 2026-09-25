@@ -25,8 +25,7 @@ npm install --save-dev @snappedly-tools/shipyard
 ### 2. Initialize the target repository
 
 ```sh
-npx shipyard init --template simple-loop --agent codex --codex-auth chatgpt --sandbox docker \
-  --issue-tracker github-issues --build-image false
+npx shipyard init --template simple-loop --agent codex --codex-auth chatgpt
 ```
 
 In an interactive terminal, `init` starts `codex login` if needed and asks that
@@ -37,7 +36,11 @@ any required credentials there. In a non-interactive environment, run
 `codex login` before this command.
 Leave `OPENAI_API_KEY` out of `.shipyard/.env` in this mode. To use API-key
 authentication instead, use `--codex-auth api-key` and set the key in `.env`.
-Set the scaffold's `GH_TOKEN` entry for GitHub Issues access. Review
+Init uses GitHub Issues, builds the Docker image, and automatically installs a
+repository runner on supported Apple Silicon Macs. Runner installation is
+required for init to complete, so init exits if the host is unsupported or
+installation fails. Set the scaffold's `GH_TOKEN` entry for GitHub Issues
+access. Review
 `.shipyard/prompt.md` and adapt the issue workflow to your repository. Init
 always attempts to create or update the lowercase
 `shipyard` label; built-in issue workflows select only open issues carrying
@@ -49,8 +52,18 @@ Init generates `.shipyard/main.ts` for ESM projects (`"type": "module"`),
 otherwise `.shipyard/main.mts`. That file configures the workflow; there is no
 `config.json`.
 
-Commit the setup files, leaving `.env` untracked. Label an issue `shipyard`
-and `ready-for-agent`, then run the selected workflow:
+Init completes only after the repository runner installs. If installation
+fails, init exits without showing completion. Fix the reported issue and run
+`npx shipyard runner install` to retry against the generated setup.
+
+After runner installation, init offers to commit and push the generated setup
+to the current branch. It stages `.shipyard/` and the wake workflow, and leaves
+`.shipyard/.env` untracked. If you decline, commit `.shipyard/` before you run
+the workflow because Docker sandboxes use committed Git history.
+Non-interactive init skips the offer; pass `--commit-setup true` to commit and
+push the generated files.
+
+Label an issue `shipyard` and `ready-for-agent`, then run the selected workflow:
 
 ```sh
 npx shipyard run
@@ -75,6 +88,10 @@ advanced multi-agent workflow instead.
 - Review the `simple-loop`, `sequential-reviewer`, `parallel-planner`, and
   `parallel-planner-with-review` templates before running them.
 
-The optional workflow coordinator APIs support more elaborate hosted automation.
-They are not required to run the library or its templates; ordinary use needs
-no database, webhook service, or release-policy configuration.
+For hosted automation, import coordinator and phase APIs from
+`@snappedly-tools/shipyard/workflow`; GitHub and release integrations have their
+own package subpaths. The coordinator and durable triage/repair stores use
+PostgreSQL. Apply the SQL migrations in the installed package's
+`dist/workflow/coordinator/migrations` directory before using those stores.
+These APIs are optional; the bundled CLI and templates need no database,
+webhook service, or release-policy configuration.

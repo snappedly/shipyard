@@ -117,6 +117,16 @@ const LOCKFILES: ReadonlyArray<readonly [string, PackageManager]> = [
   ["package-lock.json", "npm"],
 ];
 
+const DEPENDENCY_COMMANDS: Record<
+  PackageManager,
+  { readonly add: string; readonly remove: string }
+> = {
+  npm: { add: "install", remove: "uninstall" },
+  pnpm: { add: "add", remove: "remove" },
+  yarn: { add: "add", remove: "remove" },
+  bun: { add: "add", remove: "remove" },
+};
+
 /**
  * Detect the host project's package manager. An explicit corepack-style
  * `packageManager` field in package.json wins; otherwise the first matching
@@ -163,18 +173,15 @@ export const detectPackageManager = (
 export const addDependencyCommand = (
   packageManager: PackageManager,
   pkg: string,
-): string => {
-  switch (packageManager) {
-    case "pnpm":
-      return `pnpm add ${pkg}`;
-    case "yarn":
-      return `yarn add ${pkg}`;
-    case "bun":
-      return `bun add ${pkg}`;
-    case "npm":
-      return `npm install ${pkg}`;
-  }
-};
+): string =>
+  `${packageManager} ${DEPENDENCY_COMMANDS[packageManager].add} ${pkg}`;
+
+/** Build the command that removes a dependency with the given package manager. */
+export const removeDependencyCommand = (
+  packageManager: PackageManager,
+  pkg: string,
+): string =>
+  `${packageManager} ${DEPENDENCY_COMMANDS[packageManager].remove} ${pkg}`;
 
 /**
  * Whether the host package.json already declares `pkg` in any of its dependency
@@ -362,8 +369,7 @@ const ISSUE_TRACKER_REGISTRY: IssueTrackerEntry[] = [
 # Required repository permissions: Contents, Issues, and Pull requests (Read and write); Metadata (Read)
 # Or leave blank and run: GH_TOKEN="$(gh auth token)" npx shipyard run
 GH_TOKEN=
-# GitHub repository (owner/repository)
-GH_REPO=`,
+`,
   },
 ];
 
@@ -417,7 +423,7 @@ export function getNextStepsLines(): string[] {
     "2. If using a model subscription, sign in. For Codex:",
     `   codex --config 'cli_auth_credentials_store="file"' login`,
     "   test -f ~/.codex/auth.json",
-    `3. Start with \`npx ${CLI_NAME} runner start\` (if installed) or \`npx ${CLI_NAME} run\``,
+    `3. If the runner installed successfully, start it with \`npx ${CLI_NAME} runner start\`; otherwise run \`npx ${CLI_NAME} run\`.`,
   ];
 }
 
@@ -535,8 +541,8 @@ const rewriteMainTs = (
     // API key through the generated .env file.
     if (agent.name === "codex" && codexAuth === "chatgpt") {
       content = content.replace(
-        /\bdocker\(\)/g,
-        `docker(${CODEX_CHATGPT_AUTH_OPTIONS})`,
+        "const sandboxAuthOptions = {};",
+        `const sandboxAuthOptions = ${CODEX_CHATGPT_AUTH_OPTIONS};`,
       );
     }
 

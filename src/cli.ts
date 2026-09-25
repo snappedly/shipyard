@@ -13,7 +13,6 @@ import {
   listTemplates,
   listAgents,
   getAgent,
-  listIssueTrackers,
   getIssueTracker,
   listSandboxProviders,
   getSandboxProvider,
@@ -21,15 +20,12 @@ import {
   getNextStepsLines,
   detectPackageManager,
   addDependencyCommand,
+  removeDependencyCommand,
   hostHasDependency,
   getTemplateDependencies,
 } from "./InitService.js";
 import { defaultImageName } from "./sandboxes/docker.js";
-import type {
-  AgentEntry,
-  IssueTrackerEntry,
-  SandboxProviderEntry,
-} from "./InitService.js";
+import type { AgentEntry, SandboxProviderEntry } from "./InitService.js";
 import { ExecHostError, InitError } from "./errors.js";
 import {
   ensureCodexChatGptAuth,
@@ -37,25 +33,32 @@ import {
   type CodexAuthMode,
 } from "./CodexAuth.js";
 import { requireCanonicalConfigDir } from "./runtimeConfig.js";
-import { runEffectPromise } from "./runEffectPromise.js";
 import {
   installRepositoryRunnerWithReplacement,
   installRepositoryRunner,
-  RunnerInstallError,
 } from "./RepositoryRunner.js";
-import { DEFAULT_LOG_RETENTION_DAYS, purgeRunLogs } from "./LogRetention.js";
 import {
-  initializeRepositoryRunner,
-  repositoryRunnerNextSteps,
-} from "./InitRepositoryRunner.js";
+  removeRepositoryRunner,
+  RunnerLifecycleError,
+} from "./RepositoryRunnerLifecycle.js";
+import { DEFAULT_LOG_RETENTION_DAYS, purgeRunLogs } from "./LogRetention.js";
+import { repositoryRunnerNextSteps } from "./InitRepositoryRunner.js";
+import { commitAndPushInitSetup } from "./InitGitSetup.js";
 import { runnerCommand } from "./RepositoryRunnerCommands.js";
 import {
   ACTIVATION_LABEL,
   CONFIG_DIR,
   CLI_NAME,
   PRODUCT_NAME,
+  RUNNER_DIR,
 } from "./runtimeNames.js";
 import { VERSION } from "./version.js";
+import {
+  inspectShipyardConfigDirectory,
+  removeShipyardRepositoryFiles,
+  SHIPYARD_PACKAGE_NAME,
+} from "./UninstallService.js";
+import { REPOSITORY_RUNNER_WORKFLOW_PATH } from "./RepositoryRunnerWake.js";
 
 // --- Shared options ---
 
@@ -80,13 +83,6 @@ const defaultUidBuildArgs = (): Record<string, string> => {
   if (gid !== undefined) args.AGENT_GID = String(gid);
   return args;
 };
-
-// --- Config directory check ---
-
-const requireConfigDir = (
-  cwd: string,
-): ReturnType<typeof requireCanonicalConfigDir> =>
-  requireCanonicalConfigDir(cwd);
 
 /**
  * Apply the default log-retention policy without making an agent run depend on
@@ -254,7 +250,7 @@ const runCommand = Command.make(
     Effect.gen(function* () {
       const d = yield* Display;
       const cwd = process.cwd();
-      const configDir = yield* requireConfigDir(cwd);
+      const configDir = yield* requireCanonicalConfigDir(cwd);
       yield* purgeRunLogsBestEffort(d, cwd);
       const resolvedEntrypoint = resolveRunEntrypoint(
         cwd,
@@ -323,19 +319,9 @@ const sandboxOption = Options.text("sandbox").pipe(
   Options.optional,
 );
 
-const issueTrackerOption = Options.text("issue-tracker").pipe(
-  Options.withDescription("Issue tracker to use (github-issues)"),
-  Options.optional,
-);
-
 // Tri-state booleans (Some(true) / Some(false) / None) so we can tell "user
 // chose false" from "user didn't pass the flag at all" — only the latter
 // triggers the interactive prompt.
-const buildImageOption = Options.choice("build-image", ["true", "false"]).pipe(
-  Options.withDescription("Whether to build the sandbox image now"),
-  Options.optional,
-);
-
 const installTemplateDepsOption = Options.choice("install-template-deps", [
   "true",
   "false",
@@ -346,14 +332,22 @@ const installTemplateDepsOption = Options.choice("install-template-deps", [
   Options.optional,
 );
 
-const installRunnerOption = Options.choice("install-runner", [
-  "true",
-  "false",
-]).pipe(
+const commitSetupOption = Options.choice("commit-setup", ["true", "false"])
+  .pipe(
+    Options.withDescription(
+      "Whether to commit and push .shipyard/ and any generated runner workflow",
+    ),
+  )
+  .pipe(Options.optional);
+
+const uninstallYesOption = Options.boolean("yes").pipe(
+  Options.withDescription("confirm uninstall without an interactive prompt"),
+);
+
+const uninstallForceOption = Options.boolean("force").pipe(
   Options.withDescription(
-    "Whether to install a foreground repository runner after scaffolding",
+    "remove local runner files if GitHub unregistration fails",
   ),
-  Options.optional,
 );
 
 /**
@@ -374,10 +368,8 @@ const initCommand = Command.make(
     codexAuth: codexAuthOption,
     model: initModelOption,
     sandbox: sandboxOption,
-    issueTracker: issueTrackerOption,
-    buildImage: buildImageOption,
     installTemplateDeps: installTemplateDepsOption,
-    installRunner: installRunnerOption,
+    commitSetup: commitSetupOption,
   },
   ({
     imageName: imageNameFlag,
@@ -386,10 +378,8 @@ const initCommand = Command.make(
     codexAuth: codexAuthFlag,
     model: modelFlag,
     sandbox: sandboxFlag,
-    issueTracker: issueTrackerFlag,
-    buildImage: buildImageFlag,
     installTemplateDeps: installTemplateDepsFlag,
-    installRunner: installRunnerFlag,
+    commitSetup: commitSetupFlag,
   }) =>
     Effect.gen(function* () {
       const d = yield* Display;
@@ -424,271 +414,299 @@ const initCommand = Command.make(
         }
       }
 
-      if (issueTrackerFlag._tag === "Some") {
-        const valid = getIssueTracker(issueTrackerFlag.value);
-        if (!valid) {
-          const names = listIssueTrackers()
-            .map((t) => t.name)
-            .join(", ");
-          yield* Effect.fail(
-            new InitError({
-              message: `Unknown issue tracker "${issueTrackerFlag.value}". Available: ${names}`,
-            }),
-          );
-        }
-      }
-
-      const buildImageChoice = choiceToTriBool(buildImageFlag);
-      const installTemplateDepsChoice = choiceToTriBool(
-        installTemplateDepsFlag,
-      );
-      const installRunnerChoice = choiceToTriBool(installRunnerFlag);
-
-      const isInteractive = process.stdin.isTTY === true;
-      const failIfNonInteractive = (flag: string) =>
-        Effect.fail(
-          new InitError({
-            message: `${flag} is required in non-interactive mode (no TTY detected).`,
-          }),
-        );
-
-      // Tri-state confirm: CLI flag wins; otherwise prompt interactively (or
-      // fail fast in non-interactive mode naming the missing flag). Cancelling
-      // the prompt is treated as abort — same shape as the select prompts above.
-      const resolveConfirmFlag = (params: {
-        choice: Option.Option<boolean>;
-        flag: string;
-        promptMessage: string;
-        cancelMessage: string;
-      }): Effect.Effect<boolean, InitError> =>
+      yield* d.progress("Initializing Shipyard", (report) =>
         Effect.gen(function* () {
-          if (params.choice._tag === "Some") return params.choice.value;
-          if (!isInteractive) {
-            yield* failIfNonInteractive(params.flag);
-          }
-          const confirmed = yield* Effect.promise(() =>
-            clack.confirm({
-              message: params.promptMessage,
-              initialValue: true,
-            }),
-          );
-          if (clack.isCancel(confirmed)) {
-            yield* Effect.fail(
-              new InitError({ message: params.cancelMessage }),
+          const progressAt = (current: number, message: string) =>
+            report({ current, total: 100, message });
+          const progressRange = (
+            start: number,
+            end: number,
+            update: { current: number; total: number; message: string },
+          ) => {
+            const total = Math.max(1, update.total);
+            const fraction = Math.min(1, Math.max(0, update.current / total));
+            progressAt(
+              Math.round(start + (end - start) * fraction),
+              update.message,
             );
-          }
-          return confirmed === true;
-        });
+          };
+          const whilePrompt = async <A>(
+            prompt: () => Promise<A>,
+          ): Promise<A> => {
+            report.pause();
+            try {
+              return await prompt();
+            } finally {
+              report.resume();
+            }
+          };
+          const statusWithProgress = (
+            message: string,
+            severity: Parameters<DisplayService["status"]>[1],
+          ) =>
+            Effect.acquireUseRelease(
+              Effect.sync(() => report.pause()),
+              () => d.status(message, severity),
+              () => Effect.sync(() => report.resume()),
+            );
 
-      // Resolve agent: CLI flag > interactive select
-      const agents = listAgents();
-      let selectedAgent: AgentEntry;
-      if (agentFlag._tag === "Some") {
-        const entry = getAgent(agentFlag.value);
-        if (!entry) {
-          const names = agents.map((a) => a.name).join(", ");
-          yield* Effect.fail(
-            new InitError({
-              message: `Unknown agent "${agentFlag.value}". Available: ${names}`,
-            }),
+          const installTemplateDepsChoice = choiceToTriBool(
+            installTemplateDepsFlag,
           );
-        }
-        selectedAgent = entry!;
-      } else {
-        if (!isInteractive) {
-          yield* failIfNonInteractive("--agent");
-        }
-        const selected = yield* Effect.promise(() =>
-          clack.select({
-            message: "Select an agent:",
-            initialValue: DEFAULT_AGENT_NAME,
-            options: agents.map((a) => ({
-              value: a.name,
-              label: a.label,
-              hint: `Default model: ${a.defaultModel}`,
-            })),
-          }),
-        );
-        if (clack.isCancel(selected)) {
-          yield* Effect.fail(
-            new InitError({ message: "Agent selection cancelled." }),
-          );
-        }
-        selectedAgent = getAgent(selected as string)!;
-      }
+          const commitSetupChoice = choiceToTriBool(commitSetupFlag);
 
-      const selectedCodexAuth = yield* Effect.tryPromise({
-        try: () =>
-          resolveCodexAuthMode({
-            agentName: selectedAgent.name,
-            requested:
-              codexAuthFlag._tag === "Some" ? codexAuthFlag.value : undefined,
-            interactive: isInteractive,
-            select: async () => {
-              const selected = await clack.select({
-                message: "How will you authenticate Codex?",
-                initialValue: "chatgpt",
-                options: [
-                  {
-                    value: "chatgpt" as const,
-                    label: "Sign in with ChatGPT",
-                    hint: "Use your ChatGPT subscription",
-                  },
-                  {
-                    value: "api-key" as const,
-                    label: "OpenAI API key",
-                    hint: "Use API billing",
-                  },
-                ],
-              });
-              return clack.isCancel(selected)
-                ? undefined
-                : (selected as CodexAuthMode);
-            },
-          }),
-        catch: (error) =>
-          error instanceof InitError
-            ? error
-            : new InitError({
-                message: `Codex authentication selection failed: ${String(error)}`,
+          const isInteractive = process.stdin.isTTY === true;
+          const failIfNonInteractive = (flag: string) =>
+            Effect.fail(
+              new InitError({
+                message: `${flag} is required in non-interactive mode (no TTY detected).`,
               }),
-      });
-
-      // Resolve model: CLI flag > agent default
-      const selectedModel =
-        modelFlag._tag === "Some"
-          ? modelFlag.value
-          : selectedAgent.defaultModel;
-
-      if (selectedCodexAuth === "chatgpt") {
-        yield* Effect.try({
-          try: () =>
-            ensureCodexChatGptAuth({
-              cwd,
-              interactive: isInteractive,
-            }),
-          catch: (error) =>
-            error instanceof InitError
-              ? error
-              : new InitError({
-                  message: `Codex authentication setup failed: ${String(error)}`,
-                }),
-        });
-      }
-
-      // Docker is the sole supported provider. Keep --sandbox docker accepted
-      // for existing non-interactive init scripts.
-      const selectedSandboxProvider: SandboxProviderEntry =
-        getSandboxProvider("docker")!;
-
-      // Resolve issue tracker: CLI flag > interactive select (already validated above)
-      const issueTrackers = listIssueTrackers();
-      let selectedIssueTracker: IssueTrackerEntry;
-      if (issueTrackerFlag._tag === "Some") {
-        selectedIssueTracker = getIssueTracker(issueTrackerFlag.value)!;
-      } else {
-        if (!isInteractive) {
-          yield* failIfNonInteractive("--issue-tracker");
-        }
-        const selected = yield* Effect.promise(() =>
-          clack.select({
-            message: "Select an issue tracker:",
-            initialValue: "github-issues",
-            options: issueTrackers.map((b) => ({
-              value: b.name,
-              label: b.label,
-            })),
-          }),
-        );
-        if (clack.isCancel(selected)) {
-          yield* Effect.fail(
-            new InitError({
-              message: "Issue tracker selection cancelled.",
-            }),
-          );
-        }
-        selectedIssueTracker = getIssueTracker(selected as string)!;
-      }
-
-      // Resolve template: CLI flag > interactive select (already validated above)
-      let selectedTemplate: string;
-      if (template._tag === "Some") {
-        selectedTemplate = template.value;
-      } else {
-        if (!isInteractive) {
-          yield* failIfNonInteractive("--template");
-        }
-        const selected = yield* Effect.promise(() =>
-          clack.select({
-            message: "Select a template:",
-            initialValue: "simple-loop",
-            options: templates.map((tmpl) => ({
-              value: tmpl.name,
-              label: tmpl.name,
-              hint: tmpl.description,
-            })),
-          }),
-        );
-        if (clack.isCancel(selected)) {
-          yield* Effect.fail(
-            new InitError({ message: "Template selection cancelled." }),
-          );
-        }
-        selectedTemplate = selected as string;
-      }
-
-      // These labels are part of the GitHub Issues workflow contract.
-      if (selectedIssueTracker.name === "github-issues") {
-        const failedLabels: string[] = [];
-        for (const [name, description, color] of [
-          [ACTIVATION_LABEL, `Issues for ${PRODUCT_NAME} to work on`, "F9A825"],
-          ["bug", "Something is broken", "D73A4A"],
-          ["enhancement", "New feature or improvement", "A2EEEF"],
-          ["needs-triage", "Maintainer evaluation needed", "FBCA04"],
-          ["needs-info", "Waiting for reporter information", "D4C5F9"],
-          ["ready-for-agent", "Ready for agent implementation", "0E8A16"],
-          ["ready-for-human", "Requires human implementation", "1D76DB"],
-          ["wontfix", "Will not be actioned", "FFFFFF"],
-          ["shipyard:blocked", "Shipyard work needs intervention", "B60205"],
-          ["shipyard:pending", "Shipyard is working on this ticket", "1D76DB"],
-          [
-            "shipyard:complete",
-            "Shipyard work ready for human review",
-            "0E8A16",
-          ],
-          [
-            "shipyard:outstanding-tasks",
-            "Spec has uncompleted tickets",
-            "FBCA04",
-          ],
-        ] as const) {
-          try {
-            execSync(
-              `gh label create "${name}" --description "${description}" --color "${color}" --force`,
-              { cwd, stdio: "ignore" },
             );
-          } catch {
-            failedLabels.push(name);
-          }
-        }
-        if (failedLabels.length) {
-          let connected = Boolean(process.env.GH_REPO);
-          try {
-            execSync("git remote get-url origin", { cwd, stdio: "ignore" });
-            connected = true;
-          } catch {
-            // A local repository can be scaffolded before its GitHub remote exists.
-          }
-          const message = `Could not create GitHub labels: ${failedLabels.join(", ")}. Check GitHub access and rerun init.`;
-          if (connected) yield* Effect.fail(new InitError({ message }));
-          console.warn(message);
-        }
-      }
 
-      yield* d.progress(
-        `Scaffolding ${CONFIG_DIR}/ config directory...`,
-        (report) =>
-          scaffold(cwd, {
+          // Tri-state confirm: CLI flag wins; otherwise prompt interactively (or
+          // fail fast in non-interactive mode naming the missing flag). Cancelling
+          // the prompt is treated as abort — same shape as the select prompts above.
+          const resolveConfirmFlag = (params: {
+            choice: Option.Option<boolean>;
+            flag: string;
+            promptMessage: string;
+            cancelMessage: string;
+          }): Effect.Effect<boolean, InitError> =>
+            Effect.gen(function* () {
+              if (params.choice._tag === "Some") return params.choice.value;
+              if (!isInteractive) {
+                yield* failIfNonInteractive(params.flag);
+              }
+              const confirmed = yield* Effect.promise(() =>
+                whilePrompt(() =>
+                  clack.confirm({
+                    message: params.promptMessage,
+                    initialValue: true,
+                  }),
+                ),
+              );
+              if (clack.isCancel(confirmed)) {
+                yield* Effect.fail(
+                  new InitError({ message: params.cancelMessage }),
+                );
+              }
+              return confirmed === true;
+            });
+
+          // Resolve agent: CLI flag > interactive select
+          const agents = listAgents();
+          let selectedAgent: AgentEntry;
+          if (agentFlag._tag === "Some") {
+            const entry = getAgent(agentFlag.value);
+            if (!entry) {
+              const names = agents.map((a) => a.name).join(", ");
+              yield* Effect.fail(
+                new InitError({
+                  message: `Unknown agent "${agentFlag.value}". Available: ${names}`,
+                }),
+              );
+            }
+            selectedAgent = entry!;
+          } else {
+            if (!isInteractive) {
+              yield* failIfNonInteractive("--agent");
+            }
+            const selected = yield* Effect.promise(() =>
+              whilePrompt(() =>
+                clack.select({
+                  message: "Select an agent:",
+                  initialValue: DEFAULT_AGENT_NAME,
+                  options: agents.map((a) => ({
+                    value: a.name,
+                    label: a.label,
+                    hint: `Default model: ${a.defaultModel}`,
+                  })),
+                }),
+              ),
+            );
+            if (clack.isCancel(selected)) {
+              yield* Effect.fail(
+                new InitError({ message: "Agent selection cancelled." }),
+              );
+            }
+            selectedAgent = getAgent(selected as string)!;
+          }
+          progressAt(6, `Selected ${selectedAgent.label}`);
+
+          const selectedCodexAuth = yield* Effect.tryPromise({
+            try: () =>
+              resolveCodexAuthMode({
+                agentName: selectedAgent.name,
+                requested:
+                  codexAuthFlag._tag === "Some"
+                    ? codexAuthFlag.value
+                    : undefined,
+                interactive: isInteractive,
+                select: async () => {
+                  const selected = await whilePrompt(() =>
+                    clack.select({
+                      message: "How will you authenticate Codex?",
+                      initialValue: "chatgpt",
+                      options: [
+                        {
+                          value: "chatgpt" as const,
+                          label: "Sign in with ChatGPT",
+                          hint: "Use your ChatGPT subscription",
+                        },
+                        {
+                          value: "api-key" as const,
+                          label: "OpenAI API key",
+                          hint: "Use API billing",
+                        },
+                      ],
+                    }),
+                  );
+                  return clack.isCancel(selected)
+                    ? undefined
+                    : (selected as CodexAuthMode);
+                },
+              }),
+            catch: (error) =>
+              error instanceof InitError
+                ? error
+                : new InitError({
+                    message: `Codex authentication selection failed: ${String(error)}`,
+                  }),
+          });
+          progressAt(12, "Authentication method selected");
+
+          // Resolve model: CLI flag > agent default
+          const selectedModel =
+            modelFlag._tag === "Some"
+              ? modelFlag.value
+              : selectedAgent.defaultModel;
+
+          if (selectedCodexAuth === "chatgpt") {
+            yield* Effect.try({
+              try: () => {
+                report.pause();
+                try {
+                  ensureCodexChatGptAuth({
+                    cwd,
+                    interactive: isInteractive,
+                  });
+                } finally {
+                  report.resume();
+                }
+              },
+              catch: (error) =>
+                error instanceof InitError
+                  ? error
+                  : new InitError({
+                      message: `Codex authentication setup failed: ${String(error)}`,
+                    }),
+            });
+          }
+          progressAt(18, "Authentication setup complete");
+
+          // Docker is the sole supported provider. Keep --sandbox docker accepted
+          // for existing non-interactive init scripts.
+          const selectedSandboxProvider: SandboxProviderEntry =
+            getSandboxProvider("docker")!;
+
+          const selectedIssueTracker = getIssueTracker("github-issues")!;
+
+          // Resolve template: CLI flag > interactive select (already validated above)
+          let selectedTemplate: string;
+          if (template._tag === "Some") {
+            selectedTemplate = template.value;
+          } else {
+            if (!isInteractive) {
+              yield* failIfNonInteractive("--template");
+            }
+            const selected = yield* Effect.promise(() =>
+              whilePrompt(() =>
+                clack.select({
+                  message: "Select a template:",
+                  initialValue: "simple-loop",
+                  options: templates.map((tmpl) => ({
+                    value: tmpl.name,
+                    label: tmpl.name,
+                    hint: tmpl.description,
+                  })),
+                }),
+              ),
+            );
+            if (clack.isCancel(selected)) {
+              yield* Effect.fail(
+                new InitError({ message: "Template selection cancelled." }),
+              );
+            }
+            selectedTemplate = selected as string;
+          }
+          progressAt(24, `Selected ${selectedTemplate} template`);
+
+          // These labels are part of the GitHub Issues workflow contract.
+          const failedLabels: string[] = [];
+          const labels = [
+            [
+              ACTIVATION_LABEL,
+              `Issues for ${PRODUCT_NAME} to work on`,
+              "F9A825",
+            ],
+            ["bug", "Something is broken", "D73A4A"],
+            ["enhancement", "New feature or improvement", "A2EEEF"],
+            ["needs-triage", "Maintainer evaluation needed", "FBCA04"],
+            ["needs-info", "Waiting for reporter information", "D4C5F9"],
+            ["ready-for-agent", "Ready for agent implementation", "0E8A16"],
+            ["ready-for-human", "Requires human implementation", "1D76DB"],
+            ["wontfix", "Will not be actioned", "FFFFFF"],
+            ["shipyard:blocked", "Shipyard work needs intervention", "B60205"],
+            [
+              "shipyard:pending",
+              "Shipyard is working on this ticket",
+              "1D76DB",
+            ],
+            [
+              "shipyard:complete",
+              "Shipyard work ready for human review",
+              "0E8A16",
+            ],
+            [
+              "shipyard:outstanding-tasks",
+              "Spec has uncompleted tickets",
+              "FBCA04",
+            ],
+          ] as const;
+          for (const [index, [name, description, color]] of labels.entries()) {
+            try {
+              execSync(
+                `gh label create "${name}" --description "${description}" --color "${color}" --force`,
+                { cwd, stdio: "ignore" },
+              );
+            } catch {
+              failedLabels.push(name);
+            }
+            progressAt(
+              24 + Math.round(((index + 1) / labels.length) * 10),
+              "Provisioning GitHub labels",
+            );
+          }
+          if (failedLabels.length) {
+            let connected = Boolean(process.env.GH_REPO);
+            try {
+              execSync("git remote get-url origin", { cwd, stdio: "ignore" });
+              connected = true;
+            } catch {
+              // A local repository can be scaffolded before its GitHub remote exists.
+            }
+            const message = `Could not create GitHub labels: ${failedLabels.join(", ")}. Check GitHub access and rerun init.`;
+            if (connected) yield* Effect.fail(new InitError({ message }));
+            report.pause();
+            try {
+              console.warn(message);
+            } finally {
+              report.resume();
+            }
+          }
+
+          progressAt(34, `Scaffolding ${CONFIG_DIR}/ config directory`);
+          yield* scaffold(cwd, {
             agent: selectedAgent,
             model: selectedModel,
             modelExplicit: modelFlag._tag === "Some",
@@ -696,7 +714,7 @@ const initCommand = Command.make(
             issueTracker: selectedIssueTracker,
             sandboxProvider: selectedSandboxProvider,
             codexAuth: selectedCodexAuth,
-            onProgress: report,
+            onProgress: (update) => progressRange(34, 56, update),
           }).pipe(
             Effect.mapError(
               (e) =>
@@ -704,145 +722,188 @@ const initCommand = Command.make(
                   message: `${e instanceof Error ? e.message : e}`,
                 }),
             ),
-          ),
-      );
+          );
+          progressAt(56, "Shipyard configuration generated");
 
-      // Detect the host package manager so the zod offer below and the next
-      // steps below both use the right install command.
-      const packageManager = yield* detectPackageManager(cwd);
+          // Detect the host package manager so the zod offer below and the next
+          // steps below both use the right install command.
+          const packageManager = yield* detectPackageManager(cwd);
+          progressAt(58, `Detected ${packageManager}`);
 
-      // If the chosen template imports zod on the host (the planner templates
-      // build their <plan> output schema with it) and the host doesn't already
-      // declare it, offer to install it. Without this, the very first
-      // `npx tsx .shipyard/main.ts` crashes with ERR_MODULE_NOT_FOUND.
-      if (getTemplateDependencies(selectedTemplate).includes("zod")) {
-        const alreadyInstalled = yield* hostHasDependency(cwd, "zod");
-        if (!alreadyInstalled) {
-          const installCmd = addDependencyCommand(packageManager, "zod");
-          const shouldInstall = yield* resolveConfirmFlag({
-            choice: installTemplateDepsChoice,
-            flag: "--install-template-deps",
-            promptMessage: `The ${selectedTemplate} template needs a schema validator. Install zod now (\`${installCmd}\`)?`,
-            cancelMessage: "Install-template-deps selection cancelled.",
-          });
-          if (shouldInstall) {
-            const installed = yield* Effect.sync(() => {
-              try {
-                execSync(installCmd, { cwd, stdio: "ignore" });
-                return true;
-              } catch {
-                return false;
-              }
-            });
-            yield* installed
-              ? d.status(`Installed zod with ${packageManager}.`, "success")
-              : d.status(
-                  `Couldn't install zod automatically. Run \`${installCmd}\` before running the agent.`,
-                  "warn",
-                );
-          }
-        }
-      }
-
-      const providerLabel = selectedSandboxProvider.label;
-      const shouldBuild = yield* resolveConfirmFlag({
-        choice: buildImageChoice,
-        flag: "--build-image",
-        promptMessage: `Build the default ${providerLabel} image now?`,
-        cancelMessage: "Build-image selection cancelled.",
-      });
-
-      if (shouldBuild) {
-        const containerfileDir = join(cwd, CONFIG_DIR);
-        yield* d.spinner(
-          `Building ${providerLabel} image '${imageName}'...`,
-          buildImage(imageName, containerfileDir, {
-            buildArgs: defaultUidBuildArgs(),
-          }),
-        );
-        yield* d.status("Image built successfully.", "success");
-      } else {
-        yield* d.status(
-          `Run \`${CLI_NAME} ${selectedSandboxProvider.cliNamespace} build-image\` to build the ${providerLabel} image later.`,
-          "info",
-        );
-      }
-
-      const runnerInit = yield* Effect.tryPromise({
-        try: () =>
-          initializeRepositoryRunner({
-            interactive: isInteractive,
-            requested:
-              installRunnerChoice._tag === "Some"
-                ? installRunnerChoice.value
-                : undefined,
-            confirm: async ({ message, initialValue }) => {
-              const confirmed = await clack.confirm({ message, initialValue });
-              if (clack.isCancel(confirmed)) {
-                throw new InitError({
-                  message:
-                    "Repository-runner installation selection cancelled.",
+          // If the chosen template imports zod on the host (the planner templates
+          // build their <plan> output schema with it) and the host doesn't already
+          // declare it, offer to install it. Without this, the very first
+          // `npx tsx .shipyard/main.ts` crashes with ERR_MODULE_NOT_FOUND.
+          if (getTemplateDependencies(selectedTemplate).includes("zod")) {
+            const alreadyInstalled = yield* hostHasDependency(cwd, "zod");
+            if (!alreadyInstalled) {
+              const installCmd = addDependencyCommand(packageManager, "zod");
+              const shouldInstall = yield* resolveConfirmFlag({
+                choice: installTemplateDepsChoice,
+                flag: "--install-template-deps",
+                promptMessage: `The ${selectedTemplate} template needs a schema validator. Install zod now (\`${installCmd}\`)?`,
+                cancelMessage: "Install-template-deps selection cancelled.",
+              });
+              progressAt(
+                60,
+                shouldInstall
+                  ? "Installing template dependency"
+                  : "Skipping zod installation",
+              );
+              if (shouldInstall) {
+                progressAt(62, `Installing zod with ${packageManager}`);
+                const installed = yield* Effect.sync(() => {
+                  try {
+                    execSync(installCmd, { cwd, stdio: "ignore" });
+                    return true;
+                  } catch {
+                    return false;
+                  }
                 });
+                progressAt(64, "Template dependency setup complete");
+                yield* installed
+                  ? statusWithProgress(
+                      `Installed zod with ${packageManager}.`,
+                      "success",
+                    )
+                  : statusWithProgress(
+                      `Couldn't install zod automatically. Run \`${installCmd}\` before running the agent.`,
+                      "warn",
+                    );
               }
-              return confirmed === true;
-            },
-            install: () =>
+            }
+          }
+          progressAt(66, "Template dependencies ready");
+
+          const providerLabel = selectedSandboxProvider.label;
+          const containerfileDir = join(cwd, CONFIG_DIR);
+          progressAt(68, `Building ${providerLabel} image '${imageName}'`);
+          yield* buildImage(imageName, containerfileDir, {
+            buildArgs: defaultUidBuildArgs(),
+          });
+          progressAt(78, "Docker image built");
+          yield* statusWithProgress("Image built successfully.", "success");
+
+          progressAt(78, "Installing repository runner");
+          const runner = yield* Effect.tryPromise({
+            try: () =>
               installRepositoryRunnerWithReplacement({
                 repoDir: cwd,
                 interactive: isInteractive,
                 confirmReplacement: async (conflict) => {
-                  const confirmed = await clack.confirm({
-                    message: conflict.confirmationMessage,
-                    initialValue: false,
-                  });
+                  const confirmed = await whilePrompt(() =>
+                    clack.confirm({
+                      message: conflict.confirmationMessage,
+                      initialValue: false,
+                    }),
+                  );
                   return !clack.isCancel(confirmed) && confirmed === true;
                 },
                 install: () =>
-                  runEffectPromise(
-                    d.progress("Installing repository runner", (report) =>
-                      Effect.tryPromise({
-                        try: () =>
-                          installRepositoryRunner({
-                            repoDir: cwd,
-                            onProgress: report,
-                          }),
-                        catch: (error) =>
-                          error instanceof RunnerInstallError
-                            ? error
-                            : new InitError({
-                                message: `Repository runner installation failed: ${error instanceof Error ? error.message : String(error)}`,
-                              }),
-                      }),
-                    ),
-                  ),
+                  installRepositoryRunner({
+                    repoDir: cwd,
+                    onProgress: (update) => progressRange(78, 94, update),
+                  }),
               }),
-          }),
-        catch: (error) =>
-          error instanceof InitError
-            ? error
-            : new InitError({
-                message: `Repository-runner setup failed: ${error instanceof Error ? error.message : String(error)}`,
-              }),
-      });
+            catch: (error) =>
+              error instanceof InitError
+                ? error
+                : new InitError({
+                    message: `Repository runner installation failed: ${error instanceof Error ? error.message : String(error)}. Init is incomplete. Fix the issue and retry with \`npx ${CLI_NAME} runner install\`.`,
+                  }),
+          });
+          progressAt(94, "Repository runner installed");
+          yield* statusWithProgress(
+            `Installed ${runner.name} for ${runner.repository}.`,
+            "success",
+          );
 
-      if (runnerInit.status === "installed") {
-        yield* d.status(
-          `Installed ${runnerInit.result.name} for ${runnerInit.result.repository}.`,
-          "success",
-        );
-        yield* d.text("Repository runner next steps:");
-        for (const [index, line] of repositoryRunnerNextSteps().entries()) {
-          yield* d.text(styleText("dim", `${index + 1}. ${line}`));
-        }
-      } else if (runnerInit.status === "failed") {
-        yield* d.status(
-          `Shipyard scaffolding is ready, but repository runner installation failed: ${runnerInit.message}`,
-          "warn",
-        );
-        yield* d.status(
-          `Retry from this repository with \`npx ${CLI_NAME} runner install\`.`,
-          "warn",
-        );
+          let shouldCommitSetup =
+            commitSetupChoice._tag === "Some" && commitSetupChoice.value;
+          if (commitSetupChoice._tag === "None" && isInteractive) {
+            const confirmed = yield* Effect.promise(() =>
+              whilePrompt(() =>
+                clack.confirm({
+                  message:
+                    "Commit .shipyard/ and any generated runner workflow, then push this branch to origin? Sandboxes need the setup committed. The push also sends any local commits not already on origin.",
+                  initialValue: true,
+                }),
+              ),
+            );
+            if (clack.isCancel(confirmed)) {
+              yield* Effect.fail(
+                new InitError({
+                  message: "Shipyard setup commit cancelled.",
+                }),
+              );
+            }
+            shouldCommitSetup = confirmed === true;
+          }
+          progressAt(
+            96,
+            shouldCommitSetup
+              ? "Committing and pushing Shipyard setup"
+              : "Setup commit skipped",
+          );
+
+          if (shouldCommitSetup) {
+            const publishResult = yield* Effect.sync(() => {
+              try {
+                return {
+                  status: "committed" as const,
+                  result: commitAndPushInitSetup(cwd),
+                };
+              } catch (error) {
+                return {
+                  status: "failed" as const,
+                  message:
+                    error instanceof Error ? error.message : String(error),
+                };
+              }
+            });
+            progressAt(99, "Shipyard setup commit finished");
+            if (publishResult.status === "failed") {
+              yield* statusWithProgress(
+                `Could not commit the Shipyard setup: ${publishResult.message}`,
+                "warn",
+              );
+              yield* statusWithProgress(
+                `Commit \`${CONFIG_DIR}/\` before running Shipyard.`,
+                "warn",
+              );
+            } else if (publishResult.result.pushError) {
+              yield* statusWithProgress(
+                `Committed ${publishResult.result.commit}, but could not push to origin/${publishResult.result.branch}: ${publishResult.result.pushError}`,
+                "warn",
+              );
+              yield* statusWithProgress(
+                `Push it later with \`git push origin ${publishResult.result.branch}\`.`,
+                "warn",
+              );
+            } else {
+              yield* statusWithProgress(
+                `Committed ${publishResult.result.commit} and pushed origin/${publishResult.result.branch}.`,
+                "success",
+              );
+            }
+          } else {
+            yield* statusWithProgress(
+              `Commit \`${CONFIG_DIR}/\` before running Shipyard. Sandboxes do not receive uncommitted setup files.`,
+              "warn",
+            );
+            yield* statusWithProgress(
+              "Push the runner wake workflow to the repository's default branch before starting the runner.",
+              "warn",
+            );
+          }
+
+          progressAt(100, "Initialization complete");
+        }),
+      );
+
+      yield* d.text("Repository runner next steps:");
+      for (const [index, line] of repositoryRunnerNextSteps().entries()) {
+        yield* d.text(styleText("dim", `${index + 1}. ${line}`));
       }
 
       yield* d.status("Init complete!", "success");
@@ -851,6 +912,148 @@ const initCommand = Command.make(
       for (const [i, line] of nextSteps.entries()) {
         yield* d.text(i === 0 ? line : styleText("dim", line));
       }
+    }),
+);
+
+// --- Uninstall command ---
+
+const uninstallCommand = Command.make(
+  "uninstall",
+  { yes: uninstallYesOption, force: uninstallForceOption },
+  ({ yes, force }) =>
+    Effect.gen(function* () {
+      const d = yield* Display;
+      const repoDir = process.cwd();
+      const configDirExists = yield* Effect.tryPromise({
+        try: () => inspectShipyardConfigDirectory(repoDir),
+        catch: (error) =>
+          new InitError({
+            message: `Could not inspect Shipyard configuration: ${error instanceof Error ? error.message : String(error)}`,
+          }),
+      });
+      const runnerDir = join(repoDir, CONFIG_DIR, RUNNER_DIR);
+      const runnerInstalled = configDirExists && existsSync(runnerDir);
+      const workflowExists = existsSync(
+        join(repoDir, REPOSITORY_RUNNER_WORKFLOW_PATH),
+      );
+      const packageInstalled = yield* hostHasDependency(
+        repoDir,
+        SHIPYARD_PACKAGE_NAME,
+      );
+
+      if (
+        !configDirExists &&
+        !workflowExists &&
+        !runnerInstalled &&
+        !packageInstalled
+      ) {
+        yield* d.status(
+          "No Shipyard installation found in this repository.",
+          "info",
+        );
+        return;
+      }
+
+      if (!yes && process.stdin.isTTY !== true) {
+        return yield* Effect.fail(
+          new InitError({
+            message:
+              "Shipyard uninstall needs confirmation. Run it in a terminal or pass --yes.",
+          }),
+        );
+      }
+
+      if (!yes) {
+        const actions = [
+          runnerInstalled
+            ? "unregister and remove the repository runner"
+            : null,
+          configDirExists
+            ? `remove all of ${CONFIG_DIR}/, including .env and runtime data`
+            : null,
+          workflowExists ? "remove the generated runner wake workflow" : null,
+          packageInstalled
+            ? `remove ${SHIPYARD_PACKAGE_NAME} from package.json`
+            : null,
+        ].filter((action): action is string => action !== null);
+        const confirmation = yield* Effect.tryPromise({
+          try: () =>
+            clack.confirm({
+              message: `Uninstall Shipyard from ${repoDir}? This will ${actions.join(", ")}. It leaves GitHub issues and labels unchanged.`,
+              initialValue: false,
+            }),
+          catch: (error) =>
+            new InitError({
+              message: `Could not confirm Shipyard uninstall: ${error instanceof Error ? error.message : String(error)}`,
+            }),
+        });
+        if (clack.isCancel(confirmation) || confirmation !== true) {
+          yield* d.status("Shipyard uninstall cancelled.", "info");
+          return;
+        }
+      }
+
+      if (runnerInstalled) {
+        const result = yield* Effect.tryPromise({
+          try: () => removeRepositoryRunner({ repoDir, force }),
+          catch: (error) =>
+            error instanceof RunnerLifecycleError
+              ? new InitError({ message: error.message })
+              : new InitError({
+                  message: `Repository runner removal failed: ${error instanceof Error ? error.message : String(error)}`,
+                }),
+        });
+        yield* d.status("Repository runner removed.", "success");
+        if (result.manualCleanup) {
+          yield* d.status(result.manualCleanup, "warn");
+        }
+      }
+
+      const files = yield* Effect.tryPromise({
+        try: () => removeShipyardRepositoryFiles({ repoDir }),
+        catch: (error) =>
+          new InitError({
+            message: `Could not remove Shipyard repository files: ${error instanceof Error ? error.message : String(error)}`,
+          }),
+      });
+      if (files.configDirectoryRemoved) {
+        yield* d.status(`Removed all of ${CONFIG_DIR}/.`, "success");
+      }
+      if (files.workflowRemoved) {
+        yield* d.status(
+          `Removed ${REPOSITORY_RUNNER_WORKFLOW_PATH}.`,
+          "success",
+        );
+        yield* d.status(
+          "Commit and push the workflow deletion to disable it on GitHub.",
+          "info",
+        );
+      } else if (files.workflowPreserved) {
+        yield* d.status(
+          `Preserved ${REPOSITORY_RUNNER_WORKFLOW_PATH} because it is customized or linked.`,
+          "warn",
+        );
+      }
+      if (packageInstalled) {
+        const packageManager = yield* detectPackageManager(repoDir);
+        const command = removeDependencyCommand(
+          packageManager,
+          SHIPYARD_PACKAGE_NAME,
+        );
+        yield* Effect.try({
+          try: () => execSync(command, { cwd: repoDir, stdio: "inherit" }),
+          catch: (error) =>
+            new InitError({
+              message: `Could not remove ${SHIPYARD_PACKAGE_NAME}. Rerun the uninstall after resolving the package-manager error: ${error instanceof Error ? error.message : String(error)}`,
+            }),
+        });
+        yield* d.status(
+          `Removed ${SHIPYARD_PACKAGE_NAME} with ${packageManager}.`,
+          "success",
+        );
+      }
+
+      yield* d.status("Shipyard uninstalled from this repository.", "success");
     }),
 );
 
@@ -873,7 +1076,7 @@ const buildImageCommand = Command.make(
     Effect.gen(function* () {
       const d = yield* Display;
       const cwd = process.cwd();
-      yield* requireConfigDir(cwd);
+      yield* requireCanonicalConfigDir(cwd);
 
       const imageName = resolveImageName(imageNameFlag, cwd);
 
@@ -940,6 +1143,7 @@ const rootCommand = Command.make(CLI_NAME, {}, () =>
 export const shipyard = rootCommand.pipe(
   Command.withSubcommands([
     initCommand,
+    uninstallCommand,
     runCommand,
     dockerCommand,
     runnerCommand,
