@@ -117,6 +117,16 @@ const LOCKFILES: ReadonlyArray<readonly [string, PackageManager]> = [
   ["package-lock.json", "npm"],
 ];
 
+const DEPENDENCY_COMMANDS: Record<
+  PackageManager,
+  { readonly add: string; readonly remove: string }
+> = {
+  npm: { add: "install", remove: "uninstall" },
+  pnpm: { add: "add", remove: "remove" },
+  yarn: { add: "add", remove: "remove" },
+  bun: { add: "add", remove: "remove" },
+};
+
 /**
  * Detect the host project's package manager. An explicit corepack-style
  * `packageManager` field in package.json wins; otherwise the first matching
@@ -163,18 +173,15 @@ export const detectPackageManager = (
 export const addDependencyCommand = (
   packageManager: PackageManager,
   pkg: string,
-): string => {
-  switch (packageManager) {
-    case "pnpm":
-      return `pnpm add ${pkg}`;
-    case "yarn":
-      return `yarn add ${pkg}`;
-    case "bun":
-      return `bun add ${pkg}`;
-    case "npm":
-      return `npm install ${pkg}`;
-  }
-};
+): string =>
+  `${packageManager} ${DEPENDENCY_COMMANDS[packageManager].add} ${pkg}`;
+
+/** Build the command that removes a dependency with the given package manager. */
+export const removeDependencyCommand = (
+  packageManager: PackageManager,
+  pkg: string,
+): string =>
+  `${packageManager} ${DEPENDENCY_COMMANDS[packageManager].remove} ${pkg}`;
 
 /**
  * Whether the host package.json already declares `pkg` in any of its dependency

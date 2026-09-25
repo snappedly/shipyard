@@ -576,6 +576,23 @@ export const removeRepositoryRunner = async (
       `No repository runner is installed at ${runnerDir}.`,
     );
   }
+  try {
+    await assertProtectedDirectoryIdentities(
+      runnerDir,
+      adapters.inspectDirectory,
+    );
+  } catch (error) {
+    if (!options.force) {
+      throw lifecycleFailure("Validating protected runner directory", error);
+    }
+    await adapters.remove(runnerDir);
+    return {
+      removed: true,
+      forced: true,
+      manualCleanup:
+        "Check GitHub Settings > Actions > Runners and manually remove any orphan repository runner registration.",
+    };
+  }
   let metadata: RunnerInstallMetadata;
   try {
     metadata = await requireInstallMetadata(runnerDir, adapters);
