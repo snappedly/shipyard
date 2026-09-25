@@ -42,11 +42,25 @@ const commitFile = async (
 const cliPath = join(import.meta.dirname, "..", "dist", "main.js");
 const cliTestTimeoutMs = 15_000;
 
-const runCli = (args: string, cwd: string, env?: NodeJS.ProcessEnv) =>
-  execAsync(`node ${cliPath} ${args}`, {
-    cwd,
-    env: { ...process.env, ...env },
-  });
+const runCli = async (args: string, cwd: string, env?: NodeJS.ProcessEnv) => {
+  const runEnv = { ...process.env, ...env };
+  if (
+    (args === "init" || args.startsWith("init ")) &&
+    !args.includes("--help")
+  ) {
+    const binDir = join(cwd, ".shipyard-cli-test-bin");
+    await mkdir(binDir, { recursive: true });
+    const dockerArgsFile = join(cwd, ".shipyard-cli-docker-args");
+    await writeFile(
+      join(binDir, "docker"),
+      '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$SHIPYARD_TEST_DOCKER_ARGS"\n',
+      { mode: 0o755 },
+    );
+    runEnv.PATH = `${binDir}:${runEnv.PATH ?? ""}`;
+    runEnv.SHIPYARD_TEST_DOCKER_ARGS = dockerArgsFile;
+  }
+  return execAsync(`node ${cliPath} ${args}`, { cwd, env: runEnv });
+};
 
 // CLI validation checks do not need a packaged-process boundary. Keeping them
 // in-process avoids a flaky child-process wait under CI.
@@ -726,9 +740,24 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     }
   });
 
-  it("init --help exposes --issue-tracker flag", async () => {
+  it("init --help omits fixed setup choices", async () => {
     const { stdout } = await runCli("init --help", process.cwd());
-    expect(stdout).toContain("--issue-tracker");
+    expect(stdout).not.toContain("--issue-tracker");
+    expect(stdout).not.toContain("--build-image");
+    expect(stdout).not.toContain("--install-runner");
+  });
+
+  it.each([
+    ["--issue-tracker", "github-issues"],
+    ["--build-image", "false"],
+    ["--install-runner", "false"],
+  ])("init rejects the removed %s option", async (flag, value) => {
+    const result = await runCliInProcess(["init", flag!, value!]);
+
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
+      expect(Cause.pretty(result.cause)).toContain(flag);
+    }
   });
 
   it("init --help does not expose the obsolete --create-label flag", async () => {
@@ -736,59 +765,109 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     expect(stdout).not.toContain("--create-label");
   });
 
-  it("init --help exposes --build-image flag", async () => {
-    const { stdout } = await runCli("init --help", process.cwd());
-    expect(stdout).toContain("--build-image");
-  });
-
   it("init --help exposes --install-template-deps flag", async () => {
     const { stdout } = await runCli("init --help", process.cwd());
     expect(stdout).toContain("--install-template-deps");
   });
 
-  it("init --help exposes the optional repository runner choice", async () => {
-    const { stdout } = await runCli("init --help", process.cwd());
-    expect(stdout).toContain("--install-runner");
-  });
-
-  it("init --issue-tracker nonexistent produces error listing available trackers", async () => {
-    const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
-    await initRepo(hostDir);
-
-    try {
-      await runCli("init --issue-tracker nonexistent", hostDir);
-      expect.fail("Expected command to fail");
-    } catch (err: unknown) {
-      const { stdout, stderr } = err as { stdout: string; stderr: string };
-      const output = stdout + stderr;
-      expect(output).toContain("nonexistent");
-      expect(output).toContain("github-issues");
-      expect(output).not.toContain("beads");
-      expect(output).not.toContain("custom");
-    }
-  });
-
-  it("init with full flag set scaffolds non-interactively in a non-TTY env", async () => {
+  it("fails init when automatic runner installation fails", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
     await initRepo(hostDir);
     await commitFile(hostDir, "hello.txt", "hello", "initial commit");
 
-    // vitest workers have no TTY, so this confirms the fully-non-interactive
-    // path runs to completion without clack crashing on a missing prompt.
-    const { stdout } = await runCli(
-      "init --agent claude-code --template simple-loop --sandbox docker --issue-tracker github-issues --build-image false",
+    // This repo has no origin remote or GitHub runner setup, so init must stop
+    // after scaffolding instead of reporting completion.
+    const failure = await runCli(
+      "init --agent claude-code --template simple-loop",
       hostDir,
-    );
+    ).catch((error: Error & { stdout: string; stderr: string }) => error);
 
-    expect(stdout).toContain("Init complete");
-    expect(stdout).toContain("npx shipyard run");
+    expect(failure).toBeInstanceOf(Error);
+    const output = failure.stdout + failure.stderr;
+    expect(output).toContain("Repository runner installation failed");
+    expect(output).toContain("Init is incomplete");
+    expect(output).not.toContain("Init complete");
+    expect(
+      await readFile(join(hostDir, ".shipyard-cli-docker-args"), "utf8"),
+    ).toContain("build -t");
     const entries = await readdir(join(hostDir, ".shipyard"));
     expect(entries).toContain("Dockerfile");
     expect(entries).toContain("prompt.md");
-    expect(entries).not.toContain("runner");
+    expect(
+      await readFile(join(hostDir, ".shipyard", "Dockerfile"), "utf8"),
+    ).toContain("GitHub CLI");
+    expect(
+      await readFile(join(hostDir, ".shipyard", ".env.example"), "utf8"),
+    ).toContain("GH_TOKEN=");
     expect(
       await readdir(join(hostDir, ".github", "workflows")).catch(() => []),
     ).not.toContain("shipyard-wake.yml");
+  });
+
+  it("init advances one progress bar across setup stages", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "cli-init-progress-"));
+    await initRepo(hostDir);
+    const binDir = join(hostDir, "bin");
+    await mkdir(binDir);
+    await writeFile(join(binDir, "docker"), "#!/bin/sh\nexit 0\n", {
+      mode: 0o755,
+    });
+    await writeFile(join(binDir, "gh"), "#!/bin/sh\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const displayRef = Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([]);
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${previousPath ?? ""}`;
+    let result: Awaited<ReturnType<typeof runCliInProcessAt>>;
+    try {
+      result = await runCliInProcessAt(
+        [
+          "init",
+          "--agent",
+          "claude-code",
+          "--template",
+          "simple-loop",
+          "--commit-setup",
+          "false",
+        ],
+        hostDir,
+        displayRef,
+      );
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+    }
+
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
+      expect(Cause.pretty(result.cause)).toContain(
+        "Repository runner installation failed",
+      );
+    }
+    const entries = await Ref.get(displayRef).pipe(Effect.runPromise);
+    const progressEntries = entries.filter(
+      (entry): entry is Extract<DisplayEntry, { _tag: "progress" }> =>
+        entry._tag === "progress",
+    );
+    expect(progressEntries).toHaveLength(1);
+    const updates = progressEntries[0]!.updates;
+    expect(updates[0]).toMatchObject({
+      current: 6,
+      total: 100,
+      message: "Selected Claude Code",
+    });
+    expect(updates.at(-1)!.current).toBeLessThan(100);
+    expect(updates.at(-1)!.message).toBe("Installing repository runner");
+    expect(updates.map(({ current }) => current)).toEqual(
+      [...updates.map(({ current }) => current)].sort((a, b) => a - b),
+    );
+    expect(updates.map(({ message }) => message)).toContain(
+      "Selected simple-loop template",
+    );
+    expect(updates.map(({ message }) => message)).toContain(
+      "Docker image built",
+    );
   });
 
   it("init requires --codex-auth for Codex in a non-TTY env", async () => {
@@ -796,10 +875,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     await initRepo(hostDir);
 
     try {
-      await runCli(
-        "init --agent codex --template simple-loop --sandbox docker --issue-tracker github-issues --build-image false",
-        hostDir,
-      );
+      await runCli("init --agent codex --template simple-loop", hostDir);
       expect.fail("Expected command to fail");
     } catch (err: unknown) {
       const { stdout, stderr } = err as { stdout: string; stderr: string };
@@ -807,7 +883,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     }
   });
 
-  it("init --codex-auth chatgpt scaffolds the subscription auth mount", async () => {
+  it("init scaffolds Codex ChatGPT auth before reporting runner failure", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
     await initRepo(hostDir);
     await commitFile(hostDir, "hello.txt", "hello", "initial commit");
@@ -815,10 +891,14 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     await mkdir(join(isolatedHome, ".codex"), { recursive: true });
     await writeFile(join(isolatedHome, ".codex", "auth.json"), "{}\n");
 
-    await runCli(
-      "init --agent codex --codex-auth chatgpt --template simple-loop --sandbox docker --issue-tracker github-issues --build-image false",
+    const failure = await runCli(
+      "init --agent codex --codex-auth chatgpt --template simple-loop",
       hostDir,
       { HOME: isolatedHome },
+    ).catch((error: Error & { stdout: string; stderr: string }) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure.stdout + failure.stderr).toContain(
+      "Repository runner installation failed",
     );
 
     const main = await readFile(
@@ -843,7 +923,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     let error: unknown;
     try {
       await runCli(
-        "init --agent codex --codex-auth chatgpt --template simple-loop --sandbox docker --issue-tracker github-issues --build-image false",
+        "init --agent codex --codex-auth chatgpt --template simple-loop",
         hostDir,
         { HOME: isolatedHome },
       );
@@ -887,16 +967,20 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
       { mode: 0o755 },
     );
 
-    const { stdout } = await runCli(
-      "init --agent claude-code --template simple-loop --sandbox docker --issue-tracker github-issues --build-image false",
+    const failure = await runCli(
+      "init --agent claude-code --template simple-loop",
       hostDir,
       {
         PATH: `${binDir}:${process.env.PATH ?? ""}`,
         GH_ARGS_FILE: ghArgsFile,
       },
-    );
+    ).catch((error: Error & { stdout: string; stderr: string }) => error);
 
-    expect(stdout).toContain("Init complete");
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure.stdout + failure.stderr).toContain(
+      "Repository runner installation failed",
+    );
+    expect(failure.stdout + failure.stderr).not.toContain("Init complete");
     const commands = await readFile(ghArgsFile, "utf8");
     for (const label of [
       "shipyard",
@@ -925,12 +1009,17 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
       mode: 0o755,
     });
 
-    const { stdout } = await runCli(
-      "init --agent claude-code --template simple-loop --sandbox docker --issue-tracker github-issues --build-image false",
+    const failure = await runCli(
+      "init --agent claude-code --template simple-loop",
       hostDir,
-      { PATH: `${binDir}:${process.env.PATH ?? ""}` },
+      { PATH: `${binDir}:${process.env.PATH ?? ""}`, GH_REPO: "" },
+    ).catch((error: Error & { stdout: string; stderr: string }) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure.stdout + failure.stderr).toContain(
+      "Repository runner installation failed",
     );
-    expect(stdout).toContain("Init complete");
+    expect(failure.stdout + failure.stderr).not.toContain("Init complete");
+    expect(await readdir(join(hostDir, ".shipyard"))).toContain("Dockerfile");
   });
 
   it("init reports label provisioning failure for a connected repository", async () => {
@@ -947,7 +1036,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     });
 
     const failure = await runCli(
-      "init --agent claude-code --template simple-loop --sandbox docker --issue-tracker github-issues --build-image false",
+      "init --agent claude-code --template simple-loop",
       hostDir,
       { PATH: `${binDir}:${process.env.PATH ?? ""}` },
     ).catch((error: Error & { stdout: string; stderr: string }) => error);

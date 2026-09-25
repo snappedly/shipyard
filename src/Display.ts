@@ -3,7 +3,7 @@ import { open } from "node:fs/promises";
 import * as clack from "@clack/prompts";
 import { FileSystem } from "@effect/platform";
 import { dirname } from "node:path";
-import { Context, Effect, Layer, Ref } from "effect";
+import { Context, Effect, Exit, Layer, Ref } from "effect";
 import { styleText } from "node:util";
 
 export type Severity = "info" | "success" | "warn" | "error";
@@ -12,6 +12,12 @@ export interface DisplayProgressUpdate {
   readonly current: number;
   readonly total: number;
   readonly message: string;
+}
+
+export interface DisplayProgressReporter {
+  (update: DisplayProgressUpdate): void;
+  pause: () => void;
+  resume: () => void;
 }
 
 export type DisplayEntry =
@@ -57,9 +63,7 @@ export interface DisplayService {
 
   readonly progress: <A, E, R>(
     title: string,
-    effect: (
-      report: (update: DisplayProgressUpdate) => void,
-    ) => Effect.Effect<A, E, R>,
+    effect: (report: DisplayProgressReporter) => Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E, R>;
 
   readonly summary: (
@@ -119,12 +123,19 @@ export const SilentDisplay = {
       progress: (title, effect) =>
         Effect.gen(function* () {
           const updates: DisplayProgressUpdate[] = [];
-          const result = yield* effect((update) => updates.push(update));
+          const report: DisplayProgressReporter = Object.assign(
+            (update: DisplayProgressUpdate) => {
+              updates.push(update);
+            },
+            { pause: () => {}, resume: () => {} },
+          );
+          const exit = yield* Effect.exit(effect(report));
           yield* Ref.update(ref, (entries) => [
             ...entries,
             { _tag: "progress" as const, title, updates: [...updates] },
           ]);
-          return result;
+          if (Exit.isFailure(exit)) return yield* Effect.failCause(exit.cause);
+          return exit.value;
         }),
 
       summary: (title, rows) =>
@@ -260,7 +271,13 @@ export const FileDisplay = {
               yield* appendToLog(`${title}...`);
               const start = Date.now();
               const updates: DisplayProgressUpdate[] = [];
-              const result = yield* effect((update) => updates.push(update));
+              const report: DisplayProgressReporter = Object.assign(
+                (update: DisplayProgressUpdate) => {
+                  updates.push(update);
+                },
+                { pause: () => {}, resume: () => {} },
+              );
+              const result = yield* effect(report);
               for (const update of updates) {
                 yield* appendToLog(
                   `  ${update.message} (${update.current}/${update.total})`,
@@ -351,26 +368,40 @@ export const ClackDisplay = {
     progress: (title, effect) =>
       Effect.acquireUseRelease(
         Effect.sync(() => {
-          const progress = clack.progress({ max: 100 });
+          const progress = clack.progress({ max: 100, withGuide: false });
           let percent = 0;
+          let currentMessage = title;
+          let paused = false;
           progress.start(title);
-          const report = (update: DisplayProgressUpdate): void => {
+          const report = ((update: DisplayProgressUpdate): void => {
             const total = Math.max(1, update.total);
             const current = Math.min(total, Math.max(0, update.current));
             const nextPercent = Math.round((current / total) * 100);
             const message = `${update.message} (${current}/${total})`;
+            currentMessage = message;
             if (nextPercent > percent) {
               progress.advance(nextPercent - percent, message);
             } else {
               progress.message(message);
             }
             percent = nextPercent;
+          }) as DisplayProgressReporter;
+          report.pause = () => {
+            if (paused) return;
+            progress.clear();
+            paused = true;
+          };
+          report.resume = () => {
+            if (!paused) return;
+            progress.start(currentMessage);
+            paused = false;
           };
           return { progress, report };
         }),
         ({ report }) => effect(report),
-        ({ progress }, exit) =>
+        ({ progress, report }, exit) =>
           Effect.sync(() => {
+            report.resume();
             if (exit._tag === "Success") {
               progress.stop(`${title} complete`);
             } else {

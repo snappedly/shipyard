@@ -1,6 +1,6 @@
 # Adding an issue tracker
 
-This document is for contributors adding support for a new **issue tracker** (e.g. GitHub Issues, Jira, GitLab) to `shipyard init`. It covers:
+This document is for contributors evaluating support for an additional **issue tracker** (e.g. Jira or GitLab) in `shipyard init`. GitHub Issues is currently the only supported tracker and init configures it automatically. It covers:
 
 1. [Evaluating a new issue tracker](#evaluating-a-new-issue-tracker) — the questionnaire used to decide whether an issue tracker can be supported.
 2. [The `IssueTrackerEntry` shape](#the-issuetrackerentry-shape) — what you fill in.
@@ -11,7 +11,7 @@ For terminology (**issue tracker**, **task**, **template argument**, etc.), see 
 
 ## What an issue tracker integration actually is
 
-Shipyard does not embed any issue tracker itself. An issue-tracker entry is a **scaffold template**: when a user picks it during `shipyard init`, we substitute three CLI commands (`LIST_TASKS_COMMAND`, `VIEW_TASK_COMMAND`, `CLOSE_TASK_COMMAND`) into the generated prompt files, and we drop a Dockerfile snippet that installs the relevant CLI into the **sandbox**.
+Shipyard does not embed an issue tracker. An issue-tracker entry is a **scaffold template** that supplies three CLI commands (`LIST_TASKS_COMMAND`, `VIEW_TASK_COMMAND`, and `CLOSE_TASK_COMMAND`) and a Dockerfile snippet that installs its CLI in the **sandbox**. Init uses the GitHub Issues entry automatically. Adding another entry requires an explicit product decision about multi-tracker support.
 
 The generated project then runs those commands itself — Shipyard is not in the loop at runtime.
 
@@ -43,7 +43,7 @@ Before implementing, confirm the issue tracker satisfies the must-haves below. I
 
 ### Scaffold prerequisites
 
-For `shipyard init` to offer the issue tracker:
+For a future integration to be supported by `shipyard init`:
 
 - A Dockerfile snippet that installs the CLI as root (before any `USER` switch in the agent provider's Dockerfile).
 - A token env var to surface in `.env.example`, or an empty string if no auth is required.

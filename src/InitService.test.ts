@@ -398,7 +398,7 @@ describe("InitService scaffold", () => {
         "2. If using a model subscription, sign in. For Codex:",
         `   codex --config 'cli_auth_credentials_store="file"' login`,
         "   test -f ~/.codex/auth.json",
-        "3. Start with `npx shipyard runner start` (if installed) or `npx shipyard run`",
+        "3. If the runner installed successfully, start it with `npx shipyard runner start`; otherwise run `npx shipyard run`.",
       ]);
     });
   });
