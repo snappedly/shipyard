@@ -42,12 +42,7 @@ npx shipyard init
 During `shipyard init`, choose your agent and template, then follow the
 authentication prompts. GitHub Issues is the built-in tracker. Init builds the
 Docker image and automatically installs the
-[repository runner](docs/content/docs/repository-runner.mdx) on supported
-Apple Silicon Macs. Init offers to commit and push the generated Shipyard setup
-to the current branch. The offer stages `.shipyard/` and
-`.github/workflows/shipyard-wake.yml`. It leaves
-`.shipyard/.env` untracked. Non-interactive init skips the commit offer; pass
-`--commit-setup true` to commit and push the generated files.
+[repository runner](docs/content/docs/repository-runner.mdx).
 
 On a local Mac, the repository runner automatically wakes Shipyard when you label an issue.
 It runs as long as its terminal stays open.
@@ -58,30 +53,25 @@ branch options.
 Fill in any credentials required in `.shipyard/.env`.
 `GH_TOKEN` in `.shipyard/.env` to a GH token with Contents, Issues, and Pull
 Requests read/write access and Metadata read access.
+
 Set `SHIPYARD_ROUTINE_MODEL` and `SHIPYARD_STRONG_MODEL` in `.shipyard/.env`
-for the roles your template uses. `simple-loop` uses routine for triage and
+for the roles your template uses. 
+
+`simple-loop` uses routine for triage and
 implementation. `sequential-reviewer` also uses strong for issue reviews.
 Parallel planner templates use routine for ticket work and strong for planning,
 conflict resolution, and integration. The review-enabled planner also uses
 strong for ticket and final specification reviews. See
 [agent setup](docs/content/docs/agents.mdx).
 
-If you decline the commit, commit `.shipyard/` before running Shipyard. Docker
-sandboxes read setup files from Git history. Keep `.shipyard/.env` untracked.
-Init completes only after the repository runner installs. If that step fails,
-init exits with the error and keeps the generated configuration and image. Fix
-the issue and retry with `npx shipyard runner install`; then commit and push
-`.shipyard/` and `.github/workflows/shipyard-wake.yml` before starting the
-runner. Runner installation currently requires Apple Silicon macOS.
+```sh
+npx shipyard runner start
+```
+
+To start Shipyard for a single run without the active runner, use: 
 
 ```sh
 npx shipyard run
-```
-
-Or for the automated runner:
-
-```sh
-npx shipyard runner start
 ```
 
 To remove Shipyard from the repository:
@@ -90,20 +80,14 @@ To remove Shipyard from the repository:
 npx shipyard uninstall
 ```
 
-Uninstall confirms before removing the repository runner, the entire
-`.shipyard/` folder (including `.env` and runtime data), the generated wake
-workflow, and the `@snappedly-tools/shipyard` dependency. It leaves GitHub issues
-and labels unchanged. Commit and push the workflow deletion to disable it on
-GitHub. Use `--yes` to confirm in a non-interactive shell.
-
 ## Turn GitHub issues into pull requests
 
 Then:
 
 1. Write an issue with a clear goal and add the `shipyard` and
    `ready-for-agent` labels.
-2. Make sure the runner is running, or start `npx shipyard run`. Shipyard checks the issue, implements it in Docker,
-   reviews the work, and opens a pull request.
+2. Run Shipyard to check for the issue, implement it in Docker,
+   review the work, and open a pull request.
 3. Inspect the pull request and merge it when you are happy with the result.
 
 ## Choose a workflow
