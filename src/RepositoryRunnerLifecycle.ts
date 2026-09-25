@@ -43,7 +43,7 @@ export interface RunnerInstallMetadata {
   readonly version: string;
 }
 
-interface RunnerControllerLock {
+export interface RunnerControllerLock {
   readonly schemaVersion: 1;
   readonly pid: number;
   readonly repository: string;
@@ -137,7 +137,7 @@ const defaultAdapters: RunnerLifecycleAdapters = {
     new Promise((resolve) => setTimeout(resolve, milliseconds)),
 };
 
-const lockOwnsProcess = async (
+export const lockOwnsProcess = async (
   lock: RunnerControllerLock | undefined,
   adapters: Pick<
     RunnerLifecycleAdapters,

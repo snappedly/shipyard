@@ -15,7 +15,11 @@ import {
   type WorkIdentity,
   type WorkflowPhase,
 } from "../contracts/index.js";
-import { sameRevision } from "../shared.js";
+import {
+  isBlockingFinding,
+  sameRevision,
+  sameWorkIdentity,
+} from "../shared.js";
 import type {
   AcquireBranchLeaseInput,
   BranchLease,
@@ -109,12 +113,7 @@ const resultState = (result: PhaseResult): LifecycleState => {
         case "checking":
           return "reviewing";
         case "review":
-          return result.findings.some(
-            (finding) =>
-              finding.severity !== "info" &&
-              (finding.disposition === "open" ||
-                finding.disposition === "deferred"),
-          )
+          return result.findings.some(isBlockingFinding)
             ? "repairing"
             : "human-review";
         case "repair":
@@ -178,11 +177,6 @@ const eventKey = (input: WorkflowEventInput): WorkKey => ({
 
 const isAuthorized = (brief: WorkBrief, policy: RepositoryPolicy): boolean =>
   isAuthorizationAllowed(brief, policy);
-
-const sameIdentity = (left: WorkIdentity, right: WorkIdentity): boolean =>
-  left.repository === right.repository &&
-  left.itemId === right.itemId &&
-  left.kind === right.kind;
 
 const isSameEventRevision = (
   current: WorkflowJob,
@@ -953,7 +947,7 @@ export class WorkflowCoordinator {
       }
       if (
         assignment.phase !== result.phase ||
-        !sameIdentity(assignment.identity, result.identity) ||
+        !sameWorkIdentity(assignment.identity, result.identity) ||
         assignment.briefHash !== result.briefHash
       ) {
         throw new Error("Phase result does not match its assignment");
@@ -1379,7 +1373,7 @@ export class WorkflowCoordinator {
       }
       const brief = parseWorkBrief(input.brief);
       const policy = parseRepositoryPolicy(input.policy);
-      if (!sameIdentity(brief.identity, job.brief.identity)) {
+      if (!sameWorkIdentity(brief.identity, job.brief.identity)) {
         throw new Error("Repair brief does not match the workflow identity");
       }
       if (policy.repository !== job.key.repository) {

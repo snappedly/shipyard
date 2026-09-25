@@ -11,7 +11,11 @@ import {
   type WorkBrief,
 } from "../contracts/index.js";
 import type { WorkflowJob } from "../coordinator/index.js";
-import { sameRevision } from "../shared.js";
+import {
+  isBlockingFinding,
+  requiredCheckNames,
+  sameRevision,
+} from "../shared.js";
 
 export interface HandoffCandidate {
   readonly base: RevisionReference;
@@ -223,13 +227,6 @@ const isFreshTimestamp = (
   );
 };
 
-const requiredChecks = (policy: RepositoryPolicy): readonly string[] =>
-  policy.checks.filter((check) => check.required).map((check) => check.name);
-
-const blockingFinding = (finding: Finding): boolean =>
-  finding.severity !== "info" &&
-  (finding.disposition === "open" || finding.disposition === "deferred");
-
 const implementationEvidence = (
   job: WorkflowJob,
   candidate: HandoffCandidate,
@@ -257,7 +254,7 @@ const allRequiredChecksPassed = (
   },
 ): string[] => {
   const reasons: string[] = [];
-  for (const name of requiredChecks(policy)) {
+  for (const name of requiredCheckNames(policy)) {
     const named = checks.filter((candidate) => candidate.name === name);
     if (named.length === 0) {
       reasons.push(`Required check is missing: ${name}`);
@@ -349,7 +346,7 @@ const candidateReasons = (
       reasons.push(`Review axis is missing: ${axis}`);
   }
   for (const finding of review.findings) {
-    if (blockingFinding(finding)) {
+    if (isBlockingFinding(finding)) {
       reasons.push(`Blocking finding remains: ${finding.id}`);
     }
   }

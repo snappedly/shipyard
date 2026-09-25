@@ -38,21 +38,16 @@ describe("mergeProviderEnv", () => {
     expect(result).toEqual({ A: "agent", B: "sandbox", C: "3" });
   });
 
-  it("throws when agent and sandbox provider env have overlapping keys", () => {
+  it("names overlapping agent and sandbox env keys in the error", () => {
     expect(() =>
       mergeProviderEnv({
         resolvedEnv: {},
         agentProviderEnv: { SHARED: "from-agent" },
         sandboxProviderEnv: { SHARED: "from-sandbox" },
       }),
-    ).toThrow(/overlapping env/i);
-    expect(() =>
-      mergeProviderEnv({
-        resolvedEnv: {},
-        agentProviderEnv: { SHARED: "from-agent" },
-        sandboxProviderEnv: { SHARED: "from-sandbox" },
-      }),
-    ).toThrow("SHARED");
+    ).toThrow(
+      /overlapping env keys between agent provider and sandbox provider: SHARED/i,
+    );
   });
 
   it("allows same key in provider env and resolved env (override)", () => {

@@ -12,54 +12,9 @@ import { join } from "node:path";
 import { Effect } from "effect";
 import type { IsolatedSandboxHandle } from "./SandboxProvider.js";
 import { SyncError } from "./errors.js";
-import { execHostGit as execSafeHostGit } from "./hostGit.js";
 import { CONFIG_DIR, RUNNER_DIR, RUNTIME_NAMESPACE } from "./runtimeNames.js";
 import { shellQuote } from "./shellQuote.js";
-
-/**
- * Execute a command on the host side, returning stdout.
- * Fails with SyncError on non-zero exit.
- */
-const execHostGit = (
-  args: string[],
-  cwd: string,
-): Effect.Effect<string, SyncError> =>
-  Effect.tryPromise({
-    try: () => execSafeHostGit(args, cwd),
-    catch: (e) =>
-      new SyncError({
-        message: `Host command failed: git ${args.join(" ")}\n${e instanceof Error ? e.message : String(e)}`,
-      }),
-  });
-
-/**
- * Execute a command in the sandbox, failing with SyncError if it exits non-zero.
- */
-const execOk = (
-  handle: IsolatedSandboxHandle,
-  command: string,
-  options?: { cwd?: string },
-): Effect.Effect<
-  { stdout: string; stderr: string; exitCode: number },
-  SyncError
-> =>
-  Effect.tryPromise({
-    try: () => handle.exec(command, options),
-    catch: (e) =>
-      new SyncError({
-        message: `Sandbox exec failed: ${command}\n${e instanceof Error ? e.message : String(e)}`,
-      }),
-  }).pipe(
-    Effect.flatMap((result) =>
-      result.exitCode !== 0
-        ? Effect.fail(
-            new SyncError({
-              message: `Sandbox command failed (exit ${result.exitCode}): ${command}\n${result.stderr}`,
-            }),
-          )
-        : Effect.succeed(result),
-    ),
-  );
+import { execHostGit, execOk } from "./syncCommands.js";
 
 /**
  * Sync a host git repo into an isolated sandbox.

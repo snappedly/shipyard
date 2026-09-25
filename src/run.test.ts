@@ -679,81 +679,38 @@ describe("run() error logging to file", () => {
 });
 
 describe("formatContextWindowSize", () => {
-  it("rounds up to the nearest 1000 tokens", () => {
-    expect(
-      formatContextWindowSize({
-        inputTokens: 102400,
-        cacheCreationInputTokens: 0,
-        cacheReadInputTokens: 0,
-        outputTokens: 0,
-      }),
-    ).toBe("103k");
-  });
+  const roundingCases: readonly {
+    readonly description: string;
+    readonly inputTokens: number;
+    readonly expected: string;
+  }[] = [
+    { description: "rounds 102400 up", inputTokens: 102400, expected: "103k" },
+    {
+      description: "preserves an exact multiple of 1000",
+      inputTokens: 100000,
+      expected: "100k",
+    },
+    { description: "rounds 100001 up", inputTokens: 100001, expected: "101k" },
+    { description: "rounds 1 up", inputTokens: 1, expected: "1k" },
+    { description: "rounds 999 up", inputTokens: 999, expected: "1k" },
+    {
+      description: "preserves exactly 1000",
+      inputTokens: 1000,
+      expected: "1k",
+    },
+    { description: "rounds 1001 up", inputTokens: 1001, expected: "2k" },
+    { description: "rounds 99500 up", inputTokens: 99500, expected: "100k" },
+  ];
 
-  it("returns exact k value when total is a multiple of 1000", () => {
+  it.each(roundingCases)("$description", ({ inputTokens, expected }) => {
     expect(
       formatContextWindowSize({
-        inputTokens: 100000,
+        inputTokens,
         cacheCreationInputTokens: 0,
         cacheReadInputTokens: 0,
         outputTokens: 0,
       }),
-    ).toBe("100k");
-  });
-
-  it("rounds 100001 up to 101k", () => {
-    expect(
-      formatContextWindowSize({
-        inputTokens: 100001,
-        cacheCreationInputTokens: 0,
-        cacheReadInputTokens: 0,
-        outputTokens: 0,
-      }),
-    ).toBe("101k");
-  });
-
-  it("rounds 1 up to 1k", () => {
-    expect(
-      formatContextWindowSize({
-        inputTokens: 1,
-        cacheCreationInputTokens: 0,
-        cacheReadInputTokens: 0,
-        outputTokens: 0,
-      }),
-    ).toBe("1k");
-  });
-
-  it("rounds 999 up to 1k", () => {
-    expect(
-      formatContextWindowSize({
-        inputTokens: 999,
-        cacheCreationInputTokens: 0,
-        cacheReadInputTokens: 0,
-        outputTokens: 0,
-      }),
-    ).toBe("1k");
-  });
-
-  it("returns 1k for exactly 1000", () => {
-    expect(
-      formatContextWindowSize({
-        inputTokens: 1000,
-        cacheCreationInputTokens: 0,
-        cacheReadInputTokens: 0,
-        outputTokens: 0,
-      }),
-    ).toBe("1k");
-  });
-
-  it("rounds 1001 up to 2k", () => {
-    expect(
-      formatContextWindowSize({
-        inputTokens: 1001,
-        cacheCreationInputTokens: 0,
-        cacheReadInputTokens: 0,
-        outputTokens: 0,
-      }),
-    ).toBe("2k");
+    ).toBe(expected);
   });
 
   it("sums inputTokens, cacheCreationInputTokens, and cacheReadInputTokens", () => {
@@ -763,17 +720,6 @@ describe("formatContextWindowSize", () => {
         cacheCreationInputTokens: 25000,
         cacheReadInputTokens: 25000,
         outputTokens: 9999,
-      }),
-    ).toBe("100k");
-  });
-
-  it("rounds 99500 up to 100k", () => {
-    expect(
-      formatContextWindowSize({
-        inputTokens: 99500,
-        cacheCreationInputTokens: 0,
-        cacheReadInputTokens: 0,
-        outputTokens: 0,
       }),
     ).toBe("100k");
   });

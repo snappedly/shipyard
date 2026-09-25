@@ -1,6 +1,5 @@
 /**
  * Test helper: creates a local (filesystem-based) SandboxService for unit tests.
- * This replaces FilesystemSandbox which has been removed.
  */
 import { Effect } from "effect";
 import { spawn } from "node:child_process";

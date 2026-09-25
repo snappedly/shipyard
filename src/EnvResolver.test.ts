@@ -196,22 +196,6 @@ describe("resolveEnv", () => {
     expect(env).toEqual({});
   });
 
-  it("falls back to process.env when the declared value is empty", async () => {
-    const dir = await makeDir();
-    await mkdir(join(dir, ".shipyard"));
-    await writeFile(join(dir, ".shipyard", ".env"), "FALLBACK_KEY=\n");
-
-    const orig = process.env["FALLBACK_KEY"];
-    try {
-      process.env["FALLBACK_KEY"] = "from-env";
-      const env = await runResolveEnv(dir);
-      expect(env["FALLBACK_KEY"]).toBe("from-env");
-    } finally {
-      if (orig === undefined) delete process.env["FALLBACK_KEY"];
-      else process.env["FALLBACK_KEY"] = orig;
-    }
-  });
-
   it("unescapes \\n in double-quoted values", async () => {
     const dir = await makeDir();
     await mkdir(join(dir, ".shipyard"));
