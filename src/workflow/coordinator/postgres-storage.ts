@@ -649,7 +649,7 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
   ) {
     const predicates = [
       "j.repository = $1",
-      "(d.status = 'pending' OR (d.status IN ('claimed', 'started') AND d.claim_expires_at <= $2))",
+      "(d.status = 'pending' OR (d.status IN ('claimed', 'started') AND (d.claim_expires_at IS NULL OR d.claim_expires_at <= $2)))",
     ];
     const values: unknown[] = [repository, nowMilliseconds];
     if (selector.jobId !== undefined) {

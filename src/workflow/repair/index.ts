@@ -18,12 +18,14 @@ import type {
 } from "../coordinator/index.js";
 import type { PostgresQueryClient } from "../coordinator/postgres-storage.js";
 import { PostgresWorkflowPhaseRecordStore } from "../phase-storage.js";
+import { parseRepairBatchResult } from "./persistence.js";
 import {
   executePhase,
   type ExecutePhaseOptions,
   type PhaseExecutionResult,
 } from "../execution/index.js";
 import type {
+  GitHubCommentSnapshot,
   GitHubIssueSnapshot,
   GitHubPublication,
   GitHubPublicationResult,
@@ -85,8 +87,9 @@ export class PostgresRepairBatchStore implements RepairBatchStore {
     this.records = new PostgresWorkflowPhaseRecordStore(options);
   }
 
-  get(key: string): Promise<RepairBatchResult | undefined> {
-    return this.records.get<RepairBatchResult>("repair-batch", key);
+  async get(key: string): Promise<RepairBatchResult | undefined> {
+    const result = await this.records.get("repair-batch", key);
+    return result === undefined ? undefined : parseRepairBatchResult(result);
   }
 
   save(
@@ -94,7 +97,16 @@ export class PostgresRepairBatchStore implements RepairBatchStore {
     result: RepairBatchResult,
     updatedAt = new Date().toISOString(),
   ): Promise<void> {
-    return this.records.save("repair-batch", key, result, updatedAt);
+    // Coordinator jobs and leases are canonical there and may expire on reload.
+    const durableResult = {
+      outcome: result.outcome,
+      reason: result.reason,
+      batch: result.batch,
+      repairIssue: result.repairIssue,
+      issuePublication: result.issuePublication,
+      linkPublication: result.linkPublication,
+    };
+    return this.records.save("repair-batch", key, durableResult, updatedAt);
   }
 }
 
@@ -131,10 +143,12 @@ export interface RepairBatchResult {
   readonly batch: RepairBatch;
   readonly job?: WorkflowJob;
   readonly dispatch?: DispatchIntent;
+  /** Fresh dispatch ID to reclaim when its saved claim has expired. */
+  readonly resumeDispatchId?: string;
   readonly lease?: BranchLease;
   readonly repairIssue?: GitHubIssueSnapshot;
   readonly issuePublication?: GitHubPublicationResult<GitHubIssueSnapshot>;
-  readonly linkPublication?: GitHubPublicationResult<unknown>;
+  readonly linkPublication?: GitHubPublicationResult<GitHubCommentSnapshot>;
 }
 
 export interface ScheduleRepairInput extends ScheduleRepairOptions {
@@ -244,10 +258,107 @@ const blocked = (
   batch,
 });
 
-const publicationComplete = (result: RepairBatchResult): boolean =>
-  result.issuePublication?.remote !== undefined &&
-  (result.batch.sourceIssueNumber === undefined ||
-    result.linkPublication?.remote !== undefined);
+const publicationSucceeded = <T>(
+  publication: GitHubPublicationResult<T> | undefined,
+): publication is GitHubPublicationResult<T> & { readonly remote: T } =>
+  publication !== undefined &&
+  publication.remote !== undefined &&
+  publication.disposition !== "in-flight" &&
+  publication.effect.status === "succeeded" &&
+  publication.effect.marker === publication.marker;
+
+const publicationComplete = (result: RepairBatchResult): boolean => {
+  if (!publicationSucceeded(result.issuePublication)) return false;
+  if (result.batch.sourceIssueNumber === undefined) return true;
+  const link = result.linkPublication;
+  return (
+    publicationSucceeded(link) &&
+    link.remote.body.startsWith(`<!-- shipyard:${link.marker} -->\n`)
+  );
+};
+
+const currentRepairStateError = async (
+  input: ScheduleRepairInput,
+  batch: RepairBatch,
+  required: boolean,
+): Promise<string | undefined> => {
+  if (input.pullRequestState === "closed") {
+    return "The existing pull request is closed or abandoned";
+  }
+  if (input.readCurrent === undefined) {
+    return required
+      ? "Current repair state is required to resume a saved repair"
+      : undefined;
+  }
+  let current: CurrentRepairCandidate;
+  try {
+    current = await input.readCurrent();
+  } catch (error) {
+    return `Current repair state could not be verified: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  if (
+    !sameRevision(current.base, input.candidate.base) ||
+    !sameRevision(current.head, input.candidate.head) ||
+    current.briefHash !== input.brief.hash
+  ) {
+    return "Repair candidate became stale before scheduling";
+  }
+  if (current.pullRequest?.state === "closed") {
+    return "The current pull request is closed or abandoned";
+  }
+  const pullRequestNumber = input.pullRequestNumber ?? batch.pullRequestNumber;
+  if (
+    pullRequestNumber !== undefined &&
+    current.pullRequest?.number !== pullRequestNumber
+  ) {
+    return "The current pull request could not be verified";
+  }
+  if (
+    current.pullRequest !== undefined &&
+    (current.pullRequest.branch !== input.candidate.head.branch ||
+      current.pullRequest.headSha !== input.candidate.head.sha ||
+      current.pullRequest.baseBranch !== input.candidate.base.branch)
+  ) {
+    return "Repair candidate no longer matches the current pull request";
+  }
+  return undefined;
+};
+
+const repairResultWithIssue = (
+  result: RepairBatchResult,
+): RepairBatchResult => {
+  const repairIssue = result.repairIssue ?? result.issuePublication?.remote;
+  return repairIssue === undefined ? result : { ...result, repairIssue };
+};
+
+const withoutCoordinatorState = (
+  result: RepairBatchResult,
+): RepairBatchResult => ({
+  outcome: result.outcome,
+  reason: result.reason,
+  batch: result.batch,
+  repairIssue: result.repairIssue,
+  issuePublication: result.issuePublication,
+  linkPublication: result.linkPublication,
+});
+
+const duplicateWithoutDispatch = (
+  result: RepairBatchResult,
+  reason: string,
+): RepairBatchResult => ({
+  outcome: "duplicate",
+  reason,
+  batch: result.batch,
+  ...(result.repairIssue === undefined
+    ? {}
+    : { repairIssue: result.repairIssue }),
+  ...(result.issuePublication === undefined
+    ? {}
+    : { issuePublication: result.issuePublication }),
+  ...(result.linkPublication === undefined
+    ? {}
+    : { linkPublication: result.linkPublication }),
+});
 
 export const scheduleBoundedRepair = async (
   input: ScheduleRepairInput,
@@ -275,10 +386,94 @@ export const scheduleBoundedRepair = async (
     requestedBatch.followUp,
   );
   const existing = await input.store.get(key);
+  if (
+    existing !== undefined &&
+    ((input.pullRequestNumber !== undefined &&
+      input.pullRequestNumber !== existing.batch.pullRequestNumber) ||
+      (input.sourceIssueNumber !== undefined &&
+        input.sourceIssueNumber !== existing.batch.sourceIssueNumber))
+  ) {
+    return blocked(
+      existing.batch,
+      "Saved repair batch is bound to a different source issue or pull request",
+    );
+  }
   if (existing !== undefined && publicationComplete(existing)) {
-    return { ...existing, outcome: "duplicate" };
+    if (input.candidate.briefHash !== brief.hash) {
+      return blocked(
+        existing.batch,
+        "Repair candidate is bound to a different brief hash",
+      );
+    }
+    const recovered = withoutCoordinatorState(repairResultWithIssue(existing));
+    const stateError = await currentRepairStateError(
+      input,
+      recovered.batch,
+      true,
+    );
+    if (stateError !== undefined) {
+      if (
+        input.readCurrent === undefined &&
+        input.pullRequestState !== "closed" &&
+        existing.job !== undefined &&
+        existing.dispatch !== undefined
+      ) {
+        return duplicateWithoutDispatch(recovered, stateError);
+      }
+      return blocked(existing.batch, stateError);
+    }
+    const scheduled = await input.coordinator.scheduleRepair({
+      jobId: input.jobId,
+      brief,
+      policy,
+      followUp: existing.batch.followUp,
+      relevantRevision: input.candidate.head.sha,
+    });
+    if (scheduled.status !== "scheduled" || scheduled.dispatch === undefined) {
+      return blocked(
+        existing.batch,
+        scheduled.reason ?? "Repair workflow is no longer schedulable",
+        { job: scheduled.job },
+      );
+    }
+    const dispatch = scheduled.dispatch;
+    if (dispatch.status === "cancelled" || dispatch.status === "failed") {
+      return blocked(
+        existing.batch,
+        `Saved repair dispatch is ${dispatch.status}`,
+        { job: scheduled.job },
+      );
+    }
+    if (dispatch.status === "completed") {
+      return {
+        ...recovered,
+        outcome: "duplicate",
+        job: scheduled.job,
+        dispatch,
+      };
+    }
+    if (scheduled.dispatchClaimExpired === true) {
+      // The coordinator will reclaim an expired claim on the next dispatch
+      // attempt; do not expose its expired snapshot as a current assignment.
+      return {
+        ...recovered,
+        outcome: "duplicate",
+        job: scheduled.job,
+        resumeDispatchId: dispatch.id,
+      };
+    }
+    return {
+      ...recovered,
+      outcome: "duplicate",
+      job: scheduled.job,
+      dispatch,
+    };
   }
   const batch = existing?.batch ?? requestedBatch;
+  if (existing !== undefined) {
+    const stateError = await currentRepairStateError(input, batch, true);
+    if (stateError !== undefined) return blocked(batch, stateError);
+  }
   if (findings.length === 0) {
     return blocked(batch, "No actionable blocking findings remain");
   }
@@ -311,20 +506,9 @@ export const scheduleBoundedRepair = async (
     );
   }
   if (input.readCurrent !== undefined) {
-    const current = await input.readCurrent();
-    if (
-      !sameRevision(current.base, input.candidate.base) ||
-      !sameRevision(current.head, input.candidate.head) ||
-      current.briefHash !== brief.hash
-    ) {
-      return blocked(batch, "Repair candidate became stale before scheduling", {
-        job,
-      });
-    }
-    if (current.pullRequest?.state === "closed") {
-      return blocked(batch, "The current pull request is closed or abandoned", {
-        job,
-      });
+    const stateError = await currentRepairStateError(input, batch, false);
+    if (stateError !== undefined) {
+      return blocked(batch, stateError, { job });
     }
   }
 
@@ -368,29 +552,32 @@ export const scheduleBoundedRepair = async (
   const issuePublication = await input.publication.publishRepairIssue({
     jobId: input.jobId,
     lease,
-    title: `[Shipyard] Repair PR #${input.pullRequestNumber ?? brief.identity.itemId}`,
-    body: issueBody(batch, input.pullRequestNumber),
+    title: `[Shipyard] Repair PR #${batch.pullRequestNumber ?? brief.identity.itemId}`,
+    body: issueBody(batch, batch.pullRequestNumber),
     labels: ["shipyard:pr-repair"],
   });
   const linkPublication =
     issuePublication.remote?.htmlUrl !== undefined &&
-    input.sourceIssueNumber !== undefined
+    batch.sourceIssueNumber !== undefined
       ? await input.publication.publishRepairLink({
           jobId: input.jobId,
           lease,
-          issueNumber: input.sourceIssueNumber,
+          issueNumber: batch.sourceIssueNumber,
           repairIssueUrl: issuePublication.remote.htmlUrl,
         })
       : undefined;
   const incompleteResult: RepairBatchResult = {
     ...scheduledResult,
+    ...(issuePublication.remote === undefined
+      ? {}
+      : { repairIssue: issuePublication.remote }),
     issuePublication,
     linkPublication,
   };
   await input.store.save(key, incompleteResult, now());
   if (
     issuePublication.remote === undefined ||
-    (input.sourceIssueNumber !== undefined &&
+    (batch.sourceIssueNumber !== undefined &&
       linkPublication?.remote === undefined)
   ) {
     return blocked(batch, "Repair issue publication is still in flight", {
@@ -419,6 +606,14 @@ export const runBoundedRepair = async (
   if (repair.outcome === "blocked") {
     return { outcome: "blocked", reason: repair.reason, repair };
   }
+  if (repair.outcome === "duplicate" && input.readCurrent === undefined) {
+    const reason = "Current repair state is required to resume a saved repair";
+    return {
+      outcome: "blocked",
+      reason,
+      repair: { ...repair, outcome: "blocked", reason },
+    };
+  }
   const job = repair.job;
   if (job === undefined) {
     return {
@@ -427,9 +622,17 @@ export const runBoundedRepair = async (
       repair,
     };
   }
-  const existing = [...job.phaseResults]
-    .reverse()
-    .find((result) => result.phase === "repair");
+  const repairAssignmentId = repair.dispatch?.assignment?.id;
+  const existing =
+    repairAssignmentId === undefined
+      ? undefined
+      : [...job.phaseResults]
+          .reverse()
+          .find(
+            (result) =>
+              result.phase === "repair" &&
+              result.assignmentId === repairAssignmentId,
+          );
   if (existing !== undefined) {
     return {
       outcome:
@@ -448,7 +651,7 @@ export const runBoundedRepair = async (
     repository: input.brief.identity.repository,
     workerId: input.workerId,
     jobId: job.id,
-    dispatchId: repair.dispatch?.id,
+    dispatchId: repair.dispatch?.id ?? repair.resumeDispatchId,
   });
   if (dispatch.status !== "dispatched" || dispatch.assignment === undefined) {
     return {

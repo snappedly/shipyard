@@ -174,8 +174,8 @@ class MemoryTransaction implements CoordinatorStorageTransaction {
           (candidate.status === "pending" ||
             ((candidate.status === "claimed" ||
               candidate.status === "started") &&
-              candidate.claimExpiresAt !== undefined &&
-              candidate.claimExpiresAt <= nowMilliseconds)),
+              (candidate.claimExpiresAt === undefined ||
+                candidate.claimExpiresAt <= nowMilliseconds))),
       )
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt))[0];
     return dispatch === undefined ? undefined : clone(dispatch);

@@ -555,4 +555,69 @@ describe("GitHub webhook intake", () => {
       "authorization: approved",
     );
   });
+
+  it("ignores an ambiguous triage source edit without falling back to a brief", async () => {
+    const coordinator = new WorkflowCoordinator({
+      storage: new InMemoryCoordinatorStorage(),
+    });
+    const store = new InMemoryGitHubStore();
+    const triageStore = new InMemoryTriageStore();
+    const ingest = vi.spyOn(coordinator, "ingest");
+    const integration = new GitHubIntegration({
+      coordinator,
+      policy: policy(),
+      base: { branch: "main", sha: "a".repeat(40) },
+      authorization: {
+        allowedRepositories: [repository],
+        allowedSenders: ["maintainer"],
+        allowedReviewers: ["maintainer"],
+      },
+      deliveryStore: store,
+      trackingStore: store,
+      triage: {
+        store: triageStore,
+        investigator: {
+          investigate: async (): Promise<TriageAssessment> => ({
+            category: "enhancement",
+            evidence: ["The request describes a bounded change."],
+            relevantFiles: [],
+            acceptanceCriteria: ["The requested behavior is implemented."],
+            exclusions: [],
+            risk: "low",
+            verification: [],
+            unresolvedQuestions: [],
+            requirementsConfirmed: true,
+          }),
+        },
+      },
+      webhookSecret: secret,
+    });
+    const initialPayload = issuePayload();
+    const initialIssue = initialPayload.issue as Record<string, unknown>;
+
+    const first = await integration.receiveWebhook(
+      webhook("issues", "delivery-triage-source", initialPayload),
+    );
+    const conflict = await integration.receiveWebhook(
+      webhook(
+        "issues",
+        "delivery-triage-source-conflict",
+        issuePayload({
+          action: "edited",
+          issue: {
+            ...initialIssue,
+            body: "Conflicting body with the same source timestamp.",
+          },
+        }),
+      ),
+    );
+
+    expect(first.status).toBe("accepted");
+    expect(conflict).toMatchObject({
+      status: "ignored",
+      reason: "triage-source-conflict",
+    });
+    expect(conflict.ingest).toBeUndefined();
+    expect(ingest).toHaveBeenCalledOnce();
+  });
 });

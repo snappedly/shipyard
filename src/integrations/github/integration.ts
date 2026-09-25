@@ -147,6 +147,12 @@ const ignored = (input: {
   readonly sender: GitHubActor;
 }): GitHubIgnoredEvent => ({ disposition: "ignored", ...input });
 
+type IssueBriefResolution =
+  | { readonly brief: WorkBrief }
+  | {
+      readonly ignoredReason: "triage-source-conflict" | "triage-incomplete";
+    };
+
 const issueSnapshot = (
   payload: JsonRecord,
 ): GitHubIssueSnapshot | undefined => {
@@ -471,7 +477,18 @@ export class GitHubIntegration {
         sourceState: issue.state,
         reply: name === "issue_comment" ? commentSnapshot(payload) : undefined,
       };
-      const brief = await this.briefForIssue(draft, issue, kind);
+      const briefResolution = await this.briefForIssue(draft, issue, kind);
+      if ("ignoredReason" in briefResolution) {
+        return ignored({
+          reason: briefResolution.ignoredReason,
+          eventName: envelope.eventName,
+          action,
+          deliveryId: envelope.deliveryId,
+          repository,
+          sender: source,
+        });
+      }
+      const brief = briefResolution.brief;
       return {
         disposition: "accepted",
         event: {
@@ -762,7 +779,7 @@ export class GitHubIntegration {
     draft: Omit<GitHubNormalizedEvent, "workflowEvent">,
     issue: GitHubIssueSnapshot,
     kind: WorkItemKind,
-  ): Promise<WorkBrief> {
+  ): Promise<IssueBriefResolution> {
     const identity: WorkIdentity = {
       repository: draft.repository,
       itemId: String(issue.number),
@@ -775,7 +792,7 @@ export class GitHubIntegration {
       current.control === "active" &&
       sameIssueContent(current.brief, issue)
     ) {
-      return current.brief;
+      return { brief: current.brief };
     }
     if (this.options.triage !== undefined) {
       const source: TriageSource = {
@@ -807,15 +824,21 @@ export class GitHubIntegration {
             : undefined,
         now: this.now,
       });
+      if (triage.record.sourceConflict !== undefined) {
+        return { ignoredReason: "triage-source-conflict" };
+      }
       if (triage.brief !== undefined) {
         if (triage.brief.authorization.status === "approved") {
-          return createWorkBrief({
-            ...triage.brief,
-            authorization: { status: "pending" },
-          });
+          return {
+            brief: createWorkBrief({
+              ...triage.brief,
+              authorization: { status: "pending" },
+            }),
+          };
         }
-        return triage.brief;
+        return { brief: triage.brief };
       }
+      return { ignoredReason: "triage-incomplete" };
     }
     const event = draft;
     const revision = current === undefined ? 1 : current.brief.revision + 1;
@@ -835,7 +858,7 @@ export class GitHubIntegration {
         "GitHub intake cannot authorize work from webhook content",
       );
     }
-    return brief;
+    return { brief };
   }
 
   private async normalizeTrackedPullRequest(

@@ -222,6 +222,45 @@ describe("workflow coordinator", () => {
     expect(retriedJob?.phaseAttempts.implementation).toBe(1);
   });
 
+  it("reclaims a started dispatch when its claim expiry is missing", async () => {
+    const { coordinator, storage } = createCoordinator();
+    const received = await coordinator.ingest(
+      event(
+        "delivery-missing-claim-expiry",
+        "2026-09-17T12:00:00.000Z",
+        "a".repeat(40),
+      ),
+    );
+    const first = await coordinator.dispatchNext({
+      repository,
+      workerId: "worker-a",
+    });
+    const dispatchId = first.dispatch!.id;
+
+    await storage.transaction(async (transaction) => {
+      const dispatch = await transaction.findDispatchByAssignmentId(
+        first.assignment!.id,
+      );
+      await transaction.saveDispatch({
+        ...dispatch!,
+        claimExpiresAt: undefined,
+      });
+    });
+
+    const resumed = await coordinator.dispatchNext({
+      repository,
+      workerId: "worker-b",
+      jobId: received.job!.id,
+      dispatchId,
+    });
+
+    expect(resumed).toMatchObject({
+      status: "dispatched",
+      dispatch: { id: dispatchId, workerId: "worker-b" },
+      assignment: { id: first.assignment!.id },
+    });
+  });
+
   it("converges duplicate and out-of-order deliveries on one job and dispatch", async () => {
     const { coordinator } = createCoordinator();
     const newer = await coordinator.ingest(

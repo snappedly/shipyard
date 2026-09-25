@@ -90,8 +90,9 @@ const finding = (id: string): Finding => ({
 });
 
 const createHarness = async () => {
+  const storage = new InMemoryCoordinatorStorage();
   const coordinator = new WorkflowCoordinator({
-    storage: new InMemoryCoordinatorStorage(),
+    storage,
     clock: {
       now: () => "2026-09-17T12:00:00.000Z",
       nowMilliseconds: () => 0,
@@ -146,6 +147,7 @@ const createHarness = async () => {
   };
   return {
     coordinator,
+    storage,
     jobId: ingested.job!.id,
     store,
     repairStore,
@@ -268,5 +270,46 @@ describe("bounded PR repair", () => {
     expect(normal.outcome).toBe("scheduled");
     expect(followUp.outcome).toBe("scheduled");
     expect(exhausted.outcome).toBe("blocked");
+  });
+
+  it("reloads the canonical repair dispatch and exposes its ID for reclaim", async () => {
+    const harness = await createHarness();
+    const input = {
+      ...harness,
+      store: harness.repairStore,
+      brief,
+      policy,
+      candidate: { base, head, briefHash: brief.hash },
+      workerId: "worker-a",
+      findings: [finding("recover")],
+      readCurrent: async () => ({ base, head, briefHash: brief.hash }),
+    };
+    const first = await scheduleBoundedRepair(input);
+    const dispatchId = first.dispatch!.id;
+    const started = await harness.coordinator.dispatchNext({
+      repository,
+      workerId: "worker-a",
+      jobId: harness.jobId,
+      dispatchId,
+    });
+    await harness.storage.transaction(async (transaction) => {
+      const dispatch = await transaction.findDispatchByAssignmentId(
+        started.assignment!.id,
+      );
+      await transaction.saveDispatch({
+        ...dispatch!,
+        claimExpiresAt: undefined,
+      });
+    });
+
+    const recovered = await scheduleBoundedRepair({
+      ...input,
+      workerId: "worker-b",
+    });
+
+    expect(started.status).toBe("dispatched");
+    expect(recovered.outcome).toBe("duplicate");
+    expect(recovered.resumeDispatchId).toBe(dispatchId);
+    expect(recovered.dispatch).toBeUndefined();
   });
 });

@@ -156,7 +156,9 @@ export type GitHubEventIgnoreReason =
   | "unsupported-event"
   | "unsupported-action"
   | "bot-originated"
-  | "unrelated-pull-request";
+  | "unrelated-pull-request"
+  | "triage-source-conflict"
+  | "triage-incomplete";
 
 export interface GitHubNormalizedEvent {
   readonly kind: GitHubNormalizedEventKind;
