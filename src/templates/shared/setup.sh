@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# The sandbox starts from a temporary Git bundle, so reset its origin before Git pushes.
 if [[ -n ${GH_REPO:-} ]]; then
   [[ "$GH_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "Invalid GH_REPO" >&2; exit 1; }
   git remote set-url origin "https://github.com/$GH_REPO.git"

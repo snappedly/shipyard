@@ -362,8 +362,7 @@ const ISSUE_TRACKER_REGISTRY: IssueTrackerEntry[] = [
 # Required repository permissions: Contents, Issues, and Pull requests (Read and write); Metadata (Read)
 # Or leave blank and run: GH_TOKEN="$(gh auth token)" npx shipyard run
 GH_TOKEN=
-# GitHub repository (owner/repository)
-GH_REPO=`,
+`,
   },
 ];
 
@@ -535,8 +534,8 @@ const rewriteMainTs = (
     // API key through the generated .env file.
     if (agent.name === "codex" && codexAuth === "chatgpt") {
       content = content.replace(
-        /\bdocker\(\)/g,
-        `docker(${CODEX_CHATGPT_AUTH_OPTIONS})`,
+        "const sandboxAuthOptions = {};",
+        `const sandboxAuthOptions = ${CODEX_CHATGPT_AUTH_OPTIONS};`,
       );
     }
 

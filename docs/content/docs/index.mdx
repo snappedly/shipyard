@@ -49,8 +49,14 @@ Init generates `.shipyard/main.ts` for ESM projects (`"type": "module"`),
 otherwise `.shipyard/main.mts`. That file configures the workflow; there is no
 `config.json`.
 
-Commit the setup files, leaving `.env` untracked. Label an issue `shipyard`
-and `ready-for-agent`, then run the selected workflow:
+Init offers to commit and push the generated setup to the current branch. It
+stages `.shipyard/` and, if you installed the repository runner, the wake
+workflow. It leaves `.shipyard/.env` untracked. If you decline, commit
+`.shipyard/` before you run the workflow because Docker sandboxes use committed
+Git history. Non-interactive init skips the offer; pass `--commit-setup true`
+to commit and push the generated files.
+
+Label an issue `shipyard` and `ready-for-agent`, then run the selected workflow:
 
 ```sh
 npx shipyard run
