@@ -8,6 +8,8 @@ import {
   type WorkBrief,
   type WorkItemKind,
 } from "../contracts/index.js";
+import type { PostgresQueryClient } from "../coordinator/postgres-storage.js";
+import { PostgresWorkflowPhaseRecordStore } from "../phase-storage.js";
 
 export type TriageCategory =
   | "bug"
@@ -97,8 +99,10 @@ export interface TriageRecord {
 }
 
 export interface TriageStore {
-  get(sourceKey: string): TriageRecord | undefined;
-  save(record: TriageRecord): void;
+  get(
+    sourceKey: string,
+  ): TriageRecord | undefined | Promise<TriageRecord | undefined>;
+  save(record: TriageRecord): void | Promise<void>;
 }
 
 export class InMemoryTriageStore implements TriageStore {
@@ -111,6 +115,32 @@ export class InMemoryTriageStore implements TriageStore {
 
   save(record: TriageRecord): void {
     this.records.set(record.sourceKey, clone(record));
+  }
+}
+
+export interface PostgresTriageStoreOptions {
+  readonly client: PostgresQueryClient;
+}
+
+/** Durable triage records backed by the coordinator's PostgreSQL database. */
+export class PostgresTriageStore implements TriageStore {
+  private readonly records: PostgresWorkflowPhaseRecordStore;
+
+  constructor(options: PostgresTriageStoreOptions) {
+    this.records = new PostgresWorkflowPhaseRecordStore(options);
+  }
+
+  get(sourceKey: string): Promise<TriageRecord | undefined> {
+    return this.records.get<TriageRecord>("triage", sourceKey);
+  }
+
+  save(record: TriageRecord): Promise<void> {
+    return this.records.save(
+      "triage",
+      record.sourceKey,
+      record,
+      record.updatedAt,
+    );
   }
 }
 
@@ -448,7 +478,7 @@ export const runTriage = async ({
   }
   const key = sourceKey(source);
   const fingerprint = sourceFingerprint(source);
-  const existing = store.get(key);
+  const existing = await store.get(key);
   const replyAlreadyApplied =
     clarificationReply !== undefined &&
     existing?.clarificationIds.includes(clarificationReply.id);
@@ -514,7 +544,7 @@ export const runTriage = async ({
       createdAt: existing?.createdAt ?? timestamp,
       updatedAt: timestamp,
     };
-    store.save(record);
+    await store.save(record);
     return resultFromRecord(record, policy);
   }
 
@@ -574,7 +604,7 @@ export const runTriage = async ({
     createdAt: existing?.createdAt ?? timestamp,
     updatedAt: timestamp,
   };
-  store.save(record);
+  await store.save(record);
   return resultFromRecord(record, policy);
 };
 

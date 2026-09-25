@@ -35,13 +35,8 @@ import type { SandboxHooks } from "./SandboxLifecycle.js";
 import { mergeProviderEnv } from "./mergeProviderEnv.js";
 import { assertNoSymlinkComponents } from "./pathSecurity.js";
 import { generateTempBranchName, getCurrentBranch } from "./WorktreeManager.js";
-import {
-  type PromptArgs,
-  substitutePromptArgs,
-  validateNoArgsWithInlinePrompt,
-  validateNoBuiltInArgOverride,
-  BUILT_IN_PROMPT_ARG_KEYS,
-} from "./PromptArgumentSubstitution.js";
+import { type PromptArgs } from "./PromptArgumentSubstitution.js";
+import { preparePrompt } from "./PromptPreparation.js";
 import type {
   OutputDefinition,
   OutputObjectDefinition,
@@ -610,13 +605,11 @@ export async function run(
       Effect.provide(NodeContext.layer),
     ),
   );
-  const rawPrompt = resolved.text;
-  const isInlinePrompt = resolved.source === "inline";
 
   // Validate: output tag must appear in the resolved prompt
   if (options.output) {
     const openTag = `<${options.output.tag}>`;
-    if (!rawPrompt.includes(openTag)) {
+    if (!resolved.text.includes(openTag)) {
       throw new Error(
         `output tag <${options.output.tag}> not found in the resolved prompt. ` +
           "The caller must instruct the agent to emit the configured tag.",
@@ -722,26 +715,12 @@ export async function run(
 
     const userArgs = options.promptArgs ?? {};
 
-    // Inline prompts pass through to the agent literally — no substitution,
-    // no built-in arg injection. Guard against silently ignoring promptArgs.
-    let resolvedPrompt: string;
-    if (isInlinePrompt) {
-      yield* validateNoArgsWithInlinePrompt(userArgs);
-      resolvedPrompt = rawPrompt;
-    } else {
-      yield* validateNoBuiltInArgOverride(userArgs);
-      const effectiveArgs = {
-        SOURCE_BRANCH: resolvedBranch,
-        TARGET_BRANCH: currentHostBranch,
-        ...userArgs,
-      };
-      const builtInArgKeysSet = new Set<string>(BUILT_IN_PROMPT_ARG_KEYS);
-      resolvedPrompt = yield* substitutePromptArgs(
-        rawPrompt,
-        effectiveArgs,
-        builtInArgKeysSet,
-      );
-    }
+    const preparedPrompt = yield* preparePrompt({
+      resolved,
+      promptArgs: userArgs,
+      sourceBranch: resolvedBranch,
+      targetBranch: currentHostBranch,
+    });
 
     const orchestrateBranch = branch;
 
@@ -749,7 +728,7 @@ export async function run(
       hostRepoDir,
       iterations: maxIterations,
       hooks,
-      prompt: resolvedPrompt,
+      prompt: preparedPrompt.text,
       branch: orchestrateBranch,
       provider,
       toolAllowlist: options.toolAllowlist,
@@ -760,7 +739,7 @@ export async function run(
       resumeSession: options.resumeSession,
       forkSession: options.forkSession,
       signal: options.signal,
-      skipPromptExpansion: isInlinePrompt,
+      skipPromptExpansion: !preparedPrompt.expandsShellExpressions,
       timeouts: options.timeouts,
     });
 

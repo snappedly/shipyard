@@ -16,6 +16,8 @@ import type {
   WorkflowCoordinator,
   WorkflowJob,
 } from "../coordinator/index.js";
+import type { PostgresQueryClient } from "../coordinator/postgres-storage.js";
+import { PostgresWorkflowPhaseRecordStore } from "../phase-storage.js";
 import {
   executePhase,
   type ExecutePhaseOptions,
@@ -48,8 +50,14 @@ export interface RepairBatch {
 }
 
 export interface RepairBatchStore {
-  get(key: string): RepairBatchResult | undefined;
-  save(key: string, result: RepairBatchResult): void;
+  get(
+    key: string,
+  ): RepairBatchResult | undefined | Promise<RepairBatchResult | undefined>;
+  save(
+    key: string,
+    result: RepairBatchResult,
+    updatedAt?: string,
+  ): void | Promise<void>;
 }
 
 export class InMemoryRepairBatchStore implements RepairBatchStore {
@@ -62,6 +70,31 @@ export class InMemoryRepairBatchStore implements RepairBatchStore {
 
   save(key: string, result: RepairBatchResult): void {
     this.results.set(key, clone(result));
+  }
+}
+
+export interface PostgresRepairBatchStoreOptions {
+  readonly client: PostgresQueryClient;
+}
+
+/** Durable bounded-repair records backed by the coordinator's PostgreSQL database. */
+export class PostgresRepairBatchStore implements RepairBatchStore {
+  private readonly records: PostgresWorkflowPhaseRecordStore;
+
+  constructor(options: PostgresRepairBatchStoreOptions) {
+    this.records = new PostgresWorkflowPhaseRecordStore(options);
+  }
+
+  get(key: string): Promise<RepairBatchResult | undefined> {
+    return this.records.get<RepairBatchResult>("repair-batch", key);
+  }
+
+  save(
+    key: string,
+    result: RepairBatchResult,
+    updatedAt = new Date().toISOString(),
+  ): Promise<void> {
+    return this.records.save("repair-batch", key, result, updatedAt);
   }
 }
 
@@ -241,7 +274,7 @@ export const scheduleBoundedRepair = async (
     findings,
     requestedBatch.followUp,
   );
-  const existing = input.store.get(key);
+  const existing = await input.store.get(key);
   if (existing !== undefined && publicationComplete(existing)) {
     return { ...existing, outcome: "duplicate" };
   }
@@ -298,7 +331,7 @@ export const scheduleBoundedRepair = async (
   // Persist the intent before spending coordinator budget or touching GitHub.
   // A retry can safely resume this intent because coordinator scheduling and
   // GitHub publication both use stable dedupe markers.
-  input.store.save(key, { outcome: "scheduled", batch });
+  await input.store.save(key, { outcome: "scheduled", batch }, now());
   const scheduled = await input.coordinator.scheduleRepair({
     jobId: input.jobId,
     brief,
@@ -331,7 +364,7 @@ export const scheduleBoundedRepair = async (
     dispatch: scheduled.dispatch,
     lease,
   };
-  input.store.save(key, scheduledResult);
+  await input.store.save(key, scheduledResult, now());
   const issuePublication = await input.publication.publishRepairIssue({
     jobId: input.jobId,
     lease,
@@ -354,7 +387,7 @@ export const scheduleBoundedRepair = async (
     issuePublication,
     linkPublication,
   };
-  input.store.save(key, incompleteResult);
+  await input.store.save(key, incompleteResult, now());
   if (
     issuePublication.remote === undefined ||
     (input.sourceIssueNumber !== undefined &&
@@ -374,7 +407,7 @@ export const scheduleBoundedRepair = async (
     issuePublication,
     linkPublication,
   };
-  input.store.save(key, result);
+  await input.store.save(key, result, now());
   return result;
 };
 
