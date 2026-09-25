@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   detectPackageManager,
   addDependencyCommand,
+  removeDependencyCommand,
   hostHasDependency,
   getTemplateDependencies,
 } from "./InitService.js";
@@ -66,6 +67,19 @@ describe("addDependencyCommand", () => {
     { pm: "bun" as const, expected: "bun add zod" },
   ])("$pm builds '$expected'", ({ pm, expected }) => {
     expect(addDependencyCommand(pm, "zod")).toBe(expected);
+  });
+});
+
+describe("removeDependencyCommand", () => {
+  it.each([
+    { pm: "npm" as const, expected: "npm uninstall @snappedly-tools/shipyard" },
+    { pm: "pnpm" as const, expected: "pnpm remove @snappedly-tools/shipyard" },
+    { pm: "yarn" as const, expected: "yarn remove @snappedly-tools/shipyard" },
+    { pm: "bun" as const, expected: "bun remove @snappedly-tools/shipyard" },
+  ])("$pm builds '$expected'", ({ pm, expected }) => {
+    expect(removeDependencyCommand(pm, "@snappedly-tools/shipyard")).toBe(
+      expected,
+    );
   });
 });
 

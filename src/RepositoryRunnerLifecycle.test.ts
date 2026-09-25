@@ -381,6 +381,46 @@ describe("recoverRepositoryRunner", () => {
 });
 
 describe("removeRepositoryRunner", () => {
+  it("refuses a symbolic-link runner directory before reading its metadata", async () => {
+    const base = makeAdapters({
+      inspectDirectory: async () => ({
+        realPath: "/another-repository/.shipyard/runner",
+        directory: true,
+        symbolicLink: true,
+      }),
+    });
+
+    await expect(
+      removeRepositoryRunner({ repoDir }, base.adapters),
+    ).rejects.toThrow("must be a real directory");
+    expect(base.calls).toHaveLength(0);
+    expect(base.removes).toHaveLength(0);
+  });
+
+  it("force-removes a symbolic-link runner directory without reading its metadata", async () => {
+    const base = makeAdapters({
+      inspectDirectory: async () => ({
+        realPath: "/another-repository/.shipyard/runner",
+        directory: true,
+        symbolicLink: true,
+      }),
+    });
+
+    const result = await removeRepositoryRunner(
+      { repoDir, force: true },
+      base.adapters,
+    );
+
+    expect(result).toEqual({
+      removed: true,
+      forced: true,
+      manualCleanup:
+        "Check GitHub Settings > Actions > Runners and manually remove any orphan repository runner registration.",
+    });
+    expect(base.removes).toEqual([runnerDir]);
+    expect(base.calls).toHaveLength(0);
+  });
+
   it("stops a running controller before unregistering", async () => {
     const base = makeAdapters();
     base.files.set(

@@ -1,5 +1,7 @@
 import { exec } from "node:child_process";
 import {
+  access,
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -8,13 +10,15 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { promisify } from "node:util";
 import { NodeContext } from "@effect/platform-node";
 import { Cause, Effect, Exit, Layer, Ref } from "effect";
 import { describe, expect, it } from "vitest";
 import { cli } from "./cli.js";
 import { ClackDisplay, type DisplayEntry, SilentDisplay } from "./Display.js";
+import { REPOSITORY_RUNNER_WORKFLOW } from "./RepositoryRunnerWake.js";
+import { RUNNER_INSTALL_METADATA } from "./RepositoryRunnerLifecycle.js";
 
 const execAsync = promisify(exec);
 
@@ -75,12 +79,78 @@ const runCliInProcessAt = async (
   }
 };
 
+const withEnvironment = async <A>(
+  changes: NodeJS.ProcessEnv,
+  operation: () => Promise<A>,
+): Promise<A> => {
+  const previous = new Map(
+    Object.keys(changes).map((key) => [key, process.env[key]] as const),
+  );
+  for (const [key, value] of Object.entries(changes)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  try {
+    return await operation();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+};
+
+const writePosixCommand = async (path: string, source: string) => {
+  await writeFile(path, `#!/usr/bin/env node\n${source}\n`);
+  await chmod(path, 0o755);
+};
+
+const createRunnerUninstallFixture = async (hostDir: string) => {
+  const configDir = join(hostDir, ".shipyard");
+  const runnerDir = join(configDir, "runner");
+  const workflowPath = join(
+    hostDir,
+    ".github",
+    "workflows",
+    "shipyard-wake.yml",
+  );
+  await Promise.all([
+    mkdir(runnerDir, { recursive: true }),
+    mkdir(join(hostDir, ".github", "workflows"), { recursive: true }),
+  ]);
+  await Promise.all([
+    writeFile(join(configDir, "main.ts"), "export {};\n"),
+    writeFile(join(configDir, ".env"), "GH_TOKEN=keep-me\n"),
+    writeFile(
+      join(runnerDir, RUNNER_INSTALL_METADATA),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        repository: "owner/repo",
+        repositoryUrl: "https://github.com/owner/repo",
+        name: "shipyard-owner-repo-test",
+        label: "shipyard",
+        version: "2.331.0",
+      })}\n`,
+    ),
+    writeFile(workflowPath, REPOSITORY_RUNNER_WORKFLOW),
+    writeFile(
+      join(hostDir, "package.json"),
+      JSON.stringify({
+        packageManager: "npm@12.0.2",
+        devDependencies: { "@snappedly-tools/shipyard": "^0.7.0" },
+      }),
+    ),
+  ]);
+  return { configDir, runnerDir, workflowPath };
+};
+
 describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
   it("shows help with --help flag", async () => {
     const { stdout } = await runCli("--help", process.cwd());
     expect(stdout).toContain("shipyard");
     expect(stdout).toContain("docker");
     expect(stdout).toContain("init");
+    expect(stdout).toContain("uninstall");
     expect(stdout).toContain("run");
     expect(stdout).toContain("runner install");
     expect(stdout).not.toContain("interactive");
@@ -103,6 +173,261 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     expect(stdout).toContain("remove");
     expect(stdout).toContain("purge");
   });
+
+  it("uninstall --help explains confirmation and forced runner cleanup", async () => {
+    const { stdout } = await runCli("uninstall --help", process.cwd());
+    expect(stdout).toContain("--yes");
+    expect(stdout).toContain("--force");
+    expect(stdout).toContain("GitHub unregistration");
+  });
+
+  it("uninstall requires confirmation before changing repository files", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "cli-uninstall-confirm-"));
+    const configDir = join(hostDir, ".shipyard");
+    await mkdir(configDir);
+    await writeFile(join(configDir, "main.ts"), "export {};\n");
+
+    const result = await runCliInProcessAt(["uninstall"], hostDir);
+
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
+      expect(Cause.pretty(result.cause)).toContain("pass --yes");
+    }
+    await expect(readFile(join(configDir, "main.ts"), "utf8")).resolves.toBe(
+      "export {};\n",
+    );
+  });
+
+  it("uninstall removes the entire Shipyard directory and wake workflow", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "cli-uninstall-"));
+    const configDir = join(hostDir, ".shipyard");
+    const logsDir = join(configDir, "logs");
+    const worktreeDir = join(configDir, "worktrees", "active-task");
+    const workflowPath = join(
+      hostDir,
+      ".github",
+      "workflows",
+      "shipyard-wake.yml",
+    );
+    await Promise.all([
+      mkdir(logsDir, { recursive: true }),
+      mkdir(worktreeDir, { recursive: true }),
+      mkdir(join(hostDir, ".github", "workflows"), { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(join(configDir, "main.ts"), "export {};\n"),
+      writeFile(join(configDir, ".env"), "GH_TOKEN=keep-me\n"),
+      writeFile(join(logsDir, "run.log"), "evidence"),
+      writeFile(join(worktreeDir, "uncommitted.txt"), "work"),
+      writeFile(workflowPath, REPOSITORY_RUNNER_WORKFLOW),
+    ]);
+    const displayRef = Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([]);
+
+    const result = await runCliInProcessAt(
+      ["uninstall", "--yes"],
+      hostDir,
+      displayRef,
+    );
+
+    expect(Exit.isSuccess(result)).toBe(true);
+    await expect(access(configDir)).rejects.toThrow();
+    await expect(readFile(workflowPath, "utf8")).rejects.toThrow();
+    expect(await Ref.get(displayRef).pipe(Effect.runPromise)).toContainEqual({
+      _tag: "status",
+      message: "Shipyard uninstalled from this repository.",
+      severity: "success",
+    });
+  });
+
+  it("uninstall removes the declared Shipyard package with the detected manager", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "cli-uninstall-package-"));
+    const binDir = join(hostDir, "bin");
+    const callsPath = join(hostDir, "package-manager-call.txt");
+    await mkdir(binDir);
+    await writeFile(
+      join(hostDir, "package.json"),
+      JSON.stringify({
+        packageManager: "npm@12.0.2",
+        devDependencies: { "@snappedly-tools/shipyard": "^0.7.0" },
+      }),
+    );
+    const npmPath = join(
+      binDir,
+      process.platform === "win32" ? "npm.cmd" : "npm",
+    );
+    await writeFile(
+      npmPath,
+      process.platform === "win32"
+        ? '@echo off\r\n> "%SHIPYARD_NPM_CALLS%" echo %*\r\n'
+        : '#!/usr/bin/env node\nrequire("node:fs").writeFileSync(process.env.SHIPYARD_NPM_CALLS, process.argv.slice(2).join(" "))\n',
+    );
+    if (process.platform !== "win32") await chmod(npmPath, 0o755);
+
+    const originalPath = process.env.PATH;
+    const originalCallsPath = process.env.SHIPYARD_NPM_CALLS;
+    const displayRef = Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([]);
+    process.env.PATH = `${binDir}${delimiter}${originalPath ?? ""}`;
+    process.env.SHIPYARD_NPM_CALLS = callsPath;
+    try {
+      const result = await runCliInProcessAt(
+        ["uninstall", "--yes"],
+        hostDir,
+        displayRef,
+      );
+
+      expect(Exit.isSuccess(result)).toBe(true);
+      await expect(readFile(callsPath, "utf8")).resolves.toBe(
+        "uninstall @snappedly-tools/shipyard",
+      );
+      expect(await Ref.get(displayRef).pipe(Effect.runPromise)).toContainEqual({
+        _tag: "status",
+        message: "Removed @snappedly-tools/shipyard with npm.",
+        severity: "success",
+      });
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      if (originalCallsPath === undefined)
+        delete process.env.SHIPYARD_NPM_CALLS;
+      else process.env.SHIPYARD_NPM_CALLS = originalCallsPath;
+    }
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "uninstall preserves setup when GitHub runner unregistration fails",
+    async () => {
+      const hostDir = await mkdtemp(join(tmpdir(), "cli-uninstall-runner-"));
+      const binDir = join(hostDir, "bin");
+      await mkdir(binDir);
+      const fixture = await createRunnerUninstallFixture(hostDir);
+      await writePosixCommand(join(binDir, "gh"), "process.exit(1);");
+
+      const result = await withEnvironment(
+        { PATH: `${binDir}${delimiter}${process.env.PATH ?? ""}` },
+        () => runCliInProcessAt(["uninstall", "--yes"], hostDir),
+      );
+
+      expect(Exit.isFailure(result)).toBe(true);
+      if (Exit.isFailure(result)) {
+        expect(Cause.pretty(result.cause)).toContain(
+          "Local runner files were preserved",
+        );
+      }
+      await expect(
+        readFile(join(fixture.configDir, "main.ts"), "utf8"),
+      ).resolves.toBe("export {};\n");
+      await expect(
+        readFile(join(fixture.runnerDir, RUNNER_INSTALL_METADATA), "utf8"),
+      ).resolves.toContain('"repository":"owner/repo"');
+      await expect(readFile(fixture.workflowPath, "utf8")).resolves.toBe(
+        REPOSITORY_RUNNER_WORKFLOW,
+      );
+      const packageJson = JSON.parse(
+        await readFile(join(hostDir, "package.json"), "utf8"),
+      ) as { devDependencies: Record<string, string> };
+      expect(packageJson.devDependencies).toHaveProperty(
+        "@snappedly-tools/shipyard",
+      );
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "uninstall --force removes local setup after runner unregistration fails",
+    async () => {
+      const hostDir = await mkdtemp(join(tmpdir(), "cli-uninstall-force-"));
+      const binDir = join(hostDir, "bin");
+      const npmCalls = join(hostDir, "npm-calls.txt");
+      await mkdir(binDir);
+      const fixture = await createRunnerUninstallFixture(hostDir);
+      await Promise.all([
+        writePosixCommand(join(binDir, "gh"), "process.exit(1);"),
+        writePosixCommand(
+          join(binDir, "npm"),
+          'require("node:fs").writeFileSync(process.env.SHIPYARD_NPM_CALLS, process.argv.slice(2).join(" "));',
+        ),
+      ]);
+      const displayRef = Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([]);
+
+      const result = await withEnvironment(
+        {
+          PATH: `${binDir}${delimiter}${process.env.PATH ?? ""}`,
+          SHIPYARD_NPM_CALLS: npmCalls,
+        },
+        () =>
+          runCliInProcessAt(
+            ["uninstall", "--yes", "--force"],
+            hostDir,
+            displayRef,
+          ),
+      );
+
+      expect(Exit.isSuccess(result)).toBe(true);
+      await expect(
+        readFile(join(fixture.configDir, "main.ts"), "utf8"),
+      ).rejects.toThrow();
+      await expect(
+        readFile(join(fixture.runnerDir, RUNNER_INSTALL_METADATA), "utf8"),
+      ).rejects.toThrow();
+      await expect(readFile(fixture.workflowPath, "utf8")).rejects.toThrow();
+      await expect(access(fixture.configDir)).rejects.toThrow();
+      await expect(readFile(npmCalls, "utf8")).resolves.toBe(
+        "uninstall @snappedly-tools/shipyard",
+      );
+      expect(await Ref.get(displayRef).pipe(Effect.runPromise)).toContainEqual(
+        expect.objectContaining({
+          _tag: "status",
+          severity: "warn",
+          message: expect.stringContaining(
+            "Remove runner shipyard-owner-repo-test",
+          ),
+        }),
+      );
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "reports package-manager failure after removing repository setup",
+    async () => {
+      const hostDir = await mkdtemp(
+        join(tmpdir(), "cli-uninstall-package-fail-"),
+      );
+      const configDir = join(hostDir, ".shipyard");
+      const binDir = join(hostDir, "bin");
+      await Promise.all([mkdir(configDir), mkdir(binDir)]);
+      await Promise.all([
+        writeFile(join(configDir, "main.ts"), "export {};\n"),
+        writeFile(
+          join(hostDir, "package.json"),
+          JSON.stringify({
+            devDependencies: { "@snappedly-tools/shipyard": "^0.7.0" },
+          }),
+        ),
+        writePosixCommand(join(binDir, "npm"), "process.exit(7);"),
+      ]);
+
+      const result = await withEnvironment(
+        { PATH: `${binDir}${delimiter}${process.env.PATH ?? ""}` },
+        () => runCliInProcessAt(["uninstall", "--yes"], hostDir),
+      );
+
+      expect(Exit.isFailure(result)).toBe(true);
+      if (Exit.isFailure(result)) {
+        expect(Cause.pretty(result.cause)).toContain(
+          "Rerun the uninstall after resolving the package-manager error",
+        );
+      }
+      await expect(
+        readFile(join(configDir, "main.ts"), "utf8"),
+      ).rejects.toThrow();
+      await expect(access(configDir)).rejects.toThrow();
+      const packageJson = JSON.parse(
+        await readFile(join(hostDir, "package.json"), "utf8"),
+      ) as { devDependencies: Record<string, string> };
+      expect(packageJson.devDependencies).toHaveProperty(
+        "@snappedly-tools/shipyard",
+      );
+    },
+  );
 
   it("runner purge removes all default run logs regardless of age", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-log-purge-"));

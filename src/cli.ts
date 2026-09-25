@@ -21,6 +21,7 @@ import {
   getNextStepsLines,
   detectPackageManager,
   addDependencyCommand,
+  removeDependencyCommand,
   hostHasDependency,
   getTemplateDependencies,
 } from "./InitService.js";
@@ -43,6 +44,10 @@ import {
   installRepositoryRunner,
   RunnerInstallError,
 } from "./RepositoryRunner.js";
+import {
+  removeRepositoryRunner,
+  RunnerLifecycleError,
+} from "./RepositoryRunnerLifecycle.js";
 import { DEFAULT_LOG_RETENTION_DAYS, purgeRunLogs } from "./LogRetention.js";
 import {
   initializeRepositoryRunner,
@@ -55,8 +60,15 @@ import {
   CONFIG_DIR,
   CLI_NAME,
   PRODUCT_NAME,
+  RUNNER_DIR,
 } from "./runtimeNames.js";
 import { VERSION } from "./version.js";
+import {
+  inspectShipyardConfigDirectory,
+  removeShipyardRepositoryFiles,
+  SHIPYARD_PACKAGE_NAME,
+} from "./UninstallService.js";
+import { REPOSITORY_RUNNER_WORKFLOW_PATH } from "./RepositoryRunnerWake.js";
 
 // --- Shared options ---
 
@@ -364,6 +376,16 @@ const commitSetupOption = Options.choice("commit-setup", ["true", "false"])
     ),
   )
   .pipe(Options.optional);
+
+const uninstallYesOption = Options.boolean("yes").pipe(
+  Options.withDescription("confirm uninstall without an interactive prompt"),
+);
+
+const uninstallForceOption = Options.boolean("force").pipe(
+  Options.withDescription(
+    "remove local runner files if GitHub unregistration fails",
+  ),
+);
 
 /**
  * Translate an `Options.choice("flag", ["true", "false"]).optional` value into
@@ -939,6 +961,148 @@ const initCommand = Command.make(
     }),
 );
 
+// --- Uninstall command ---
+
+const uninstallCommand = Command.make(
+  "uninstall",
+  { yes: uninstallYesOption, force: uninstallForceOption },
+  ({ yes, force }) =>
+    Effect.gen(function* () {
+      const d = yield* Display;
+      const repoDir = process.cwd();
+      const configDirExists = yield* Effect.tryPromise({
+        try: () => inspectShipyardConfigDirectory(repoDir),
+        catch: (error) =>
+          new InitError({
+            message: `Could not inspect Shipyard configuration: ${error instanceof Error ? error.message : String(error)}`,
+          }),
+      });
+      const runnerDir = join(repoDir, CONFIG_DIR, RUNNER_DIR);
+      const runnerInstalled = configDirExists && existsSync(runnerDir);
+      const workflowExists = existsSync(
+        join(repoDir, REPOSITORY_RUNNER_WORKFLOW_PATH),
+      );
+      const packageInstalled = yield* hostHasDependency(
+        repoDir,
+        SHIPYARD_PACKAGE_NAME,
+      );
+
+      if (
+        !configDirExists &&
+        !workflowExists &&
+        !runnerInstalled &&
+        !packageInstalled
+      ) {
+        yield* d.status(
+          "No Shipyard installation found in this repository.",
+          "info",
+        );
+        return;
+      }
+
+      if (!yes && process.stdin.isTTY !== true) {
+        return yield* Effect.fail(
+          new InitError({
+            message:
+              "Shipyard uninstall needs confirmation. Run it in a terminal or pass --yes.",
+          }),
+        );
+      }
+
+      if (!yes) {
+        const actions = [
+          runnerInstalled
+            ? "unregister and remove the repository runner"
+            : null,
+          configDirExists
+            ? `remove all of ${CONFIG_DIR}/, including .env and runtime data`
+            : null,
+          workflowExists ? "remove the generated runner wake workflow" : null,
+          packageInstalled
+            ? `remove ${SHIPYARD_PACKAGE_NAME} from package.json`
+            : null,
+        ].filter((action): action is string => action !== null);
+        const confirmation = yield* Effect.tryPromise({
+          try: () =>
+            clack.confirm({
+              message: `Uninstall Shipyard from ${repoDir}? This will ${actions.join(", ")}. It leaves GitHub issues and labels unchanged.`,
+              initialValue: false,
+            }),
+          catch: (error) =>
+            new InitError({
+              message: `Could not confirm Shipyard uninstall: ${error instanceof Error ? error.message : String(error)}`,
+            }),
+        });
+        if (clack.isCancel(confirmation) || confirmation !== true) {
+          yield* d.status("Shipyard uninstall cancelled.", "info");
+          return;
+        }
+      }
+
+      if (runnerInstalled) {
+        const result = yield* Effect.tryPromise({
+          try: () => removeRepositoryRunner({ repoDir, force }),
+          catch: (error) =>
+            error instanceof RunnerLifecycleError
+              ? new InitError({ message: error.message })
+              : new InitError({
+                  message: `Repository runner removal failed: ${error instanceof Error ? error.message : String(error)}`,
+                }),
+        });
+        yield* d.status("Repository runner removed.", "success");
+        if (result.manualCleanup) {
+          yield* d.status(result.manualCleanup, "warn");
+        }
+      }
+
+      const files = yield* Effect.tryPromise({
+        try: () => removeShipyardRepositoryFiles({ repoDir }),
+        catch: (error) =>
+          new InitError({
+            message: `Could not remove Shipyard repository files: ${error instanceof Error ? error.message : String(error)}`,
+          }),
+      });
+      if (files.configDirectoryRemoved) {
+        yield* d.status(`Removed all of ${CONFIG_DIR}/.`, "success");
+      }
+      if (files.workflowRemoved) {
+        yield* d.status(
+          `Removed ${REPOSITORY_RUNNER_WORKFLOW_PATH}.`,
+          "success",
+        );
+        yield* d.status(
+          "Commit and push the workflow deletion to disable it on GitHub.",
+          "info",
+        );
+      } else if (files.workflowPreserved) {
+        yield* d.status(
+          `Preserved ${REPOSITORY_RUNNER_WORKFLOW_PATH} because it is customized or linked.`,
+          "warn",
+        );
+      }
+      if (packageInstalled) {
+        const packageManager = yield* detectPackageManager(repoDir);
+        const command = removeDependencyCommand(
+          packageManager,
+          SHIPYARD_PACKAGE_NAME,
+        );
+        yield* Effect.try({
+          try: () => execSync(command, { cwd: repoDir, stdio: "inherit" }),
+          catch: (error) =>
+            new InitError({
+              message: `Could not remove ${SHIPYARD_PACKAGE_NAME}. Rerun the uninstall after resolving the package-manager error: ${error instanceof Error ? error.message : String(error)}`,
+            }),
+        });
+        yield* d.status(
+          `Removed ${SHIPYARD_PACKAGE_NAME} with ${packageManager}.`,
+          "success",
+        );
+      }
+
+      yield* d.status("Shipyard uninstalled from this repository.", "success");
+    }),
+);
+
 // --- Build-image command ---
 
 const dockerfileOption = Options.file("dockerfile").pipe(
@@ -1025,6 +1189,7 @@ const rootCommand = Command.make(CLI_NAME, {}, () =>
 export const shipyard = rootCommand.pipe(
   Command.withSubcommands([
     initCommand,
+    uninstallCommand,
     runCommand,
     dockerCommand,
     runnerCommand,

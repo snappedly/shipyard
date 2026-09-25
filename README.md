@@ -77,6 +77,18 @@ Or for the automated runner:
 npx shipyard runner start
 ```
 
+To remove Shipyard from the repository:
+
+```sh
+npx shipyard uninstall
+```
+
+Uninstall confirms before removing the repository runner, the entire
+`.shipyard/` folder (including `.env` and runtime data), the generated wake
+workflow, and the `@snappedly-tools/shipyard` dependency. It leaves GitHub issues
+and labels unchanged. Commit and push the workflow deletion to disable it on
+GitHub. Use `--yes` to confirm in a non-interactive shell.
+
 ## Turn GitHub issues into pull requests
 
 Then:
