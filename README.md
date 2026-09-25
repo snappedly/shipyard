@@ -39,13 +39,15 @@ npm install --save-dev @snappedly-tools/shipyard
 npx shipyard init
 ```
 
-During `shipyard init`, choose your agent, **Docker**, the template you want, and install the optional
-[repository runner](docs/content/docs/repository-runner.mdx). Follow
-the authentication prompts. Init offers to commit and push the generated
-Shipyard setup to the current branch. The offer stages `.shipyard/` and, when
-installed, `.github/workflows/shipyard-wake.yml`. It leaves `.shipyard/.env`
-untracked. Non-interactive init skips the offer; pass `--commit-setup true` to
-commit and push the generated files.
+During `shipyard init`, choose your agent and template, then follow the
+authentication prompts. GitHub Issues is the built-in tracker. Init builds the
+Docker image and automatically installs the
+[repository runner](docs/content/docs/repository-runner.mdx) on supported
+Apple Silicon Macs. Init offers to commit and push the generated Shipyard setup
+to the current branch. The offer stages `.shipyard/` and
+`.github/workflows/shipyard-wake.yml`. It leaves
+`.shipyard/.env` untracked. Non-interactive init skips the commit offer; pass
+`--commit-setup true` to commit and push the generated files.
 
 On a local Mac, the repository runner automatically wakes Shipyard when you label an issue.
 It runs as long as its terminal stays open.
@@ -66,6 +68,11 @@ strong for ticket and final specification reviews. See
 
 If you decline the commit, commit `.shipyard/` before running Shipyard. Docker
 sandboxes read setup files from Git history. Keep `.shipyard/.env` untracked.
+Init completes only after the repository runner installs. If that step fails,
+init exits with the error and keeps the generated configuration and image. Fix
+the issue and retry with `npx shipyard runner install`; then commit and push
+`.shipyard/` and `.github/workflows/shipyard-wake.yml` before starting the
+runner. Runner installation currently requires Apple Silicon macOS.
 
 ```sh
 npx shipyard run

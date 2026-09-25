@@ -22,15 +22,18 @@ administrative checks, including reading the published wake workflow. When
 Shipyard runs in Docker, the runtime token is passed into that sandbox for
 its GitHub issue operations; it is not the runner's administrative login.
 
-Interactive `npx shipyard init` offers runner installation after scaffolding
-and defaults to Yes. Non-interactive init skips it unless you pass
-`--install-runner true`. You can install later:
+`npx shipyard init` automatically installs the repository runner after
+scaffolding on supported Apple Silicon macOS hosts. Runner installation is
+required for init to complete. Init stops with an error if the host is
+unsupported or installation fails, and does not report completion. It keeps the
+generated configuration and image; fix the reported issue, then run
+`npx shipyard runner install` to retry against that setup.
 
-After scaffolding, interactive init also offers to commit and push `.shipyard/`
-and the wake workflow to the current branch. It defaults to Yes and leaves
-`.shipyard/.env` untracked. Non-interactive init skips this unless you pass
-`--commit-setup true`. Runner start requires the wake workflow on the default
-branch, so merge it there if init pushed another branch.
+After the runner installs, interactive init offers to commit and push
+`.shipyard/` and the wake workflow to the current branch. It defaults to Yes
+and leaves `.shipyard/.env` untracked. Non-interactive init skips this unless
+you pass `--commit-setup true`. Runner start requires the wake workflow on the
+default branch, so merge it there if init pushed another branch.
 
 ```sh
 npx shipyard runner install

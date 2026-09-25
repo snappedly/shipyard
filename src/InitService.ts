@@ -416,7 +416,7 @@ export function getNextStepsLines(): string[] {
     "2. If using a model subscription, sign in. For Codex:",
     `   codex --config 'cli_auth_credentials_store="file"' login`,
     "   test -f ~/.codex/auth.json",
-    `3. Start with \`npx ${CLI_NAME} runner start\` (if installed) or \`npx ${CLI_NAME} run\``,
+    `3. If the runner installed successfully, start it with \`npx ${CLI_NAME} runner start\`; otherwise run \`npx ${CLI_NAME} run\`.`,
   ];
 }
 

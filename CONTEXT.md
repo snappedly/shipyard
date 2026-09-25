@@ -153,7 +153,7 @@ The `.shipyard/` directory in a **host** repo containing sandbox configuration.
 _Avoid_: ".shipyard folder", "shipyard dir"
 
 **Issue tracker**:
-A source of **tasks** for the **agent**, selected during **init**. The built-in integration is GitHub Issues.
+A source of **tasks** for the **agent**. GitHub Issues is the only supported integration. **Init** configures it automatically.
 _Avoid_: "backlog manager" (retired name), "task source"
 
 **Template argument**:
