@@ -11,31 +11,20 @@ import {
 } from "./Display.js";
 import { resolveEnv } from "./EnvResolver.js";
 import { mergeProviderEnv } from "./mergeProviderEnv.js";
-import { orchestrate, type IterationResult } from "./Orchestrator.js";
-import { agentStreamEmitterLayer } from "./AgentStreamEmitter.js";
-import {
-  type PromptArgs,
-  substitutePromptArgs,
-  validateNoArgsWithInlinePrompt,
-  validateNoBuiltInArgOverride,
-  BUILT_IN_PROMPT_ARG_KEYS,
-} from "./PromptArgumentSubstitution.js";
+import type { IterationResult } from "./Orchestrator.js";
+import { type PromptArgs } from "./PromptArgumentSubstitution.js";
+import { preparePrompt } from "./PromptPreparation.js";
 import { resolvePrompt } from "./PromptResolver.js";
 import { preprocessPrompt } from "./PromptPreprocessor.js";
 import type { LoggingOption, Timeouts } from "./run.js";
-import {
-  buildAgentStreamHandler,
-  buildCompletionMessage,
-  buildContextWindowLines,
-  buildDefaultLogPath,
-  printFileDisplayStartup,
-} from "./run.js";
+import { buildDefaultLogPath, printFileDisplayStartup } from "./run.js";
 import {
   withSandboxLifecycle,
   runHostHooks,
   type SandboxHooks,
 } from "./SandboxLifecycle.js";
-import { type SandboxService, SandboxFactory } from "./SandboxFactory.js";
+import { type SandboxService } from "./SandboxFactory.js";
+import { runInExistingSandbox } from "./RunInExistingSandbox.js";
 import type {
   SandboxProvider,
   SessionTransferHandle,
@@ -375,8 +364,6 @@ const buildSandboxHandle = (
           Effect.provide(NodeContext.layer),
         ),
       );
-      const rawPrompt = resolved.text;
-      const isInlinePrompt = resolved.source === "inline";
 
       const userArgs = runOptions.promptArgs ?? {};
       const currentHostBranch = await Effect.runPromise(
@@ -386,24 +373,12 @@ const buildSandboxHandle = (
       const displayRef = Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([]);
       const silentDisplayLayer = SilentDisplay.layer(displayRef);
 
-      const resolvedPrompt = await Effect.runPromise(
-        Effect.gen(function* () {
-          if (isInlinePrompt) {
-            yield* validateNoArgsWithInlinePrompt(userArgs);
-            return rawPrompt;
-          }
-          yield* validateNoBuiltInArgOverride(userArgs);
-          const effectiveArgs = {
-            SOURCE_BRANCH: branch,
-            TARGET_BRANCH: currentHostBranch,
-            ...userArgs,
-          };
-          const builtInArgKeysSet = new Set<string>(BUILT_IN_PROMPT_ARG_KEYS);
-          return yield* substitutePromptArgs(
-            rawPrompt,
-            effectiveArgs,
-            builtInArgKeysSet,
-          );
+      const preparedPrompt = await Effect.runPromise(
+        preparePrompt({
+          resolved,
+          promptArgs: userArgs,
+          sourceBranch: branch,
+          targetBranch: currentHostBranch,
         }).pipe(Effect.provide(silentDisplayLayer)),
       );
 
@@ -439,45 +414,14 @@ const buildSandboxHandle = (
             })()
           : silentDisplayLayer;
 
-      const reuseFactoryLayer = Layer.succeed(SandboxFactory, {
-        withSandbox: (makeEffect) =>
-          makeEffect(
-            {
-              hostWorktreePath: worktreePath,
-              sandboxRepoPath: sandboxRepoDir,
-              applyToHost,
-              sessionTransferHandle,
-            },
-            sandbox,
-          ).pipe(
-            Effect.map((value) => ({
-              value,
-              preservedWorktreePath: undefined,
-            })),
-          ) as any,
-      });
-
-      const streamEmitterLayer = agentStreamEmitterLayer(
-        buildAgentStreamHandler(resolvedLogging),
-      );
-
-      const runLayer = Layer.mergeAll(
-        reuseFactoryLayer,
-        runDisplayLayer,
-        streamEmitterLayer,
-      );
-
       let result;
       try {
         result = await Effect.runPromise(
-          Effect.gen(function* () {
-            const display = yield* Display;
-            yield* display.intro(runOptions.name ?? CLI_NAME);
-
-            const orchestrateResult = yield* orchestrate({
+          runInExistingSandbox({
+            orchestration: {
               hostRepoDir,
               iterations: maxIterations,
-              prompt: resolvedPrompt,
+              prompt: preparedPrompt.text,
               branch: mergeToHead ? undefined : branch,
               provider,
               toolAllowlist: runOptions.toolAllowlist,
@@ -488,25 +432,19 @@ const buildSandboxHandle = (
               resumeSession: runOptions.resumeSession,
               forkSession: runOptions.forkSession,
               signal: runOptions.signal,
-              skipPromptExpansion: isInlinePrompt,
+              skipPromptExpansion: !preparedPrompt.expandsShellExpressions,
               timeouts,
               keepSourceBranch: mergeToHead,
-            });
-
-            const completion = buildCompletionMessage(
-              orchestrateResult.completionSignal,
-              orchestrateResult.iterations.length,
-            );
-            yield* display.status(completion.message, completion.severity);
-
-            for (const line of buildContextWindowLines(
-              orchestrateResult.iterations,
-            )) {
-              yield* display.text(line);
-            }
-
-            return orchestrateResult;
-          }).pipe(Effect.provide(runLayer)),
+            },
+            sandboxInfo: {
+              hostWorktreePath: worktreePath,
+              sandboxRepoPath: sandboxRepoDir,
+              applyToHost,
+              sessionTransferHandle,
+            },
+            sandbox,
+            logging: resolvedLogging,
+          }).pipe(Effect.provide(runDisplayLayer)),
         );
       } catch (error: unknown) {
         // If the signal was aborted, surface its reason verbatim
@@ -591,33 +529,14 @@ const buildSandboxHandle = (
         lifecycleResult = await Effect.runPromise(
           Effect.gen(function* () {
             const resolved = yield* resolvePrompt({ prompt, promptFile });
-            const rawPrompt = resolved.text;
-            const isInlinePrompt = resolved.source === "inline";
-
-            const userArgs = interactiveOptions.promptArgs ?? {};
             const currentHostBranch =
               yield* WorktreeManager.getCurrentBranch(hostRepoDir);
-
-            let resolvedPrompt: string;
-            if (isInlinePrompt) {
-              yield* validateNoArgsWithInlinePrompt(userArgs);
-              resolvedPrompt = rawPrompt;
-            } else {
-              yield* validateNoBuiltInArgOverride(userArgs);
-              const effectiveArgs = {
-                SOURCE_BRANCH: branch,
-                TARGET_BRANCH: currentHostBranch,
-                ...userArgs,
-              };
-              const builtInArgKeysSet = new Set<string>(
-                BUILT_IN_PROMPT_ARG_KEYS,
-              );
-              resolvedPrompt = yield* substitutePromptArgs(
-                rawPrompt,
-                effectiveArgs,
-                builtInArgKeysSet,
-              );
-            }
+            const preparedPrompt = yield* preparePrompt({
+              resolved,
+              promptArgs: interactiveOptions.promptArgs,
+              sourceBranch: branch,
+              targetBranch: currentHostBranch,
+            });
 
             return yield* withSandboxLifecycle(
               {
@@ -632,13 +551,13 @@ const buildSandboxHandle = (
               sandbox,
               (ctx) =>
                 Effect.gen(function* () {
-                  const fullPrompt = isInlinePrompt
-                    ? resolvedPrompt
-                    : yield* preprocessPrompt(
-                        resolvedPrompt,
+                  const fullPrompt = preparedPrompt.expandsShellExpressions
+                    ? yield* preprocessPrompt(
+                        preparedPrompt.text,
                         ctx.sandbox,
                         ctx.sandboxRepoDir,
-                      );
+                      )
+                    : preparedPrompt.text;
 
                   const interactiveArgs = provider.buildInteractiveArgs!({
                     prompt: fullPrompt,

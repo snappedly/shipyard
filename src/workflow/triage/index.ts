@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import {
   createWorkBrief,
   isAuthorizationAllowed,
@@ -8,6 +7,18 @@ import {
   type WorkBrief,
   type WorkItemKind,
 } from "../contracts/index.js";
+import type { PostgresQueryClient } from "../coordinator/postgres-storage.js";
+import { PostgresWorkflowPhaseRecordStore } from "../phase-storage.js";
+import {
+  normalizeAssessment,
+  normalizeClarificationReply,
+  normalizeSource,
+  parseTriageRecord,
+  sourceFingerprint,
+  sourceKey,
+  sourceKind,
+} from "./persistence.js";
+import { reconcileTriageSource } from "./reconciliation.js";
 
 export type TriageCategory =
   | "bug"
@@ -43,6 +54,11 @@ export interface ClarificationReply {
   readonly id: string;
   readonly body: string;
   readonly author?: string;
+  readonly updatedAt: string;
+}
+
+export interface TriageSourceConflict {
+  readonly fingerprint: string;
   readonly updatedAt: string;
 }
 
@@ -90,6 +106,8 @@ export interface TriageRecord {
   readonly brief?: WorkBrief;
   readonly questions: readonly string[];
   readonly clarificationIds: readonly string[];
+  readonly pendingClarificationReplies?: readonly ClarificationReply[];
+  readonly sourceConflict?: TriageSourceConflict;
   readonly duplicateOf?: string;
   readonly publicMessage: string;
   readonly createdAt: string;
@@ -97,8 +115,17 @@ export interface TriageRecord {
 }
 
 export interface TriageStore {
-  get(sourceKey: string): TriageRecord | undefined;
-  save(record: TriageRecord): void;
+  get(
+    sourceKey: string,
+  ): TriageRecord | undefined | Promise<TriageRecord | undefined>;
+  /**
+   * Atomically save only when the stored revision still matches the read
+   * revision. Custom stores must implement this as one compare-and-save.
+   */
+  compareAndSave(
+    record: TriageRecord,
+    expectedRevision: number | undefined,
+  ): boolean | Promise<boolean>;
 }
 
 export class InMemoryTriageStore implements TriageStore {
@@ -109,8 +136,44 @@ export class InMemoryTriageStore implements TriageStore {
     return record === undefined ? undefined : clone(record);
   }
 
-  save(record: TriageRecord): void {
+  compareAndSave(
+    record: TriageRecord,
+    expectedRevision: number | undefined,
+  ): boolean {
+    const current = this.records.get(record.sourceKey);
+    if (current?.revision !== expectedRevision) return false;
     this.records.set(record.sourceKey, clone(record));
+    return true;
+  }
+}
+
+export interface PostgresTriageStoreOptions {
+  readonly client: PostgresQueryClient;
+}
+
+/** Durable triage records backed by the coordinator's PostgreSQL database. */
+export class PostgresTriageStore implements TriageStore {
+  private readonly records: PostgresWorkflowPhaseRecordStore;
+
+  constructor(options: PostgresTriageStoreOptions) {
+    this.records = new PostgresWorkflowPhaseRecordStore(options);
+  }
+
+  async get(sourceKey: string): Promise<TriageRecord | undefined> {
+    const record = await this.records.get("triage", sourceKey);
+    return record === undefined ? undefined : parseTriageRecord(record);
+  }
+
+  compareAndSave(
+    record: TriageRecord,
+    expectedRevision: number | undefined,
+  ): Promise<boolean> {
+    return this.records.compareAndSaveTriage(
+      record.sourceKey,
+      expectedRevision,
+      record,
+      record.updatedAt,
+    );
   }
 }
 
@@ -135,117 +198,8 @@ export interface TriageResult {
 }
 
 const defaultNow = (): string => new Date().toISOString();
-
-const nonEmpty = (value: unknown, path: string): string => {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`${path} must be a non-empty string`);
-  }
-  return value.trim();
-};
-
-const optionalNonEmpty = (value: unknown, path: string): string | undefined =>
-  value === undefined ? undefined : nonEmpty(value, path);
-
-const isCategory = (value: unknown): value is TriageCategory =>
-  typeof value === "string" &&
-  [
-    "bug",
-    "enhancement",
-    "support",
-    "duplicate",
-    "sensitive",
-    "non-actionable",
-  ].includes(value);
-
-const isRisk = (value: unknown): value is RiskLevel =>
-  typeof value === "string" &&
-  ["low", "medium", "high", "critical"].includes(value);
-
-const stringArray = (value: unknown, path: string): string[] => {
-  if (!Array.isArray(value)) throw new Error(`${path} must be an array`);
-  return value.map((entry, index) => nonEmpty(entry, `${path}[${index}]`));
-};
-
-const sha256 = (value: string): string =>
-  createHash("sha256").update(value).digest("hex");
-
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
-
-const sourceKind = (source: TriageSource): WorkItemKind =>
-  source.kind ?? "executable-issue";
-
-const sourceKey = (source: TriageSource): string =>
-  [source.repository, source.itemId, sourceKind(source)].join("\u0000");
-
-const sourceFingerprint = (source: TriageSource): string =>
-  sha256(
-    JSON.stringify({
-      provider: source.provider,
-      repository: source.repository,
-      itemId: source.itemId,
-      title: source.title,
-      body: source.body,
-      author: source.author ?? "",
-      url: source.url ?? "",
-      updatedAt: source.updatedAt,
-      kind: sourceKind(source),
-      labels: [...(source.labels ?? [])].sort(),
-    }),
-  );
-
-const normalizeSource = (source: TriageSource): TriageSource => ({
-  ...source,
-  repository: nonEmpty(source.repository, "source.repository"),
-  itemId: nonEmpty(source.itemId, "source.itemId"),
-  title: nonEmpty(source.title, "source.title"),
-  body: typeof source.body === "string" ? source.body : "",
-  author: optionalNonEmpty(source.author, "source.author"),
-  url: optionalNonEmpty(source.url, "source.url"),
-  updatedAt: nonEmpty(source.updatedAt, "source.updatedAt"),
-  kind: sourceKind(source),
-  labels: [...(source.labels ?? [])].map((label, index) =>
-    nonEmpty(label, `source.labels[${index}]`),
-  ),
-});
-
-const normalizeAssessment = (value: TriageAssessment): TriageAssessment => {
-  if (!value || typeof value !== "object") {
-    throw new Error("investigator returned no assessment");
-  }
-  if (!isCategory(value.category))
-    throw new Error("assessment.category is invalid");
-  if (!isRisk(value.risk)) throw new Error("assessment.risk is invalid");
-  if (typeof value.requirementsConfirmed !== "boolean") {
-    throw new Error("assessment.requirementsConfirmed must be a boolean");
-  }
-  const duplicateOf = optionalNonEmpty(
-    value.duplicateOf,
-    "assessment.duplicateOf",
-  );
-  const sensitiveReason = optionalNonEmpty(
-    value.sensitiveReason,
-    "assessment.sensitiveReason",
-  );
-  return {
-    category: value.category,
-    evidence: stringArray(value.evidence, "assessment.evidence"),
-    relevantFiles: stringArray(value.relevantFiles, "assessment.relevantFiles"),
-    acceptanceCriteria: stringArray(
-      value.acceptanceCriteria,
-      "assessment.acceptanceCriteria",
-    ),
-    exclusions: stringArray(value.exclusions, "assessment.exclusions"),
-    risk: value.risk,
-    verification: stringArray(value.verification, "assessment.verification"),
-    unresolvedQuestions: stringArray(
-      value.unresolvedQuestions,
-      "assessment.unresolvedQuestions",
-    ),
-    requirementsConfirmed: value.requirementsConfirmed,
-    duplicateOf,
-    sensitiveReason,
-  };
-};
+const MAX_TRIAGE_WRITE_CONFLICT_RETRIES = 5;
 
 const safeDuplicateId = (value: string | undefined): string | undefined => {
   if (
@@ -333,6 +287,28 @@ const canAutoAuthorize = (
   assessment.category !== "duplicate" &&
   assessment.category !== "sensitive" &&
   assessment.category !== "non-actionable";
+
+const outcomeForAssessment = (
+  source: TriageSource,
+  assessment: TriageAssessment,
+): TriageOutcome => {
+  const category = assessment.category;
+  const questions = assessment.unresolvedQuestions;
+  if (sourceKind(source) !== "executable-issue") return "blocked";
+  if (category === "duplicate") return "duplicate";
+  if (category === "sensitive") return "sensitive";
+  if (category === "non-actionable") return "non-actionable";
+  return !assessment.requirementsConfirmed ||
+    questions.length > 0 ||
+    assessment.acceptanceCriteria.length === 0
+    ? "needs-info"
+    : "completed";
+};
+
+const sourceConflictMessage = (hasPendingReplies: boolean): string =>
+  hasPendingReplies
+    ? "Triage is blocked because the source update cannot be ordered against the saved revision; the clarification reply is saved and will be applied after the source is refreshed."
+    : "Triage is blocked because the source update cannot be ordered against the saved revision; refresh the source before triage can continue.";
 
 const publicMessage = (
   outcome: TriageOutcome,
@@ -446,136 +422,215 @@ export const runTriage = async ({
   if (source.repository !== policy.repository) {
     throw new Error("source.repository must match policy.repository");
   }
+  const incomingReply =
+    clarificationReply === undefined
+      ? undefined
+      : normalizeClarificationReply(clarificationReply);
   const key = sourceKey(source);
   const fingerprint = sourceFingerprint(source);
-  const existing = store.get(key);
-  const replyAlreadyApplied =
-    clarificationReply !== undefined &&
-    existing?.clarificationIds.includes(clarificationReply.id);
-  if (
-    existing !== undefined &&
-    (clarificationReply === undefined || replyAlreadyApplied) &&
-    existing.sourceFingerprint === fingerprint
+  for (
+    let conflictAttempt = 0;
+    conflictAttempt <= MAX_TRIAGE_WRITE_CONFLICT_RETRIES;
+    conflictAttempt += 1
   ) {
-    return resultFromRecord(existing, policy);
-  }
-  if (
-    existing !== undefined &&
-    clarificationReply === undefined &&
-    existing.sourceUpdatedAt === source.updatedAt &&
-    existing.sourceFingerprint === fingerprint
-  ) {
-    return resultFromRecord(existing, policy);
-  }
-
-  const timestamp = now();
-  let assessment: TriageAssessment;
-  try {
-    assessment = normalizeAssessment(
-      await investigate(investigator, {
-        source,
-        policy,
-        base,
-        previous: existing,
-        clarificationReply,
-      }),
-    );
-  } catch (error) {
-    const failedAssessment: TriageAssessment = {
-      category: "non-actionable",
-      evidence: [
-        "The investigator did not return a usable structured assessment.",
-      ],
-      relevantFiles: [],
-      acceptanceCriteria: [],
-      exclusions: [
-        "No implementation may start from an incomplete assessment.",
-      ],
-      risk: "high",
-      verification: [],
-      unresolvedQuestions: [],
-      requirementsConfirmed: false,
-    };
-    const record: TriageRecord = {
-      id:
-        existing?.id ??
-        `${source.repository}:${sourceKind(source)}:${source.itemId}`,
-      sourceKey: key,
+    const existing = await store.get(key);
+    const reconciliation = reconcileTriageSource({
       source,
-      sourceUpdatedAt: source.updatedAt,
       sourceFingerprint: fingerprint,
-      revision: existing?.revision ?? 1,
-      category: failedAssessment.category,
-      outcome: "failed",
-      assessment: failedAssessment,
-      questions: [],
-      clarificationIds: existing?.clarificationIds ?? [],
-      publicMessage: publicMessage("failed", failedAssessment.category, []),
+      existing,
+      incomingReply,
+    });
+    if (reconciliation.kind === "unchanged") {
+      return resultFromRecord(reconciliation.record, policy);
+    }
+    if (reconciliation.kind === "source-conflict") {
+      const { existing, sourceConflict, pendingReplies } = reconciliation;
+      const timestamp = now();
+      const record: TriageRecord = {
+        id: existing.id,
+        sourceKey: key,
+        source: existing.source,
+        sourceUpdatedAt: existing.sourceUpdatedAt,
+        sourceFingerprint: existing.sourceFingerprint,
+        revision: existing.revision + 1,
+        category: existing.category,
+        outcome: "blocked",
+        assessment: existing.assessment,
+        questions: [],
+        clarificationIds: existing.clarificationIds,
+        ...(pendingReplies.length === 0
+          ? {}
+          : { pendingClarificationReplies: pendingReplies }),
+        sourceConflict,
+        publicMessage: sourceConflictMessage(pendingReplies.length > 0),
+        duplicateOf: existing.duplicateOf,
+        createdAt: existing.createdAt,
+        updatedAt: timestamp,
+      };
+      if (await store.compareAndSave(record, existing.revision)) {
+        return resultFromRecord(record, policy);
+      }
+      continue;
+    }
+    const {
+      source: currentSource,
+      sourceFingerprint: currentFingerprint,
+      pendingReplies: currentPendingReplies,
+    } = reconciliation;
+
+    const timestamp = now();
+    let assessment: TriageAssessment | undefined;
+    try {
+      let previous = existing;
+      if (currentPendingReplies.length === 0) {
+        assessment = normalizeAssessment(
+          await investigate(investigator, {
+            source: currentSource,
+            policy,
+            base,
+            previous,
+          }),
+        );
+      } else {
+        for (const [index, reply] of currentPendingReplies.entries()) {
+          assessment = normalizeAssessment(
+            await investigate(investigator, {
+              source: currentSource,
+              policy,
+              base,
+              previous,
+              clarificationReply: reply,
+            }),
+          );
+          const processedReplyIds = currentPendingReplies
+            .slice(0, index + 1)
+            .map(({ id }) => id);
+          const remainingReplies = currentPendingReplies.slice(index + 1);
+          const previousOutcome = outcomeForAssessment(
+            currentSource,
+            assessment,
+          );
+          const previousCategory = assessment.category;
+          const previousDuplicateId = safeDuplicateId(assessment.duplicateOf);
+          previous = {
+            id:
+              existing?.id ??
+              `${currentSource.repository}:${sourceKind(currentSource)}:${currentSource.itemId}`,
+            sourceKey: key,
+            source: currentSource,
+            sourceUpdatedAt: currentSource.updatedAt,
+            sourceFingerprint: currentFingerprint,
+            revision: existing?.revision ?? 1,
+            category: previousCategory,
+            outcome: previousOutcome,
+            assessment,
+            questions: assessment.unresolvedQuestions,
+            clarificationIds: [
+              ...(existing?.clarificationIds ?? []),
+              ...processedReplyIds,
+            ],
+            ...(remainingReplies.length === 0
+              ? {}
+              : { pendingClarificationReplies: remainingReplies }),
+            duplicateOf: previousDuplicateId,
+            publicMessage: publicMessage(
+              previousOutcome,
+              previousCategory,
+              assessment.unresolvedQuestions,
+              previousDuplicateId,
+            ),
+            createdAt: existing?.createdAt ?? timestamp,
+            updatedAt: timestamp,
+          };
+        }
+      }
+    } catch {
+      const failedAssessment: TriageAssessment = {
+        category: "non-actionable",
+        evidence: [
+          "The investigator did not return a usable structured assessment.",
+        ],
+        relevantFiles: [],
+        acceptanceCriteria: [],
+        exclusions: [
+          "No implementation may start from an incomplete assessment.",
+        ],
+        risk: "high",
+        verification: [],
+        unresolvedQuestions: [],
+        requirementsConfirmed: false,
+      };
+      const record: TriageRecord = {
+        id:
+          existing?.id ??
+          `${currentSource.repository}:${sourceKind(currentSource)}:${currentSource.itemId}`,
+        sourceKey: key,
+        source: currentSource,
+        sourceUpdatedAt: currentSource.updatedAt,
+        sourceFingerprint: currentFingerprint,
+        revision: existing === undefined ? 1 : existing.revision + 1,
+        category: failedAssessment.category,
+        outcome: "failed",
+        assessment: failedAssessment,
+        questions: [],
+        clarificationIds: existing?.clarificationIds ?? [],
+        ...(currentPendingReplies.length === 0
+          ? {}
+          : { pendingClarificationReplies: currentPendingReplies }),
+        publicMessage: publicMessage("failed", failedAssessment.category, []),
+        createdAt: existing?.createdAt ?? timestamp,
+        updatedAt: timestamp,
+      };
+      if (await store.compareAndSave(record, existing?.revision)) {
+        return resultFromRecord(record, policy);
+      }
+      continue;
+    }
+
+    if (assessment === undefined) {
+      throw new Error("Triage investigator returned no assessment");
+    }
+    const questions = assessment.unresolvedQuestions;
+    const category = assessment.category;
+    const duplicateId = safeDuplicateId(assessment.duplicateOf);
+    const outcome = outcomeForAssessment(currentSource, assessment);
+    const nextRevision = existing === undefined ? 1 : existing.revision + 1;
+    const brief = makeBrief(
+      currentSource,
+      assessment,
+      policy,
+      base,
+      nextRevision,
+      existing?.createdAt ?? timestamp,
+    );
+    const record: TriageRecord = {
+      id: existing?.id ?? brief.id,
+      sourceKey: key,
+      source: currentSource,
+      sourceUpdatedAt: currentSource.updatedAt,
+      sourceFingerprint: currentFingerprint,
+      revision: nextRevision,
+      category,
+      outcome,
+      assessment,
+      brief,
+      questions,
+      clarificationIds: [
+        ...(existing?.clarificationIds ?? []),
+        ...currentPendingReplies.map(({ id }) => id),
+      ],
+      duplicateOf: duplicateId,
+      publicMessage: publicMessage(outcome, category, questions, duplicateId),
       createdAt: existing?.createdAt ?? timestamp,
       updatedAt: timestamp,
     };
-    store.save(record);
-    return resultFromRecord(record, policy);
+    if (await store.compareAndSave(record, existing?.revision)) {
+      return resultFromRecord(record, policy);
+    }
   }
-
-  const questions = assessment.unresolvedQuestions;
-  const category = assessment.category;
-  const kind = sourceKind(source);
-  const duplicateId = safeDuplicateId(assessment.duplicateOf);
-  const isSpecialDisposition =
-    category === "duplicate" ||
-    category === "sensitive" ||
-    category === "non-actionable";
-  const isBlockedKind = kind !== "executable-issue";
-  const needsInfo =
-    !isSpecialDisposition &&
-    !isBlockedKind &&
-    (!assessment.requirementsConfirmed ||
-      questions.length > 0 ||
-      assessment.acceptanceCriteria.length === 0);
-  const outcome: TriageOutcome = isBlockedKind
-    ? "blocked"
-    : category === "duplicate"
-      ? "duplicate"
-      : category === "sensitive"
-        ? "sensitive"
-        : category === "non-actionable"
-          ? "non-actionable"
-          : needsInfo
-            ? "needs-info"
-            : "completed";
-  const nextRevision = existing === undefined ? 1 : existing.revision + 1;
-  const brief = makeBrief(
-    source,
-    assessment,
-    policy,
-    base,
-    nextRevision,
-    existing?.createdAt ?? timestamp,
+  throw new Error(
+    `Triage record for ${source.repository} item ${source.itemId} changed during ${MAX_TRIAGE_WRITE_CONFLICT_RETRIES + 1} consecutive updates`,
   );
-  const record: TriageRecord = {
-    id: existing?.id ?? brief.id,
-    sourceKey: key,
-    source,
-    sourceUpdatedAt: source.updatedAt,
-    sourceFingerprint: fingerprint,
-    revision: nextRevision,
-    category,
-    outcome,
-    assessment,
-    brief,
-    questions,
-    clarificationIds:
-      clarificationReply === undefined
-        ? (existing?.clarificationIds ?? [])
-        : [...(existing?.clarificationIds ?? []), clarificationReply.id],
-    duplicateOf: duplicateId,
-    publicMessage: publicMessage(outcome, category, questions, duplicateId),
-    createdAt: existing?.createdAt ?? timestamp,
-    updatedAt: timestamp,
-  };
-  store.save(record);
-  return resultFromRecord(record, policy);
 };
 
 export { defaultInvestigator as defaultTriageInvestigator };

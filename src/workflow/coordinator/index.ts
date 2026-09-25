@@ -1397,7 +1397,16 @@ export class WorkflowCoordinator {
       );
       if (existing !== undefined) {
         return existing.jobId === job.id
-          ? { status: "scheduled", job, dispatch: existing }
+          ? {
+              status: "scheduled",
+              job,
+              dispatch: existing,
+              dispatchClaimExpired:
+                (existing.status === "claimed" ||
+                  existing.status === "started") &&
+                (existing.claimExpiresAt === undefined ||
+                  existing.claimExpiresAt <= this.clock.nowMilliseconds()),
+            }
           : {
               status: "blocked",
               job,

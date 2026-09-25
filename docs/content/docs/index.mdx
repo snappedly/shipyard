@@ -88,6 +88,10 @@ advanced multi-agent workflow instead.
 - Review the `simple-loop`, `sequential-reviewer`, `parallel-planner`, and
   `parallel-planner-with-review` templates before running them.
 
-The optional workflow coordinator APIs support more elaborate hosted automation.
-They are not required to run the library or its templates; ordinary use needs
-no database, webhook service, or release-policy configuration.
+For hosted automation, import coordinator and phase APIs from
+`@snappedly-tools/shipyard/workflow`; GitHub and release integrations have their
+own package subpaths. The coordinator and durable triage/repair stores use
+PostgreSQL. Apply the SQL migrations in the installed package's
+`dist/workflow/coordinator/migrations` directory before using those stores.
+These APIs are optional; the bundled CLI and templates need no database,
+webhook service, or release-policy configuration.

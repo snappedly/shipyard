@@ -22,14 +22,8 @@ import { startSandbox } from "./startSandbox.js";
 import { syncOut } from "./syncOut.js";
 import * as WorktreeManager from "./WorktreeManager.js";
 import { generateTempBranchName, getCurrentBranch } from "./WorktreeManager.js";
-import {
-  type PromptArgs,
-  substitutePromptArgs,
-  validateNoArgsWithInlinePrompt,
-  validateNoBuiltInArgOverride,
-  findMissingPromptArgKeys,
-  BUILT_IN_PROMPT_ARG_KEYS,
-} from "./PromptArgumentSubstitution.js";
+import { type PromptArgs } from "./PromptArgumentSubstitution.js";
+import { preparePrompt } from "./PromptPreparation.js";
 import { raceAbortSignal } from "./raceAbortSignal.js";
 import { resolveCwd } from "./resolveCwd.js";
 import type { Timeouts } from "./run.js";
@@ -136,8 +130,6 @@ export const interactive = async (
     const resolved = hasPromptSource
       ? yield* resolvePrompt({ prompt, promptFile })
       : undefined;
-    const rawPrompt = resolved?.text ?? "";
-    const isInlinePrompt = resolved?.source === "inline";
 
     // 2. Resolve env vars
     const resolvedEnv = yield* resolveEnv(hostRepoDir);
@@ -153,50 +145,35 @@ export const interactive = async (
 
     const resolvedBranch = branch ?? generateTempBranchName(options.name);
 
-    // 4. Validate prompt args and collect missing ones interactively (skip when no prompt).
-    // Inline prompts pass through literally — skip scanning, substitution, and built-in args.
-    let substitutedPrompt = rawPrompt;
-    if (hasPromptSource && !isInlinePrompt) {
-      const userArgs = options.promptArgs ?? {};
-      yield* validateNoBuiltInArgOverride(userArgs);
-
-      // Scan for missing keys and prompt the user for each one
-      const missingKeys = findMissingPromptArgKeys(rawPrompt, userArgs);
-      const collectedArgs: Record<string, string> = {};
-      for (const key of missingKeys) {
-        const value = yield* Effect.promise(() =>
-          clack.text({
-            message: `Enter value for {{${key}}}`,
-            validate: (v) => {
-              if (!v) return `A value is required for {{${key}}}`;
-            },
-          }),
-        );
-        if (clack.isCancel(value)) {
-          clack.cancel("Prompt arg collection cancelled.");
-          return yield* Effect.fail(
-            new Error("User cancelled prompt arg collection"),
-          );
-        }
-        collectedArgs[key] = value;
-      }
-
-      const mergedUserArgs = { ...userArgs, ...collectedArgs };
-      const effectiveArgs = {
-        SOURCE_BRANCH: resolvedBranch,
-        TARGET_BRANCH: currentHostBranch,
-        ...mergedUserArgs,
-      };
-      const builtInArgKeysSet = new Set<string>(BUILT_IN_PROMPT_ARG_KEYS);
-      substitutedPrompt = yield* substitutePromptArgs(
-        rawPrompt,
-        effectiveArgs,
-        builtInArgKeysSet,
-      );
-    } else if (isInlinePrompt) {
-      const userArgs = options.promptArgs ?? {};
-      yield* validateNoArgsWithInlinePrompt(userArgs);
-    }
+    // 4. Resolve template arguments, collecting any missing values interactively.
+    const preparedPrompt = yield* preparePrompt({
+      resolved,
+      promptArgs: options.promptArgs,
+      sourceBranch: resolvedBranch,
+      targetBranch: currentHostBranch,
+      resolveMissing: (keys) =>
+        Effect.gen(function* () {
+          const collected: Record<string, string> = {};
+          for (const key of keys) {
+            const value = yield* Effect.promise(() =>
+              clack.text({
+                message: `Enter value for {{${key}}}`,
+                validate: (v) => {
+                  if (!v) return `A value is required for {{${key}}}`;
+                },
+              }),
+            );
+            if (clack.isCancel(value)) {
+              clack.cancel("Prompt arg collection cancelled.");
+              return yield* Effect.fail(
+                new Error("User cancelled prompt arg collection"),
+              );
+            }
+            collected[key] = value;
+          }
+          return collected;
+        }),
+    });
 
     const lifecycleBranch = branch;
 
@@ -280,14 +257,13 @@ export const interactive = async (
           Effect.gen(function* () {
             // Preprocess prompt (expand !`command` shell expressions inside sandbox).
             // Skip when no prompt source was provided, or when inline (literal passthrough).
-            const fullPrompt =
-              !hasPromptSource || isInlinePrompt
-                ? substitutedPrompt
-                : yield* preprocessPrompt(
-                    substitutedPrompt,
-                    ctx.sandbox,
-                    ctx.sandboxRepoDir,
-                  );
+            const fullPrompt = preparedPrompt.expandsShellExpressions
+              ? yield* preprocessPrompt(
+                  preparedPrompt.text,
+                  ctx.sandbox,
+                  ctx.sandboxRepoDir,
+                )
+              : preparedPrompt.text;
 
             // Build interactive args and run the session
             const interactiveArgs = provider.buildInteractiveArgs!({

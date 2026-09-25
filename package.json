@@ -13,6 +13,18 @@
     "./sandboxes/docker": {
       "import": "./dist/sandboxes/docker.js",
       "types": "./dist/sandboxes/docker.d.ts"
+    },
+    "./workflow": {
+      "import": "./dist/workflow.js",
+      "types": "./dist/workflow.d.ts"
+    },
+    "./integrations/github": {
+      "import": "./dist/integrations/github.js",
+      "types": "./dist/integrations/github.d.ts"
+    },
+    "./integrations/releases": {
+      "import": "./dist/integrations/releases.js",
+      "types": "./dist/integrations/releases.d.ts"
     }
   },
   "bin": {

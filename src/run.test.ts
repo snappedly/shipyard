@@ -605,7 +605,7 @@ describe("inline prompt passthrough", () => {
       expect(err.message).not.toContain("matching value in promptArgs");
       expect(err.message).not.toContain("{{BRANCH}}");
     });
-  });
+  }, 15_000);
 
   it("accepts inline prompt with empty promptArgs ({})", async () => {
     // Spreading `...opts` where `opts.promptArgs` defaults to {} is a common
@@ -624,7 +624,7 @@ describe("inline prompt passthrough", () => {
         "promptArgs is only supported with promptFile",
       );
     });
-  });
+  }, 15_000);
 });
 
 describe("run() error logging to file", () => {

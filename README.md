@@ -55,7 +55,7 @@ Fill in any credentials required in `.shipyard/.env`.
 Requests read/write access and Metadata read access.
 
 Set `SHIPYARD_ROUTINE_MODEL` and `SHIPYARD_STRONG_MODEL` in `.shipyard/.env`
-for the roles your template uses. 
+for the roles your template uses.
 
 `simple-loop` uses routine for triage and
 implementation. `sequential-reviewer` also uses strong for issue reviews.
@@ -68,7 +68,7 @@ strong for ticket and final specification reviews. See
 npx shipyard runner start
 ```
 
-To start Shipyard for a single run without the active runner, use: 
+To start Shipyard for a single run without the active runner, use:
 
 ```sh
 npx shipyard run
@@ -99,10 +99,13 @@ Then:
 | `parallel-planner`             | Plans and works on independent issues in parallel. |
 | `parallel-planner-with-review` | Adds review to the parallel workflow.              |
 
-Shipyard also exports TypeScript APIs for custom workflows. Configure prompts,
-branches, limits, and hooks in the generated `.shipyard/main.ts` or
-`.shipyard/main.mts`. See [configuration](docs/content/docs/configuration.mdx)
-and [agent setup](docs/content/docs/agents.mdx).
+The package root exports the core run, interactive, and sandbox APIs. Import
+hosted workflow coordination and GitHub integration APIs from
+`@snappedly-tools/shipyard/workflow` and
+`@snappedly-tools/shipyard/integrations/github`. Configure prompts, branches,
+limits, and hooks in the generated `.shipyard/main.ts` or `.shipyard/main.mts`.
+See [configuration](docs/content/docs/configuration.mdx) and
+[agent setup](docs/content/docs/agents.mdx).
 
 ## Safety and license
 
