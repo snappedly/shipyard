@@ -566,6 +566,13 @@ GH_TOKEN=`);
       expect(setup).toContain("for skill in triage implement");
       expect(triage).toContain("Follow `/triage`");
       expect(triage).toContain("origin/{{BASE_BRANCH}}");
+      expect(triage).toContain("equal spacing between named header items");
+      expect(triage).toContain(
+        "An inaccessible attachment does not require `needs-info`",
+      );
+      expect(triage).toContain(
+        "Apply `needs-info` and ask one concrete question",
+      );
       expect(triageGate).toContain("ready-for-agent");
       expect(handoff).toContain("gh pr create");
       expect(handoff).not.toContain("gh pr merge");

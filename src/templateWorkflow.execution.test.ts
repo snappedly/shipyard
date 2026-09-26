@@ -105,6 +105,37 @@ describe("generated issue workflows", () => {
     );
   });
 
+  it.each([
+    "simple-loop",
+    "sequential-reviewer",
+    "parallel-planner",
+    "parallel-planner-with-review",
+  ])("%s skips agent triage for an already ready issue", async (template) => {
+    calls.initiallyReady = true;
+    await import(`./templates/${template}/main.mts` as string);
+    expect(calls.triaged).toEqual([]);
+    expect(calls.verified).toEqual(["42"]);
+    expect(calls.events).toContain("implementer");
+  });
+
+  it.each([
+    "simple-loop",
+    "sequential-reviewer",
+    "parallel-planner",
+    "parallel-planner-with-review",
+  ])(
+    "%s stops if an already ready issue loses its ready state",
+    async (template) => {
+      calls.initiallyReady = true;
+      calls.triageReady = false;
+      await import(`./templates/${template}/main.mts` as string);
+      expect(calls.triaged).toEqual([]);
+      expect(calls.verified).toEqual(["42"]);
+      expect(calls.events).not.toContain("implementer");
+      expect(calls.blocked[0]?.reason).toContain("needs-info");
+    },
+  );
+
   it("blocks a non-ready spec child before starting a ticket worker", async () => {
     calls.spec = true;
     calls.triageReady = false;

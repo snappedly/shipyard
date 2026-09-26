@@ -124,6 +124,17 @@ const dependencies = (id) => {
 };
 const planningSpec = (body) =>
   /work item type:\*?\*?\s*planning spec/i.test(body ?? "");
+const triageStates = [
+  "needs-triage",
+  "needs-info",
+  "ready-for-agent",
+  "ready-for-human",
+  "wontfix",
+];
+const triageReady = (labels) =>
+  triageStates
+    .filter((state) => labels.some((label) => label.name === state))
+    .join() === "ready-for-agent";
 const textParent = (body, issueId) => {
   const match = /^##?\s*Parent\b[^\n]*\n/im.exec(body ?? "");
   if (!match) return undefined;
@@ -476,9 +487,10 @@ for (const candidate of activated) {
         ),
     );
     selectedTicketIds = new Set(selectableTickets.map((ticket) => ticket.id));
-    const tickets = selectableTickets.map(({ labels: _labels, ...ticket }) => ({
+    const tickets = selectableTickets.map(({ labels, ...ticket }) => ({
       ...ticket,
       blockedBy: dependencies(ticket.id),
+      triageReady: triageReady(labels),
     }));
     const completedTicketIds = linkedTickets
       .filter((ticket) =>
@@ -756,7 +768,13 @@ for (const candidate of activated) {
             completedTicketIds,
             outstandingTicketIds,
           }
-        : { id, title: candidate.title, branch, kind: "standalone" },
+        : {
+            id,
+            title: candidate.title,
+            branch,
+            kind: "standalone",
+            triageReady: triageReady(candidate.labels ?? []),
+          },
     );
   } catch (error) {
     if (!(error instanceof SelectionError)) throw error;

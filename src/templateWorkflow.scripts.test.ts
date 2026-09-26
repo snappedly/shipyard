@@ -43,7 +43,7 @@ const run = (
   });
 
 describe("issue workflow scripts", () => {
-  it("requires activation and the sole ready triage state before implementation", async () => {
+  it("accepts an in-progress issue with the sole ready triage state", async () => {
     const { dir, bin } = await fixture();
     await executable(
       join(bin, "gh"),
@@ -57,10 +57,13 @@ else process.exit(2);`,
         ISSUE_STATE: state,
       });
     expect(verify("shipyard,ready-for-agent").status).toBe(0);
+    expect(verify("shipyard:pending,ready-for-agent").status).toBe(0);
+    const needsInfo = verify("shipyard:pending,needs-info");
+    expect(needsInfo.status).not.toBe(0);
+    expect(needsInfo.stderr).toContain("needs information from the reporter");
     for (const labels of [
       "shipyard",
       "ready-for-agent",
-      "shipyard,needs-info",
       "shipyard,ready-for-agent,needs-triage",
       "shipyard,ready-for-agent,ready-for-human",
       "shipyard,ready-for-agent,wontfix",
@@ -108,11 +111,13 @@ else if (args[0] === "issue" && args[1] === "list" && args.includes("open")) {
         ? [{name:"shipyard"}, ...statusState.root.map((name) => ({name}))]
       : item.number === 2 && process.env.BLOCKED_ROOT
         ? [{name:"shipyard"},{name:"shipyard:blocked"}]
-        : [{name:"shipyard"}]
+        : (process.env.PRETRIAGED || process.env.CONFLICTED_READY) && item.number === 1
+          ? [{name:"shipyard"},{name:"ready-for-agent"}, ...(process.env.CONFLICTED_READY ? [{name:"needs-info"}] : [])]
+          : [{name:"shipyard"}]
   }))));
 }
 else if (args[0] === "issue" && args[1] === "list" && args.includes("all")) console.log(JSON.stringify([
-  {number:3,title:"Child",body:"**Work item type:** executable\\n\\n## Parent\\n#2",state:process.env.CLOSED_CHILD ? "CLOSED" : "OPEN",labels:process.env.NO_LABELLED ? [] : process.env.PARTIAL_PR ? [{name:"shipyard"},{name:"shipyard:complete"},{name:"shipyard:blocked"}] : process.env.LATER_BATCH || process.env.PR_ONLY ? [{name:"shipyard:complete"}] : [{name:"shipyard"}]},
+  {number:3,title:"Child",body:"**Work item type:** executable\\n\\n## Parent\\n#2",state:process.env.CLOSED_CHILD ? "CLOSED" : "OPEN",labels:process.env.NO_LABELLED ? [] : process.env.PARTIAL_PR ? [{name:"shipyard"},{name:"shipyard:complete"},{name:"shipyard:blocked"}] : process.env.LATER_BATCH || process.env.PR_ONLY ? [{name:"shipyard:complete"}] : process.env.PRETRIAGED ? [{name:"shipyard"},{name:"ready-for-agent"}] : [{name:"shipyard"}]},
   {number:4,title:"Sibling",body:"**Work item type:** executable",state:"OPEN",labels:statusState ? [{name:"shipyard:complete"}] : process.env.RETRY_CHILD ? [{name:"shipyard:blocked"}] : process.env.NO_LABELLED || process.env.UNLABELLED_SIBLING || process.env.PARTIAL_PR ? [] : [{name:"shipyard"}]}
 ]));
 else if (args[0] === "issue" && args[1] === "view") console.log(JSON.stringify({number:2,title:"Spec",body:"**Work item type:** planning spec",state:"OPEN",labels:statusState ? statusState.root.map((name) => ({name})) : process.env.RETRY_CHILD ? [{name:"shipyard:blocked"}] : []}));
@@ -121,7 +126,7 @@ else if (args[0] === "api" && path.endsWith("/parent")) {
   else { console.error("gh: Not Found (HTTP 404)"); process.exit(1); }
 }
 else if (args[0] === "api" && path.includes("/sub_issues?")) console.log(JSON.stringify(process.env.TEXT_ONLY ? [] : path.includes("/2/") ? [
-  {number:3,title:"Child",body:"**Work item type:** executable\\n\\n## Parent\\n#2",state:process.env.CLOSED_CHILD ? "CLOSED" : "OPEN",labels:process.env.NO_LABELLED ? [] : process.env.PARTIAL_PR ? [{name:"shipyard"},{name:"shipyard:complete"},{name:"shipyard:blocked"}] : process.env.LATER_BATCH || process.env.PR_ONLY ? [{name:"shipyard:complete"}] : [{name:"shipyard"}]},
+  {number:3,title:"Child",body:"**Work item type:** executable\\n\\n## Parent\\n#2",state:process.env.CLOSED_CHILD ? "CLOSED" : "OPEN",labels:process.env.NO_LABELLED ? [] : process.env.PARTIAL_PR ? [{name:"shipyard"},{name:"shipyard:complete"},{name:"shipyard:blocked"}] : process.env.LATER_BATCH || process.env.PR_ONLY ? [{name:"shipyard:complete"}] : process.env.PRETRIAGED ? [{name:"shipyard"},{name:"ready-for-agent"}] : [{name:"shipyard"}]},
   {number:4,title:"Sibling",body:"**Work item type:** executable",state:"OPEN",labels:statusState ? [{name:"shipyard:complete"}] : process.env.RETRY_CHILD ? [{name:"shipyard:blocked"}] : process.env.NO_LABELLED || process.env.UNLABELLED_SIBLING || process.env.PARTIAL_PR ? [] : [{name:"shipyard"}]}
 ] .filter((item) => !process.env.PR_ONLY || item.number !== 4) : []));
 else if (args[0] === "api" && path.includes("/dependencies/blocked_by?")) console.log(JSON.stringify(path.includes("/4/") ? [{number:3,title:"Child",state:"OPEN"}] : []));
@@ -153,6 +158,7 @@ else process.exit(2);
           title: "Standalone",
           branch: "shipyard/issue-1",
           kind: "standalone",
+          triageReady: false,
         },
         {
           id: "2",
@@ -169,6 +175,7 @@ else process.exit(2);
               body: "**Work item type:** executable\n\n## Parent\n#2",
               state: "OPEN",
               blockedBy: [],
+              triageReady: false,
             },
             {
               id: "4",
@@ -176,10 +183,34 @@ else process.exit(2);
               body: "**Work item type:** executable",
               state: "OPEN",
               blockedBy: [{ id: "3", title: "Child", state: "OPEN" }],
+              triageReady: false,
             },
           ],
         },
       ]);
+
+      const pretriaged = run(
+        "node",
+        [join(templateDir, "templates", template, "select-issues.mjs")],
+        dir,
+        bin,
+        { GH_LOG: log, PRETRIAGED: "1" },
+      );
+      expect(pretriaged.status, pretriaged.stderr).toBe(0);
+      const readyScopes = JSON.parse(pretriaged.stdout);
+      expect(readyScopes[0].triageReady).toBe(true);
+      expect(readyScopes[1].tickets[0].triageReady).toBe(true);
+      expect(readyScopes[1].tickets[1].triageReady).toBe(false);
+
+      const conflicted = run(
+        "node",
+        [join(templateDir, "templates", template, "select-issues.mjs")],
+        dir,
+        bin,
+        { GH_LOG: log, CONFLICTED_READY: "1" },
+      );
+      expect(conflicted.status, conflicted.stderr).toBe(0);
+      expect(JSON.parse(conflicted.stdout)[0].triageReady).toBe(false);
     }
     const completedStandalone = run(
       "node",

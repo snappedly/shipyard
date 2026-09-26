@@ -31,6 +31,7 @@ const calls = vi.hoisted(() => ({
   triaged: [] as Array<{ id: string; beforeEvents: number }>,
   verified: [] as string[],
   triageReady: true,
+  initiallyReady: false,
   envFileExists: false,
   providerFailureModel: "",
   codexModelsSnapshot: undefined as
@@ -141,6 +142,7 @@ vi.mock("node:child_process", () => ({
                       body: "first",
                       state: "OPEN",
                       blockedBy: [],
+                      triageReady: calls.initiallyReady,
                     },
                     {
                       id: "44",
@@ -148,6 +150,7 @@ vi.mock("node:child_process", () => ({
                       body: "second",
                       state: "OPEN",
                       blockedBy: [{ id: "43", title: "First", state: "OPEN" }],
+                      triageReady: calls.initiallyReady,
                     },
                   ],
                 },
@@ -158,6 +161,7 @@ vi.mock("node:child_process", () => ({
                   title: "Fix bug",
                   branch: "shipyard/issue-42",
                   kind: "standalone",
+                  triageReady: calls.initiallyReady,
                 },
                 ...(calls.multi
                   ? [
@@ -166,6 +170,7 @@ vi.mock("node:child_process", () => ({
                         title: "Another",
                         branch: "shipyard/issue-45",
                         kind: "standalone",
+                        triageReady: calls.initiallyReady,
                       },
                     ]
                   : []),
@@ -442,6 +447,7 @@ beforeEach(() => {
   calls.triaged.length = 0;
   calls.verified.length = 0;
   calls.triageReady = true;
+  calls.initiallyReady = false;
   calls.envFileExists = false;
   calls.providerFailureModel = "";
   calls.codexModelsSnapshot = undefined;
