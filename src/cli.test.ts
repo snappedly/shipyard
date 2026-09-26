@@ -9,6 +9,7 @@ import {
   utimes,
   writeFile,
 } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { promisify } from "node:util";
@@ -868,6 +869,51 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     expect(updates.map(({ message }) => message)).toContain(
       "Docker image built",
     );
+  });
+
+  it("keeps progress responsive while provisioning GitHub labels", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "cli-init-progress-"));
+    await initRepo(hostDir);
+    const binDir = join(hostDir, "bin");
+    const firstLabel = join(hostDir, "first-label");
+    const lastLabel = join(hostDir, "last-label");
+    await mkdir(binDir);
+    await writeFile(join(binDir, "docker"), "#!/bin/sh\nexit 0\n", {
+      mode: 0o755,
+    });
+    await writeFile(
+      join(binDir, "gh"),
+      `#!/bin/sh\nif [ "$1" = label ]; then\n  touch "${firstLabel}"\n  sleep 0.1\n  if [ "$3" = shipyard:outstanding-tasks ]; then touch "${lastLabel}"; fi\nfi\n`,
+      { mode: 0o755 },
+    );
+
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${previousPath ?? ""}`;
+    let responsiveTicks = 0;
+    const interval = setInterval(() => {
+      if (existsSync(firstLabel) && !existsSync(lastLabel)) responsiveTicks++;
+    }, 10);
+    try {
+      await runCliInProcessAt(
+        [
+          "init",
+          "--agent",
+          "claude-code",
+          "--template",
+          "simple-loop",
+          "--commit-setup",
+          "false",
+        ],
+        hostDir,
+      );
+    } finally {
+      clearInterval(interval);
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+    }
+
+    expect(existsSync(lastLabel)).toBe(true);
+    expect(responsiveTicks).toBeGreaterThan(0);
   });
 
   it("init requires --codex-auth for Codex in a non-TTY env", async () => {
