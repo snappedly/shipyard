@@ -539,6 +539,9 @@ describe("InitService scaffold", () => {
         "utf-8",
       );
       expect(main).toContain("./planner-branch.mjs");
+      expect(main).toContain(
+        "fastForwardPlannerBranch(plannerBranch, targetBranch)",
+      );
       expect(helper).toContain("resolvePlannerBranch");
     },
   );

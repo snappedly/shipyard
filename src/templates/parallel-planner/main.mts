@@ -5,7 +5,10 @@ import { existsSync } from "node:fs";
 import * as shipyard from "@snappedly-tools/shipyard";
 import { docker } from "@snappedly-tools/shipyard/sandboxes/docker";
 import { z } from "zod";
-import { resolvePlannerBranch } from "./planner-branch.mjs";
+import {
+  fastForwardPlannerBranch,
+  resolvePlannerBranch,
+} from "./planner-branch.mjs";
 
 if (process.loadEnvFile && existsSync(".shipyard/.env"))
   process.loadEnvFile(".shipyard/.env");
@@ -205,6 +208,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
     .split(/\r?\n/)
     .filter(Boolean);
   const plannerBranch = await resolvePlannerBranch(localBranches);
+  fastForwardPlannerBranch(plannerBranch, targetBranch);
   const plan = await shipyard.run({
     hooks,
     sandbox: sandboxProvider,
