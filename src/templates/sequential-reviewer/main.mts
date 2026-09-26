@@ -139,6 +139,7 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
     title: string;
     branch: string;
     kind: "standalone" | "spec";
+    triageReady?: boolean;
     body?: string;
     tickets?: Array<{
       id: string;
@@ -146,6 +147,7 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
       body: string;
       state: string;
       blockedBy: Array<{ id: string; title: string; state: string }>;
+      triageReady: boolean;
     }>;
     completedTicketIds?: string[];
     outstandingTicketIds?: string[];
@@ -193,13 +195,19 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
       for (const ticketId of issue.kind === "spec"
         ? (issue.tickets ?? []).map((ticket) => ticket.id)
         : [issue.id]) {
-        await sandbox.run({
-          name: `triage #${ticketId}`,
-          agent: roleAgent("routine", shipyard.CODEX_MODELS.routine),
-          maxIterations: 1,
-          promptFile: "./.shipyard/triage-prompt.md",
-          promptArgs: { TASK_ID: ticketId, BASE_BRANCH: targetBranch },
-        });
+        const ready =
+          issue.kind === "spec"
+            ? issue.tickets?.find((ticket) => ticket.id === ticketId)
+                ?.triageReady
+            : issue.triageReady;
+        if (!ready)
+          await sandbox.run({
+            name: `triage #${ticketId}`,
+            agent: roleAgent("routine", shipyard.CODEX_MODELS.routine),
+            maxIterations: 1,
+            promptFile: "./.shipyard/triage-prompt.md",
+            promptArgs: { TASK_ID: ticketId, BASE_BRANCH: targetBranch },
+          });
         verifyTriage(ticketId);
       }
       const implement = await sandbox.run({

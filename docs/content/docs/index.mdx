@@ -64,7 +64,13 @@ workflow because Docker sandboxes use committed Git history.
 Non-interactive init skips the offer; pass `--commit-setup true` to commit and
 push the generated files.
 
-Label an issue `shipyard` and `ready-for-agent`, then run the selected workflow:
+Add `shipyard` to an issue that needs triage. Shipyard implements it if triage
+sets `ready-for-agent`. For an issue already triaged and approved for agent
+implementation, add `ready-for-agent` first, then `shipyard` to activate it.
+The runner wakes when `shipyard` is added. Shipyard skips agent triage for an
+already ready issue but still verifies its live state before implementation.
+
+To start the selected workflow manually, run:
 
 ```sh
 npx shipyard run
