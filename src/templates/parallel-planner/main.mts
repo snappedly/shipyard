@@ -166,6 +166,7 @@ const runWorker = async (scope: Scope, ticket: Ticket) => {
     baseBranch: scope.branch,
     sandbox: sandboxProvider,
     hooks,
+    copyToWorktree: [".shipyard/setup.sh"],
   });
   try {
     await sandbox.run({
@@ -212,6 +213,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
   const plan = await shipyard.run({
     hooks,
     sandbox: sandboxProvider,
+    copyToWorktree: [".shipyard/setup.sh"],
     name: "planner",
     branchStrategy: { type: "branch", branch: plannerBranch },
     maxIterations: 1,
@@ -271,6 +273,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
             branch: scope.branch,
             sandbox: sandboxProvider,
             hooks,
+            copyToWorktree: [".shipyard/setup.sh"],
           });
           await closeClean(seed);
           const tickets = scope.tickets ?? [];
@@ -305,6 +308,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
               branch: scope.branch,
               sandbox: sandboxProvider,
               hooks,
+              copyToWorktree: [".shipyard/setup.sh"],
             });
             try {
               for (const [index, outcome] of settled.entries()) {
@@ -430,6 +434,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
           branch: scope.branch,
           sandbox: sandboxProvider,
           hooks,
+          copyToWorktree: [".shipyard/setup.sh"],
         });
         let handoffEvidence: string;
         try {
@@ -477,6 +482,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
         const publication = await shipyard.createSandbox({
           branch: scope.branch,
           sandbox: sandboxProvider,
+          copyToWorktree: [".shipyard/handoff.sh"],
         });
         try {
           const scopeIds = [
