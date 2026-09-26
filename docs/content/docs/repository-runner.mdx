@@ -75,7 +75,9 @@ differently cased label, issue edit, or comment does not wake it.
 
 The bundled issue templates install Snappedly skills and repository
 dependencies inside their Docker sandbox. Shipyard runs `/triage` when it takes
-an activated ticket, then rereads the issue. Only an open ticket carrying both
+an activated ticket, then rereads the issue. Triage checks the integration
+branch, so a retry does not mistake work on its task branch for a completed
+request. Only an open ticket carrying both
 `shipyard` and `ready-for-agent`, with no conflicting triage state, can reach
 implementation. Any other triage outcome follows the normal blocked flow:
 `shipyard:blocked` is added, `shipyard` is removed, and the reason is commented

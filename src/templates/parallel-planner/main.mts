@@ -177,7 +177,7 @@ const runWorker = async (scope: Scope, ticket: Ticket) => {
       maxIterations: 1,
       agent: roleAgent("routine", shipyard.CODEX_MODELS.routine),
       promptFile: "./.shipyard/triage-prompt.md",
-      promptArgs: { TASK_ID: ticket.id },
+      promptArgs: { TASK_ID: ticket.id, BASE_BRANCH: targetBranch },
     });
     verifyTriage(ticket.id);
     const implementation = await sandbox.run({
@@ -449,7 +449,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
               maxIterations: 1,
               agent: roleAgent("routine", shipyard.CODEX_MODELS.routine),
               promptFile: "./.shipyard/triage-prompt.md",
-              promptArgs: { TASK_ID: id },
+              promptArgs: { TASK_ID: id, BASE_BRANCH: targetBranch },
             });
             verifyTriage(id);
             const standalone = await integration.run({

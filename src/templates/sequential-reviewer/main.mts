@@ -198,7 +198,7 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
           agent: roleAgent("routine", shipyard.CODEX_MODELS.routine),
           maxIterations: 1,
           promptFile: "./.shipyard/triage-prompt.md",
-          promptArgs: { TASK_ID: ticketId },
+          promptArgs: { TASK_ID: ticketId, BASE_BRANCH: targetBranch },
         });
         verifyTriage(ticketId);
       }
