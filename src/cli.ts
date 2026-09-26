@@ -519,7 +519,6 @@ const initCommand = Command.make(
                   options: agents.map((a) => ({
                     value: a.name,
                     label: a.label,
-                    hint: `Default model: ${a.defaultModel}`,
                   })),
                 }),
               ),
