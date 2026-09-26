@@ -178,6 +178,7 @@ for (let iteration = 0; iteration < 3; iteration++) {
       branch: issue.branch,
       sandbox: sandboxProvider,
       hooks,
+      copyToWorktree: [".shipyard/setup.sh"],
     });
     let evidence: string;
     try {
@@ -225,6 +226,7 @@ for (let iteration = 0; iteration < 3; iteration++) {
     const publication = await shipyard.createSandbox({
       branch: issue.branch,
       sandbox: sandboxProvider,
+      copyToWorktree: [".shipyard/handoff.sh"],
     });
     try {
       publicationUncertain = true;

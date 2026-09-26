@@ -502,6 +502,18 @@ describe("InitService scaffold", () => {
       );
       expect(main).toContain("handoff.sh");
       expect(main).toContain("setup.sh");
+      const sandboxCalls = [
+        ...main.matchAll(/shipyard\.createSandbox\(\{([\s\S]*?)\}\)/g),
+      ];
+      expect(sandboxCalls.length).toBeGreaterThan(0);
+      for (const [, options] of sandboxCalls) {
+        expect(options).toMatch(/copyToWorktree:\s*\[/);
+        if (options?.includes("hooks,")) {
+          expect(options).toContain('".shipyard/setup.sh"');
+        } else {
+          expect(options).toContain('".shipyard/handoff.sh"');
+        }
+      }
       expect(main).toContain("triage-prompt.md");
       expect(main).toContain("verify-triage.sh");
       expect(selector).toMatch(/"--label",\s*"shipyard"/);
@@ -512,10 +524,15 @@ describe("InitService scaffold", () => {
       expect(handoff).toContain("gh pr create");
       expect(handoff).not.toContain("gh pr merge");
       expect(blocked).toContain("shipyard:blocked");
-      if (templateName.startsWith("parallel-"))
+      if (templateName.startsWith("parallel-")) {
+        const plannerRun = main.match(
+          /const plan = await shipyard\.run\(\{([\s\S]*?)\}\)/,
+        )?.[1];
+        expect(plannerRun).toContain('copyToWorktree: [".shipyard/setup.sh"]');
         expect(
           await readFile(join(configDir, "conflict-prompt.md"), "utf-8"),
         ).toContain("cherry-pick conflict");
+      }
     },
   );
 
