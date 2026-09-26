@@ -68,13 +68,15 @@ passes each nonempty value to the provider unchanged. The provider reports
 unavailable models. Aliases can change their target over time. Use a versioned
 model ID when you need a fixed target.
 
-When you do not set a role variable or pass `--model`, Codex keeps its existing
-role overrides: `SHIPYARD_CODEX_ROUTINE_MODEL`,
-`SHIPYARD_CODEX_STRONG_MODEL`, `SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT`, and
-`SHIPYARD_CODEX_STRONG_REASONING_EFFORT`. A newly selected Codex model uses the
-provider's default reasoning effort unless you set the matching effort variable.
-Codex effort values are `low`, `medium`, `high`, `xhigh`, and `max`; invalid
-values stop the workflow with a configuration error.
+For generated Codex workflows, set optional per-role reasoning effort in
+`.shipyard/.env` with `SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT` and
+`SHIPYARD_CODEX_STRONG_REASONING_EFFORT`. The generated Codex `.env.example`
+includes both variables as commented examples; `.env` is copied from it during
+init. Leave either unset to use the provider's default effort. Valid values are
+`low`, `medium`, `high`, `xhigh`, and `max`; invalid values stop the workflow
+with a configuration error. The existing
+`SHIPYARD_CODEX_ROUTINE_MODEL` and `SHIPYARD_CODEX_STRONG_MODEL` variables
+remain available for Codex-specific model overrides.
 
 Direct library calls such as `codex(CODEX_MODELS.routine)` and
 `claudeCode("sonnet")` remain available for custom workflows.
