@@ -552,10 +552,20 @@ GH_TOKEN=`);
       }
       expect(main).toContain("triage-prompt.md");
       expect(main).toContain("verify-triage.sh");
+      const triageCalls = [
+        ...main.matchAll(
+          /promptFile: "\.\/\.shipyard\/triage-prompt\.md",\s*promptArgs: \{([^}]*)\}/g,
+        ),
+      ];
+      expect(triageCalls.length).toBeGreaterThan(0);
+      for (const [, args] of triageCalls) {
+        expect(args).toContain("BASE_BRANCH: targetBranch");
+      }
       expect(selector).toMatch(/"--label",\s*"shipyard"/);
       expect(setup).toContain("snappedly/skills.git");
       expect(setup).toContain("for skill in triage implement");
       expect(triage).toContain("Follow `/triage`");
+      expect(triage).toContain("origin/{{BASE_BRANCH}}");
       expect(triageGate).toContain("ready-for-agent");
       expect(handoff).toContain("gh pr create");
       expect(handoff).not.toContain("gh pr merge");

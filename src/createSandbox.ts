@@ -706,6 +706,7 @@ export const createSandboxFromWorktree = async (
   let providerHandle: SessionTransferHandle | IsolatedSandboxHandle | undefined;
   let sandbox: SandboxService;
   let sandboxRepoDir: string;
+  let copiedPaths: readonly string[] = [];
 
   if (isTestMode) {
     sandbox = options._test!.buildSandbox!(worktreePath);
@@ -738,6 +739,7 @@ export const createSandboxFromWorktree = async (
     providerHandle = startResult.handle;
     sandbox = startResult.sandbox;
     sandboxRepoDir = startResult.worktreePath;
+    copiedPaths = startResult.copiedPaths;
   }
 
   // 3. Run onSandboxReady hooks (sandbox-side and host-side in parallel)
@@ -783,7 +785,12 @@ export const createSandboxFromWorktree = async (
 
   // 4. Build applyToHost callback
   const applyToHost = providerHandle
-    ? () => syncOut(worktreePath, providerHandle as IsolatedSandboxHandle)
+    ? () =>
+        syncOut(
+          worktreePath,
+          providerHandle as IsolatedSandboxHandle,
+          copiedPaths,
+        )
     : () => Effect.void;
 
   // 5. Build and return sandbox handle — container-only close (worktree owns worktree)
@@ -828,6 +835,7 @@ export const createSandbox = async (
   // Once the worktree exists, any later failure (e.g. a missing image surfacing
   // when the provider creates the container) tears down the container — if it
   // started — and removes the worktree so it is not orphaned on disk.
+  let copiedPaths: readonly string[] = [];
   const { hostRepoDir, worktreePath, providerHandle, sandbox, sandboxRepoDir } =
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -883,6 +891,7 @@ export const createSandbox = async (
             providerHandle = startResult.handle;
             sandbox = startResult.sandbox;
             sandboxRepoDir = startResult.worktreePath;
+            copiedPaths = startResult.copiedPaths;
           }
 
           // Run onSandboxReady hooks (sandbox-side and host-side in parallel). If
@@ -943,7 +952,12 @@ export const createSandbox = async (
 
   // Build applyToHost callback (once, reused across runs)
   const applyToHost = providerHandle
-    ? () => syncOut(worktreePath, providerHandle as IsolatedSandboxHandle)
+    ? () =>
+        syncOut(
+          worktreePath,
+          providerHandle as IsolatedSandboxHandle,
+          copiedPaths,
+        )
     : () => Effect.void;
 
   let closed = false;

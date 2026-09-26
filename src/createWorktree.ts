@@ -335,7 +335,8 @@ export const createWorktree = async (
         const sandbox = makeSandboxFromHandle(handle);
         const worktreePath = handle.worktreePath;
 
-        const applyToHost = () => syncOut(worktreeInfo.path, handle);
+        const applyToHost = () =>
+          syncOut(worktreeInfo.path, handle, startResult.copiedPaths);
 
         const lifecycleEffect = withSandboxLifecycle(
           {
@@ -483,7 +484,8 @@ export const createWorktree = async (
       const sandboxRepoDir = startResult.worktreePath;
 
       const sandbox = makeSandboxFromHandle(handle);
-      const applyToHost = () => syncOut(worktreeInfo.path, handle);
+      const applyToHost = () =>
+        syncOut(worktreeInfo.path, handle, startResult.copiedPaths);
 
       // 5. Resolve logging
       const resolvedLogging: LoggingOption = opts.logging ?? {

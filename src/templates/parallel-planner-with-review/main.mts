@@ -147,7 +147,7 @@ const approved = (
     throw new Error(
       `${stage} has unresolved review findings: ${result.stdout.trim().slice(-1200)}`,
     );
-  return complete(result, stage);
+  return `Review: APPROVED\n${complete(result, stage)}`;
 };
 class TicketFailures extends Error {
   constructor(readonly failures: Array<{ id: string; reason: string }>) {
@@ -187,7 +187,7 @@ const runWorker = async (scope: Scope, ticket: Ticket) => {
       maxIterations: 1,
       agent: roleAgent("routine", shipyard.CODEX_MODELS.routine),
       promptFile: "./.shipyard/triage-prompt.md",
-      promptArgs: { TASK_ID: ticket.id },
+      promptArgs: { TASK_ID: ticket.id, BASE_BRANCH: targetBranch },
     });
     verifyTriage(ticket.id);
     const implementation = await sandbox.run({
@@ -472,7 +472,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
               maxIterations: 1,
               agent: roleAgent("routine", shipyard.CODEX_MODELS.routine),
               promptFile: "./.shipyard/triage-prompt.md",
-              promptArgs: { TASK_ID: id },
+              promptArgs: { TASK_ID: id, BASE_BRANCH: targetBranch },
             });
             verifyTriage(id);
             const standalone = await integration.run({

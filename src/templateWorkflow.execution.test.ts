@@ -259,6 +259,15 @@ describe("generated issue workflows", () => {
     expect(calls.blocked[0]?.reason).toContain("unresolved review findings");
   });
 
+  it.each(["sequential-reviewer", "parallel-planner-with-review"])(
+    "%s includes verified review approval in publication evidence",
+    async (template) => {
+      await import(`./templates/${template}/main.mts` as string);
+      expect(calls.handoffInputs).toHaveLength(1);
+      expect(calls.handoffInputs[0]).toContain("Review: APPROVED");
+    },
+  );
+
   it("missing implementation evidence prevents parallel handoff", async () => {
     calls.implementationComplete = false;
     await import("./templates/parallel-planner/main.mts" as string);

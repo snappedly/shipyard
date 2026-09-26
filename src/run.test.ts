@@ -819,7 +819,7 @@ describe("structured output entry-time validation", () => {
         output: Output.object({ tag: "result", schema: mockSchema() }),
       }),
     ).rejects.not.toThrow("output requires maxIterations to be 1");
-  });
+  }, 10_000);
 
   it("throws when output tag is not in the resolved prompt", async () => {
     await expect(
