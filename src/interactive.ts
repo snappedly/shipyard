@@ -200,7 +200,7 @@ export const interactive = async (
     // 6. Prepare the worktree and start the sandbox. If any step fails after the
     // worktree exists (copying, hooks, or sandbox start), remove the worktree so
     // it is not orphaned on disk.
-    const handle: IsolatedSandboxHandle = yield* Effect.gen(function* () {
+    const startResult = yield* Effect.gen(function* () {
       if (hooks?.host?.onWorktreeReady?.length) {
         yield* runHostHooks(hooks.host.onWorktreeReady, worktreeInfo.path);
       }
@@ -214,7 +214,7 @@ export const interactive = async (
           copyTimeoutMs: options.timeouts?.copyToWorktreeMs,
         }),
       );
-      return startResult.handle;
+      return startResult;
     }).pipe(
       Effect.tapError(() =>
         worktreeInfo
@@ -224,6 +224,8 @@ export const interactive = async (
           : Effect.void,
       ),
     );
+
+    const handle: IsolatedSandboxHandle = startResult.handle;
 
     // Run lifecycle with guaranteed cleanup of handle and worktree
     return yield* Effect.gen(function* () {
@@ -240,7 +242,8 @@ export const interactive = async (
       const sandbox = makeSandboxFromHandle(handle);
       const worktreePath = handle.worktreePath;
 
-      const applyToHost = () => syncOut(worktreeInfo.path, handle);
+      const applyToHost = () =>
+        syncOut(worktreeInfo.path, handle, startResult.copiedPaths);
 
       const lifecycleEffect = withSandboxLifecycle(
         {

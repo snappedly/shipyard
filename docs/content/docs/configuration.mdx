@@ -118,7 +118,8 @@ Docker starts from committed Git history. Use `copyToWorktree` for selected igno
 or untracked files; these copy from the original repository. Mounts must stay
 outside `/home/agent/workspace` and its ancestors (for example `/mnt/cache` or
 `~/.codex/auth.json`). This prevents mounts from replacing sandbox-owned Git
-storage. Session capture and resume use file transfer.
+storage. Copied untracked inputs do not sync back unless the agent commits them.
+Session capture and resume use file transfer.
 
 ## Prompts
 

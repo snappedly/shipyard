@@ -40,6 +40,8 @@ export interface StartSandboxResult {
   readonly handle: IsolatedSandboxHandle;
   readonly sandbox: SandboxService;
   readonly worktreePath: string;
+  /** Inputs copied after Git sync; untracked copies are not task output. */
+  readonly copiedPaths: readonly string[];
 }
 
 const CONTAINER_START_TIMEOUT_MS = 120_000;
@@ -91,6 +93,7 @@ export const startSandbox = (
         ),
       );
 
+      const copiedPaths: string[] = [];
       if (options.copyPaths && options.copyPaths.length > 0) {
         const pathsToCopy = options.copyPaths;
         const copySourceDir =
@@ -144,6 +147,7 @@ export const startSandbox = (
                   message: `Failed to copy ${relativePath} into sandbox: ${e instanceof Error ? e.message : String(e)}`,
                 }),
             });
+            copiedPaths.push(relativePath);
           }
         }).pipe(
           withTimeout(
@@ -162,6 +166,7 @@ export const startSandbox = (
         handle,
         sandbox: makeSandboxFromHandle(handle),
         worktreePath: handle.worktreePath,
+        copiedPaths,
       };
     }).pipe(Effect.onError(() => Effect.promise(() => handle.close())));
   });
