@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.2
+
+### Patch Changes
+
+- 010d1a1: Refresh a reused planner branch from the current branch before starting its sandbox, so recently committed Shipyard setup files are available.
+- 010d1a1: Remove model hints and repository runner instructions from init output. Keep the progress bar responsive while provisioning GitHub labels. Include the package manifest and npm lockfile in the setup commit.
+
 ## 0.9.1
 
 ### Patch Changes
