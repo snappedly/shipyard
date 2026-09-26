@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.1
+
+### Patch Changes
+
+- Sync staging and production release history. Package behavior is unchanged from 0.9.0.
+
 ## 0.9.0
 
 ### Minor Changes
