@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.10.0
+
+### Minor Changes
+
+- 7ad333f: Include shared per-role reasoning effort settings for generated Codex and Claude Code workflows.
+- 7ad333f: Set generated Codex workflow model and reasoning effort defaults in `.env.example` and `.env`.
+
+### Patch Changes
+
+- 7ad333f: Remove `ready-for-human` from issues when Shipyard marks them `shipyard:complete`.
+- 7ad333f: Keep generated sandbox npm setup from changing the checkout lockfile during dependency installation.
+- 7ad333f: Copy generated setup and handoff scripts into stale-branch sandboxes without syncing those untracked inputs back as task changes.
+- 7ad333f: Preserve verified review approval in the evidence passed to PR handoff, even when the reviewer puts its approval outside the handoff block.
+- 7ad333f: Allow generated npm setup to recover from stale lockfiles without modifying them, and record sandbox setup failures in the host log folder.
+- 7ad333f: Remove the `shipyard` activation label when a generated workflow marks an issue `shipyard:pending`.
+- 7ad333f: Fail repository runner startup immediately when `GH_TOKEN` is missing or blank in `.shipyard/.env`.
+- 7ad333f: Clear the `ready-for-human` label from issues when Shipyard blocks their scope.
+- 7ad333f: Check the integration branch during issue triage so a retry does not close an issue because its task branch already contains unfinished work.
+
 ## 0.9.2
 
 ### Patch Changes
