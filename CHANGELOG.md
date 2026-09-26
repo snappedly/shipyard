@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.0
+
+### Minor Changes
+
+- b8b8950: Make GitHub Issues the fixed init tracker, build the Docker image automatically,
+  and require repository-runner installation before init completes.
+- b8b8950: Add `shipyard uninstall` to remove repository setup, the optional runner, and the package dependency.
+- b8b8950: Require atomic triage-store writes and reclaim started dispatches without an expiry.
+- b8b8950: Add dedicated workflow and integration package entrypoints, PostgreSQL-backed durable triage and repair stores, and shared prompt and sandbox run preparation.
+- b8b8950: Offer to commit and push generated Shipyard setup during init. Pass the
+  detected GitHub repository directly to sandbox setup.
+- b8b8950: Show one progress bar across Shipyard initialization, advancing through setup stages and pausing while prompts are active.
+
 ## 0.8.0
 
 ### Minor Changes
