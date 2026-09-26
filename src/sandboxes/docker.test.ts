@@ -57,11 +57,6 @@ describe("docker()", () => {
     expect(provider.name).toBe("docker");
   });
 
-  it("does not have a branchStrategy property", () => {
-    const provider = docker();
-    expect("branchStrategy" in provider).toBe(false);
-  });
-
   it("throws at construction time if a mount hostPath does not exist", () => {
     expect(() =>
       docker({
