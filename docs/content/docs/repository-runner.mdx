@@ -98,11 +98,12 @@ if other children remain, or `shipyard:complete` when all linked tickets are
 complete. Spec labels only report child state; they do not gate ticket selection.
 The non-draft PR is ready for human review;
 the issues remain open until the target repository's closure policy closes them. A
-failed attempted scope gets an issue comment describing the failure. Its selected
-tickets become `shipyard:blocked` and lose `shipyard:pending` and `shipyard`, so
-they do not retry automatically. The parent spec and existing PR reflect the block; failed
-work does not create a new PR. Resolve the problem, remove `shipyard:blocked`
-from the ticket, and add `shipyard` to retry; the spec label is recalculated.
+failed attempted scope gets an issue comment describing the failure. Shipyard
+marks its selected issues `shipyard:blocked` and removes `ready-for-human`,
+`shipyard:pending`, and `shipyard`, so they do not retry automatically. The
+parent spec and existing PR reflect the block; failed work does not create a new
+PR. Resolve the problem, remove `shipyard:blocked` from the ticket, and add
+`shipyard` to retry; the spec label is recalculated.
 Missing or conflicting relationships and invalid selected children receive
 `shipyard:blocked` with an issue comment explaining the failure. If GitHub cannot confirm PR
 readiness, Shipyard leaves activation in place so the next invocation can
