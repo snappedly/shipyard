@@ -63,18 +63,21 @@ the same entry in that file. Shipyard does not load the repository-root `.env`.
 Choose a value supported by the selected provider and its authentication route.
 For Codex, see the [Codex model picker](https://learn.chatgpt.com/docs/models).
 For Claude Code, see [available models and aliases](https://code.claude.com/docs/en/model-config).
-The generated `.env.example` has an example for the selected provider. Shipyard
-passes each nonempty value to the provider unchanged. The provider reports
-unavailable models. Aliases can change their target over time. Use a versioned
-model ID when you need a fixed target.
+The generated Codex `.env.example` sets `gpt-6-luna` for routine work and
+`gpt-6-sol` for strong work. The Claude Code model choices stay commented out.
+Shipyard passes each nonempty value to the provider unchanged. The provider
+reports unavailable models. Aliases can change their target over time. Use a
+versioned model ID when you need a fixed target.
 
-For generated Codex workflows, set optional per-role reasoning effort in
-`.shipyard/.env` with `SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT` and
-`SHIPYARD_CODEX_STRONG_REASONING_EFFORT`. The generated Codex `.env.example`
-includes both variables as commented examples; `.env` is copied from it during
-init. Leave either unset to use the provider's default effort. Valid values are
+For Codex and Claude Code workflows, set per-role reasoning effort in
+`.shipyard/.env` with `SHIPYARD_ROUTINE_REASONING_EFFORT` and
+`SHIPYARD_STRONG_REASONING_EFFORT`. The generated Codex `.env.example` sets
+routine effort to `max` and strong effort to `high`. The Claude Code example
+leaves both settings commented out. Init copies the example into `.env`.
+Remove either entry to use the provider's default effort. Valid values are
 `low`, `medium`, `high`, `xhigh`, and `max`; invalid values stop the workflow
-with a configuration error. The existing
+with a configuration error. The older Codex-prefixed effort variables remain
+Codex-only fallbacks when a shared effort value is unset. The existing
 `SHIPYARD_CODEX_ROUTINE_MODEL` and `SHIPYARD_CODEX_STRONG_MODEL` variables
 remain available for Codex-specific model overrides.
 

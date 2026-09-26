@@ -126,6 +126,7 @@ const makeAdapters = (
     },
     commandExists: async () => true,
     resolveEnvironment: async () => ({ GH_TOKEN: "repo-token" }),
+    readEnvironmentFile: async () => ({ GH_TOKEN: "repo-token" }),
     run: async (command, args, options) => {
       commands.push({ command, args, env: options.env });
       if (command === "git") {
@@ -210,6 +211,23 @@ const makeAdapters = (
 };
 
 describe("startRepositoryRunner", () => {
+  it.each([undefined, "", "  "])(
+    "requires a GH_TOKEN value in .shipyard/.env before running startup checks (%j)",
+    async (token) => {
+      const base = makeAdapters({
+        resolveEnvironment: async () => ({ GH_TOKEN: "host-token" }),
+        readEnvironmentFile: async (): Promise<Record<string, string>> =>
+          token === undefined ? {} : { GH_TOKEN: token },
+      });
+
+      await expect(
+        startRepositoryRunner({ repoDir }, base.adapters),
+      ).rejects.toThrow(/Set GH_TOKEN in \.shipyard\/\.env/);
+      expect(base.commands).toHaveLength(0);
+      expect(base.spawns).toHaveLength(0);
+    },
+  );
+
   it("rejects unsupported hosts before starting a process", async () => {
     const { adapters, spawns } = makeAdapters({ platform: () => "linux" });
 

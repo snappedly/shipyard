@@ -4,6 +4,50 @@ import { getCalls } from "./templateWorkflow.test-support.js";
 const calls = getCalls();
 
 describe("generated issue workflows", () => {
+  it.each([
+    "simple-loop",
+    "sequential-reviewer",
+    "parallel-planner",
+    "parallel-planner-with-review",
+  ])(
+    "%s removes activation when marking a ticket pending",
+    async (template) => {
+      await import(`./templates/${template}/main.mts` as string);
+
+      expect(calls.pendingLabelCommands).toContainEqual([
+        "issue",
+        "edit",
+        "42",
+        "--repo",
+        "owner/repo",
+        "--add-label",
+        "shipyard:pending",
+        "--remove-label",
+        "shipyard",
+      ]);
+    },
+  );
+
+  it.each(["parallel-planner", "parallel-planner-with-review"])(
+    "%s removes activation from each spec ticket when marking it pending",
+    async (template) => {
+      calls.spec = true;
+      await import(`./templates/${template}/main.mts` as string);
+
+      expect(calls.pendingLabelCommands.map((args) => args[2])).toEqual([
+        "43",
+        "44",
+      ]);
+      for (const args of calls.pendingLabelCommands)
+        expect(args.slice(-4)).toEqual([
+          "--add-label",
+          "shipyard:pending",
+          "--remove-label",
+          "shipyard",
+        ]);
+    },
+  );
+
   it.each(["parallel-planner", "parallel-planner-with-review"])(
     "%s stops and explains the alternate when a local branch ref conflicts",
     async (template) => {

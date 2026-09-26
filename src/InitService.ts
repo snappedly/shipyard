@@ -43,17 +43,21 @@ const roleModelEnvExample = (agentName: string): string =>
     ? `# Optional model choices for Shipyard workflows.
 # Choose models available to your Codex CLI account: https://learn.chatgpt.com/docs/models
 # The provider must support each value. Aliases can change their target over time.
-# SHIPYARD_ROUTINE_MODEL=gpt-6-luna
-# SHIPYARD_STRONG_MODEL=gpt-6-sol
-# Optional Codex reasoning effort per role: low, medium, high, xhigh, or max.
+SHIPYARD_ROUTINE_MODEL=gpt-6-luna
+SHIPYARD_STRONG_MODEL=gpt-6-sol
+# Optional reasoning effort per role: low, medium, high, xhigh, or max.
 # Leave unset to use the provider's default effort.
-# SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT=high
-# SHIPYARD_CODEX_STRONG_REASONING_EFFORT=xhigh`
+SHIPYARD_ROUTINE_REASONING_EFFORT=max
+SHIPYARD_STRONG_REASONING_EFFORT=high`
     : `# Optional model choices for Shipyard workflows.
 # Choose aliases or model IDs available to your Claude Code provider: https://code.claude.com/docs/en/model-config
 # The provider must support each value. Aliases can change their target over time.
 # SHIPYARD_ROUTINE_MODEL=sonnet
-# SHIPYARD_STRONG_MODEL=opus`;
+# SHIPYARD_STRONG_MODEL=opus
+# Optional reasoning effort per role: low, medium, high, xhigh, or max.
+# Leave unset to use the provider's default effort.
+# SHIPYARD_ROUTINE_REASONING_EFFORT=high
+# SHIPYARD_STRONG_REASONING_EFFORT=high`;
 
 export interface TemplateMetadata {
   name: string;

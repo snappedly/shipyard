@@ -150,16 +150,19 @@ Custom workflows can use `codex(CODEX_MODELS.routine)` and
 `codex(CODEX_MODELS.strong)`, or pass a model directly:
 `codex("your-model", { effort: "high" })`.
 
-The library reads these existing Codex role overrides from the host process
-environment when the module loads:
+The library reads these role overrides from the host process environment when
+the module loads:
 
 - `SHIPYARD_CODEX_ROUTINE_MODEL`
-- `SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT`
+- `SHIPYARD_ROUTINE_REASONING_EFFORT`
 - `SHIPYARD_CODEX_STRONG_MODEL`
-- `SHIPYARD_CODEX_STRONG_REASONING_EFFORT`
+- `SHIPYARD_STRONG_REASONING_EFFORT`
 
-All generated workflows support the provider-independent
-`SHIPYARD_ROUTINE_MODEL` and `SHIPYARD_STRONG_MODEL` variables in
+The older `SHIPYARD_CODEX_*_REASONING_EFFORT` variables remain Codex-only
+fallbacks when the shared effort variable for that role is unset.
+
+All generated workflows support `SHIPYARD_ROUTINE_MODEL`,
+`SHIPYARD_STRONG_MODEL`, and the shared reasoning effort variables in
 `.shipyard/.env`. The generated workflow loads that file before it resolves
 model roles. A host value overrides the same file entry. The repository-root
 `.env` is not loaded. See [agent setup](agents.mdx) for provider examples, model
