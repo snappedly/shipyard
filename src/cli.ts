@@ -1,10 +1,10 @@
 import { Command, Options } from "@effect/cli";
 import { Effect, Option } from "effect";
 import * as clack from "@clack/prompts";
-import { execSync, spawn } from "node:child_process";
+import { execFile, execSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { styleText } from "node:util";
+import { promisify, styleText } from "node:util";
 
 import { Display, type DisplayService } from "./Display.js";
 import { buildImage, removeImage } from "./DockerLifecycle.js";
@@ -42,7 +42,6 @@ import {
   RunnerLifecycleError,
 } from "./RepositoryRunnerLifecycle.js";
 import { DEFAULT_LOG_RETENTION_DAYS, purgeRunLogs } from "./LogRetention.js";
-import { repositoryRunnerNextSteps } from "./InitRepositoryRunner.js";
 import { commitAndPushInitSetup } from "./InitGitSetup.js";
 import { runnerCommand } from "./RepositoryRunnerCommands.js";
 import {
@@ -59,6 +58,8 @@ import {
   SHIPYARD_PACKAGE_NAME,
 } from "./UninstallService.js";
 import { REPOSITORY_RUNNER_WORKFLOW_PATH } from "./RepositoryRunnerWake.js";
+
+const execFileAsync = promisify(execFile);
 
 // --- Shared options ---
 
@@ -519,7 +520,6 @@ const initCommand = Command.make(
                   options: agents.map((a) => ({
                     value: a.name,
                     label: a.label,
-                    hint: `Default model: ${a.defaultModel}`,
                   })),
                 }),
               ),
@@ -674,14 +674,26 @@ const initCommand = Command.make(
             ],
           ] as const;
           for (const [index, [name, description, color]] of labels.entries()) {
-            try {
-              execSync(
-                `gh label create "${name}" --description "${description}" --color "${color}" --force`,
-                { cwd, stdio: "ignore" },
-              );
-            } catch {
-              failedLabels.push(name);
-            }
+            const created = yield* Effect.promise(() =>
+              execFileAsync(
+                "gh",
+                [
+                  "label",
+                  "create",
+                  name,
+                  "--description",
+                  description,
+                  "--color",
+                  color,
+                  "--force",
+                ],
+                { cwd },
+              ).then(
+                () => true,
+                () => false,
+              ),
+            );
+            if (!created) failedLabels.push(name);
             progressAt(
               24 + Math.round(((index + 1) / labels.length) * 10),
               "Provisioning GitHub labels",
@@ -825,7 +837,7 @@ const initCommand = Command.make(
               whilePrompt(() =>
                 clack.confirm({
                   message:
-                    "Commit .shipyard/ and any generated runner workflow, then push this branch to origin? Sandboxes need the setup committed. The push also sends any local commits not already on origin.",
+                    "Commit .shipyard/, any generated runner workflow, and package.json/package-lock.json when present, then push this branch to origin? Sandboxes need the setup committed. The push also sends any local commits not already on origin.",
                   initialValue: true,
                 }),
               ),
@@ -900,11 +912,6 @@ const initCommand = Command.make(
           progressAt(100, "Initialization complete");
         }),
       );
-
-      yield* d.text("Repository runner next steps:");
-      for (const [index, line] of repositoryRunnerNextSteps().entries()) {
-        yield* d.text(styleText("dim", `${index + 1}. ${line}`));
-      }
 
       yield* d.status("Init complete!", "success");
 
