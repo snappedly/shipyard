@@ -368,16 +368,28 @@ export const ClackDisplay = {
     progress: (title, effect) =>
       Effect.acquireUseRelease(
         Effect.sync(() => {
-          const progress = clack.progress({ max: 100, withGuide: false });
+          const columns = process.stdout.columns || 80;
+          const barSize = Math.min(20, Math.max(1, columns - 12));
+          // Clack adds a spinner and animated dots before redrawing the line.
+          const messageWidth = Math.max(0, columns - barSize - 7);
+          const fitMessage = (message: string) =>
+            message.length > messageWidth
+              ? `${message.slice(0, Math.max(0, messageWidth - 1))}…`
+              : message;
+          const progress = clack.progress({
+            max: 100,
+            size: barSize,
+            withGuide: false,
+          });
           let percent = 0;
-          let currentMessage = title;
+          let currentMessage = fitMessage(title);
           let paused = false;
-          progress.start(title);
+          progress.start(currentMessage);
           const report = ((update: DisplayProgressUpdate): void => {
             const total = Math.max(1, update.total);
             const current = Math.min(total, Math.max(0, update.current));
             const nextPercent = Math.round((current / total) * 100);
-            const message = `${update.message} (${current}/${total})`;
+            const message = fitMessage(update.message);
             currentMessage = message;
             if (nextPercent > percent) {
               progress.advance(nextPercent - percent, message);
