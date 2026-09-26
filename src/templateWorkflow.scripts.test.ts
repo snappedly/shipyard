@@ -43,7 +43,7 @@ const run = (
   });
 
 describe("issue workflow scripts", () => {
-  it("requires activation and the sole ready triage state before implementation", async () => {
+  it("accepts an in-progress issue with the sole ready triage state", async () => {
     const { dir, bin } = await fixture();
     await executable(
       join(bin, "gh"),
@@ -57,10 +57,13 @@ else process.exit(2);`,
         ISSUE_STATE: state,
       });
     expect(verify("shipyard,ready-for-agent").status).toBe(0);
+    expect(verify("shipyard:pending,ready-for-agent").status).toBe(0);
+    const needsInfo = verify("shipyard:pending,needs-info");
+    expect(needsInfo.status).not.toBe(0);
+    expect(needsInfo.stderr).toContain("needs information from the reporter");
     for (const labels of [
       "shipyard",
       "ready-for-agent",
-      "shipyard,needs-info",
       "shipyard,ready-for-agent,needs-triage",
       "shipyard,ready-for-agent,ready-for-human",
       "shipyard,ready-for-agent,wontfix",

@@ -566,6 +566,7 @@ GH_TOKEN=`);
       expect(setup).toContain("for skill in triage implement");
       expect(triage).toContain("Follow `/triage`");
       expect(triage).toContain("origin/{{BASE_BRANCH}}");
+      expect(triage).toContain("apply `needs-info` and ask the reporter");
       expect(triageGate).toContain("ready-for-agent");
       expect(handoff).toContain("gh pr create");
       expect(handoff).not.toContain("gh pr merge");
