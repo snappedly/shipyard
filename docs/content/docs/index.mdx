@@ -57,9 +57,10 @@ fails, init exits without showing completion. Fix the reported issue and run
 `npx shipyard runner install` to retry against the generated setup.
 
 After runner installation, init offers to commit and push the generated setup
-to the current branch. It stages `.shipyard/` and the wake workflow, and leaves
-`.shipyard/.env` untracked. If you decline, commit `.shipyard/` before you run
-the workflow because Docker sandboxes use committed Git history.
+to the current branch. It stages `.shipyard/`, the wake workflow, and any
+existing `package.json` and `package-lock.json`. It leaves `.shipyard/.env`
+untracked. If you decline, commit the setup and package files before you run the
+workflow because Docker sandboxes use committed Git history.
 Non-interactive init skips the offer; pass `--commit-setup true` to commit and
 push the generated files.
 

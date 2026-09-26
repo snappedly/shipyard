@@ -837,7 +837,7 @@ const initCommand = Command.make(
               whilePrompt(() =>
                 clack.confirm({
                   message:
-                    "Commit .shipyard/ and any generated runner workflow, then push this branch to origin? Sandboxes need the setup committed. The push also sends any local commits not already on origin.",
+                    "Commit .shipyard/, any generated runner workflow, and package.json/package-lock.json when present, then push this branch to origin? Sandboxes need the setup committed. The push also sends any local commits not already on origin.",
                   initialValue: true,
                 }),
               ),
