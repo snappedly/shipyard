@@ -52,6 +52,46 @@ const reusablePlannerBranch = (
   )?.branch;
 };
 
+/** Keep a reused planner branch current without discarding its own commits. */
+export const fastForwardPlannerBranch = (
+  plannerBranch: string,
+  targetBranch: string,
+  repoDir = process.cwd(),
+): void => {
+  if (plannerBranch === targetBranch) return;
+  let plannerHead: string;
+  try {
+    plannerHead = execFileSync(
+      "git",
+      ["rev-parse", "--verify", `refs/heads/${plannerBranch}`],
+      { cwd: repoDir, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+    ).trim();
+  } catch {
+    return; // WorktreeManager creates a new planner branch from HEAD.
+  }
+  const targetHead = execFileSync(
+    "git",
+    ["rev-parse", "--verify", `refs/heads/${targetBranch}`],
+    { cwd: repoDir, encoding: "utf8" },
+  ).trim();
+  if (plannerHead === targetHead) return;
+  try {
+    execFileSync(
+      "git",
+      ["merge-base", "--is-ancestor", plannerHead, targetHead],
+      { cwd: repoDir, stdio: "ignore" },
+    );
+  } catch {
+    throw new Error(
+      `Planner branch '${plannerBranch}' has commits outside '${targetBranch}'. Review and integrate them before restarting Shipyard.`,
+    );
+  }
+  execFileSync("git", ["branch", "-f", plannerBranch, targetHead], {
+    cwd: repoDir,
+    stdio: "ignore",
+  });
+};
+
 export const resolvePlannerBranch = async (
   localBranches: readonly string[],
   options: {
