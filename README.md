@@ -86,8 +86,9 @@ npx shipyard uninstall
 
 Then:
 
-1. Write an issue with a clear goal and add `shipyard`. Add `ready-for-agent`
-   when the issue is already triaged and approved for agent implementation.
+1. Write an issue with a clear goal. If it is already triaged and approved for
+   agent implementation, add `ready-for-agent`. Add `shipyard` last to activate
+   the issue.
 2. Run Shipyard. It triages issues without `ready-for-agent`, verifies ready
    issues, implements them in Docker, reviews the work, and opens a pull request.
 3. Inspect the pull request and merge it when you are happy with the result.

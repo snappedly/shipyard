@@ -74,11 +74,14 @@ or manually dispatching **Shipyard wake-up** signals the controller. A
 differently cased label, issue edit, or comment does not wake it.
 
 The bundled issue templates install Snappedly skills and repository
-dependencies inside their Docker sandbox. Shipyard runs `/triage` when it takes
-an activated ticket, then rereads the issue. Triage checks the integration
-branch, so a retry does not mistake work on its task branch for a completed
-request. Triage uses a stated visual relationship, such as equal spacing, as an
-acceptance criterion without requiring a pixel target. An inaccessible attachment
+dependencies inside their Docker sandbox. Shipyard runs `/triage` when an
+activated ticket lacks the sole `ready-for-agent` state, then rereads the issue.
+For an already triaged ticket, add `ready-for-agent` before `shipyard` to skip
+agent triage. Shipyard still verifies the live issue state before implementation.
+Triage checks the integration branch, so a retry does not mistake work on its
+task branch for a completed request. Triage uses a stated visual relationship,
+such as equal spacing, as an acceptance criterion without requiring a pixel
+target. An inaccessible attachment
 requires `needs-info` only when the text and code cannot establish a verifiable
 result. Decisions that require maintainer judgment receive `needs-triage`.
 Only an open ticket carrying
