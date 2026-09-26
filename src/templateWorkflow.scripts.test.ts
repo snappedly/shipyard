@@ -578,6 +578,44 @@ for (const name of ["triage","implement","implement-spec","code-cleanup","code-r
     expect(result.stderr).toContain("Could not install Snappedly skills");
   });
 
+  it("installs from the manifest when npm ci rejects a stale lockfile without changing it", async () => {
+    const { dir, bin } = await fixture();
+    const log = join(dir, "install.log");
+    await mkdir(join(dir, "home"));
+    await writeFile(
+      join(dir, "package.json"),
+      '{"packageManager":"npm@12.0.2"}',
+    );
+    await writeFile(join(dir, "package-lock.json"), "stale lockfile\n");
+    await executable(
+      join(bin, "npm"),
+      `const fs = require("node:fs");
+const args = process.argv.slice(2).join(" ");
+fs.appendFileSync(process.env.INSTALL_LOG, args + "\\n");
+if (args === "ci") process.exit(1);
+if (args !== "install --no-package-lock") process.exit(2);`,
+    );
+    await executable(
+      join(bin, "git"),
+      `const fs = require("node:fs"); const path = require("node:path");
+if (process.argv[2] === "remote") process.exit(0);
+const root = process.argv.at(-1);
+for (const name of ["triage","implement","implement-spec","code-cleanup","code-review","tdd"]) {
+  const dir = path.join(root,"skills","tools",name);
+  fs.mkdirSync(dir,{recursive:true}); fs.writeFileSync(path.join(dir,"SKILL.md"), name);
+}`,
+    );
+
+    const result = run("bash", [script("setup.sh")], dir, bin, {
+      INSTALL_LOG: log,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(await readFile(log, "utf8")).toBe("ci\ninstall --no-package-lock\n");
+    expect(await readFile(join(dir, "package-lock.json"), "utf8")).toBe(
+      "stale lockfile\n",
+    );
+  });
+
   it("publishes one ready PR, marks scoped issues complete, and removes activation", async () => {
     const { dir, bin } = await fixture();
     const log = join(dir, "handoff.log");

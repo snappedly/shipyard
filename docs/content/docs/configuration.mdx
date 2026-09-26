@@ -91,6 +91,13 @@ follow `cwd`.
 
 Default run logs are placed in a folder named for the local calendar date, such
 as `.shipyard/logs/2026-09-22/`. Explicit `logging.path` values are unchanged.
+If `createSandbox()` setup fails before an agent run starts, Shipyard writes the
+error to `<branch>-setup.log` in that date folder and prints its path.
+
+Generated npm setup runs `npm ci` when a lockfile exists. If `npm ci` fails, it
+installs from `package.json` without changing `package-lock.json`. The fallback
+does not repair a stale lockfile; commit a corrected lockfile for future clean
+installs.
 
 Shipyard automatically retains default run logs for eight calendar days. To
 remove all default run logs manually:

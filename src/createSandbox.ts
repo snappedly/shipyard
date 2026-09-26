@@ -90,10 +90,39 @@ const runRequiredSandboxHook = (
       ? Effect.succeed(result)
       : Effect.fail(
           new Error(
-            `Sandbox setup failed (exit ${result.exitCode}): ${command}\n${result.stderr}`,
+            `Sandbox setup failed (exit ${result.exitCode}): ${command}\n${result.stderr || result.stdout}`,
           ),
         ),
   );
+
+const logSetupFailure = async (
+  hostRepoDir: string,
+  branch: string,
+  error: unknown,
+): Promise<void> => {
+  const logPath = buildDefaultLogPath(hostRepoDir, branch, undefined, "setup");
+  try {
+    await assertNoSymlinkComponents(hostRepoDir, logPath, "setup log path");
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const display = yield* Display;
+        yield* display.status(
+          error instanceof Error ? error.message : String(error),
+          "error",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.provide(FileDisplay.layer(logPath), NodeFileSystem.layer),
+        ),
+      ),
+    );
+    console.error(`Sandbox setup log: ${logPath}`);
+  } catch (logError) {
+    console.error(
+      `Could not write sandbox setup log: ${logError instanceof Error ? logError.message : String(logError)}`,
+    );
+  }
+};
 
 /**
  * Options accepted by `SandboxRunResult.resume()` / `.fork()`. Mirrors
@@ -740,6 +769,9 @@ export const createSandboxFromWorktree = async (
           concurrency: "unbounded",
         });
       }).pipe(
+        Effect.tapError((error) =>
+          Effect.promise(() => logSetupFailure(hostRepoDir, branch, error)),
+        ),
         Effect.onError(() =>
           providerHandle
             ? Effect.promise(() => providerHandle!.close().catch(() => {}))
@@ -881,6 +913,11 @@ export const createSandbox = async (
               }
               yield* Effect.all(allEffects, { concurrency: "unbounded" });
             }).pipe(
+              Effect.tapError((error) =>
+                Effect.promise(() =>
+                  logSetupFailure(hostRepoDir, branch, error),
+                ),
+              ),
               Effect.onError(() =>
                 providerHandle
                   ? Effect.promise(() =>
