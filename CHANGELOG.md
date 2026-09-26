@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.9.1
+
+### Patch Changes
+
+- Sync staging and production release history. Package behavior is unchanged from 0.9.0.
+
+## 0.9.0
+
+### Minor Changes
+
+- b8b8950: Make GitHub Issues the fixed init tracker, build the Docker image automatically,
+  and require repository-runner installation before init completes.
+- b8b8950: Add `shipyard uninstall` to remove repository setup, the optional runner, and the package dependency.
+- b8b8950: Require atomic triage-store writes and reclaim started dispatches without an expiry.
+- b8b8950: Add dedicated workflow and integration package entrypoints, PostgreSQL-backed durable triage and repair stores, and shared prompt and sandbox run preparation.
+- b8b8950: Offer to commit and push generated Shipyard setup during init. Pass the
+  detected GitHub repository directly to sandbox setup.
+- b8b8950: Show one progress bar across Shipyard initialization, advancing through setup stages and pausing while prompts are active.
+
+## 0.8.0
+
+### Minor Changes
+
+- c10ce96: Show phase progress while scaffolding the `.shipyard/` configuration directory.
+- c10ce96: Support Docker-only sandbox execution. Remove the no-sandbox and Vercel providers, host and bind-mount execution paths, and obsolete runner sandbox mask management.
+- c10ce96: Parallel planner workflows use the routine model for ticket work and the strong model for planning, integration, and spec review.
+- c10ce96: Ask before removing existing GitHub repository runner registrations during interactive installs, then retry installation.
+- c10ce96: Remove the blank init template and default to the simple-loop workflow.
+- c10ce96: Run bundled standalone and spec issue workflows with Snappedly skills in Docker. Provision GitHub workflow labels, mark selected tickets pending until completion or a block, and integrate their work into one spec pull request. Derive spec and PR status from child tickets, include tickets linked through the PR, block invalid selected relationships, allow a cleared blocked ticket to retry independently, and avoid rerunning completed standalone issues.
+- c10ce96: Select routine and strong models from repository policy for coordinator phase attempts.
+- c10ce96: Generated simple-loop and sequential-reviewer workflows can select routine and strong models for Codex or Claude Code.
+- c10ce96: Run triage when Shipyard takes an activated ticket, require both activation and agent-ready labels before implementation, and block non-ready triage outcomes.
+
+### Patch Changes
+
+- c10ce96: Make the README quick start easier to follow, correct the Snappedly skills setup command, and link to the detailed issue-runner guide.
+- c10ce96: Apply Codex role models and reasoning effort values from generated workflow
+  environment files. Reject persisted agent selections that do not match trusted
+  policy.
+- c10ce96: Clarify automated runner use in the README and fix its Markdown formatting.
+- c10ce96: Handle local branch namespace conflicts in parallel planner templates, offering a stable alternate branch or safe deletion of merged, unused conflicting refs.
+
 ## 0.7.0
 
 ### Minor Changes
