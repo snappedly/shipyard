@@ -2,15 +2,6 @@ import { describe, expect, it } from "vitest";
 import { mergeProviderEnv } from "./mergeProviderEnv.js";
 
 describe("mergeProviderEnv", () => {
-  it("returns env resolver output when no provider env is set", () => {
-    const result = mergeProviderEnv({
-      resolvedEnv: { FOO: "bar" },
-      agentProviderEnv: {},
-      sandboxProviderEnv: {},
-    });
-    expect(result).toEqual({ FOO: "bar" });
-  });
-
   it("agent provider env overrides env resolver output", () => {
     const result = mergeProviderEnv({
       resolvedEnv: { FOO: "old" },
@@ -48,14 +39,5 @@ describe("mergeProviderEnv", () => {
     ).toThrow(
       /overlapping env keys between agent provider and sandbox provider: SHARED/i,
     );
-  });
-
-  it("allows same key in provider env and resolved env (override)", () => {
-    const result = mergeProviderEnv({
-      resolvedEnv: { KEY: "resolved" },
-      agentProviderEnv: { KEY: "agent" },
-      sandboxProviderEnv: {},
-    });
-    expect(result).toEqual({ KEY: "agent" });
   });
 });

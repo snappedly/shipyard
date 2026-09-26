@@ -42,7 +42,6 @@ import { assertNoSymlinkComponents } from "./pathSecurity.js";
 import { resolveCwd } from "./resolveCwd.js";
 import { assertResumeSessionExists } from "./resumePrecheck.js";
 import { registerShutdown } from "./shutdownRegistry.js";
-import { CLI_NAME } from "./runtimeNames.js";
 
 export interface CreateSandboxOptions {
   /** Explicit branch for the worktree (required). */
