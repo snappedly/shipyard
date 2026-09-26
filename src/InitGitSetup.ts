@@ -35,6 +35,9 @@ export const commitAndPushInitSetup = (repoDir: string): InitGitSetupResult => {
   if (existsSync(join(repoDir, REPOSITORY_RUNNER_WORKFLOW_PATH))) {
     paths.push(REPOSITORY_RUNNER_WORKFLOW_PATH);
   }
+  for (const packageFile of ["package.json", "package-lock.json"]) {
+    if (existsSync(join(repoDir, packageFile))) paths.push(packageFile);
+  }
 
   execFileSync("git", ["add", "--", ...paths], {
     cwd: repoDir,

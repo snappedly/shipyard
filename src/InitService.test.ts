@@ -391,14 +391,14 @@ describe("InitService scaffold", () => {
   });
 
   describe("getNextStepsLines", () => {
-    it("shows environment setup, subscription login, and both start commands", () => {
+    it("shows environment setup, subscription login, and runner start", () => {
       expect(getNextStepsLines()).toEqual([
         "Next steps:",
         "1. Fill in the values you need in `.shipyard/.env`.",
         "2. If using a model subscription, sign in. For Codex:",
         `   codex --config 'cli_auth_credentials_store="file"' login`,
         "   test -f ~/.codex/auth.json",
-        "3. If the runner installed successfully, start it with `npx shipyard runner start`; otherwise run `npx shipyard run`.",
+        "3. Start the repository runner with `npx shipyard runner start`.",
       ]);
     });
   });
@@ -539,6 +539,9 @@ describe("InitService scaffold", () => {
         "utf-8",
       );
       expect(main).toContain("./planner-branch.mjs");
+      expect(main).toContain(
+        "fastForwardPlannerBranch(plannerBranch, targetBranch)",
+      );
       expect(helper).toContain("resolvePlannerBranch");
     },
   );

@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { resolvePlannerBranch } from "./templates/parallel-planner/planner-branch.mjs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  fastForwardPlannerBranch,
+  resolvePlannerBranch,
+} from "./templates/parallel-planner/planner-branch.mjs";
 
 const existingPlannerBranch = "shipyard/planner/20260920-210724-7707b7";
 
@@ -153,4 +160,72 @@ describe("resolvePlannerBranch", () => {
     ).rejects.toThrow(/commits not merged into HEAD/);
     expect(deleteBranches).not.toHaveBeenCalled();
   });
+});
+
+it("fast-forwards a stale planner branch to include current setup", () => {
+  const repo = mkdtempSync(join(tmpdir(), "shipyard-planner-"));
+  const git = (...args: string[]) =>
+    execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
+  try {
+    git("init", "-q", "-b", "staging");
+    git(
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "commit",
+      "--allow-empty",
+      "-qm",
+      "initial",
+    );
+    git("branch", "shipyard/planner");
+    git(
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "commit",
+      "--allow-empty",
+      "-qm",
+      "add setup",
+    );
+
+    fastForwardPlannerBranch("shipyard/planner", "staging", repo);
+
+    expect(git("rev-parse", "shipyard/planner")).toBe(
+      git("rev-parse", "staging"),
+    );
+
+    git(
+      "worktree",
+      "add",
+      "-q",
+      join(repo, "planner-worktree"),
+      "shipyard/planner",
+    );
+    expect(() =>
+      fastForwardPlannerBranch("shipyard/planner", "staging", repo),
+    ).not.toThrow();
+    git("worktree", "remove", join(repo, "planner-worktree"));
+
+    git("checkout", "-q", "shipyard/planner");
+    git(
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "commit",
+      "--allow-empty",
+      "-qm",
+      "planner work",
+    );
+    git("checkout", "-q", "staging");
+    const plannerHead = git("rev-parse", "shipyard/planner");
+    expect(() =>
+      fastForwardPlannerBranch("shipyard/planner", "staging", repo),
+    ).toThrow(/commits outside 'staging'/);
+    expect(git("rev-parse", "shipyard/planner")).toBe(plannerHead);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
 });
