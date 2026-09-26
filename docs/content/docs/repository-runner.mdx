@@ -96,6 +96,7 @@ ticket to that spec when no other parent link exists. Conflicting links block
 the selected ticket for correction.
 Selected tickets get `shipyard:pending` and lose `shipyard` when work starts.
 Successful handoff replaces `shipyard:pending` with `shipyard:complete`.
+It also removes `ready-for-human` from each completed issue.
 The parent spec and existing PR show
 `shipyard:blocked` if an unfinished child is blocked, `shipyard:outstanding-tasks`
 if other children remain, or `shipyard:complete` when all linked tickets are

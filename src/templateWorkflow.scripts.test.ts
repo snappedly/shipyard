@@ -715,6 +715,18 @@ else process.exit(2);
       "gh issue edit 1 --repo owner/repo --add-label shipyard:complete",
     );
     expect(commands).toContain(
+      "gh issue edit 1 --repo owner/repo --remove-label ready-for-human",
+    );
+    expect(
+      commands.indexOf(
+        "gh issue edit 1 --repo owner/repo --add-label shipyard:complete",
+      ),
+    ).toBeLessThan(
+      commands.indexOf(
+        "gh issue edit 1 --repo owner/repo --remove-label ready-for-human",
+      ),
+    );
+    expect(commands).toContain(
       "gh issue edit 1 --repo owner/repo --remove-label shipyard:pending",
     );
     expect(commands.indexOf("gh pr ready 7 --repo owner/repo")).toBeLessThan(
@@ -754,7 +766,9 @@ else process.exit(2);
     expect((await readFile(log, "utf8")).slice(beforeUnready)).not.toContain(
       "--add-label shipyard:complete",
     );
-    expect(await readFile(log, "utf8")).not.toContain("ready-for-human");
+    expect((await readFile(log, "utf8")).slice(beforeUnready)).not.toContain(
+      "ready-for-human",
+    );
 
     result = run(
       "bash",
@@ -818,6 +832,33 @@ else process.exit(2);
     );
     expect(failedTicketCommands).not.toContain("--remove-label shipyard");
 
+    const beforeFailedRoot = (await readFile(log, "utf8")).length;
+    result = run(
+      "bash",
+      [
+        script("handoff.sh"),
+        "2",
+        "shipyard/spec-2",
+        "staging",
+        "owner/repo",
+        "2,3,4",
+      ],
+      dir,
+      bin,
+      { ...env, FAIL_COMPLETE_TICKET: "2" },
+      "Checks: pass; Review: approved",
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const failedRootCommands = (await readFile(log, "utf8")).slice(
+      beforeFailedRoot,
+    );
+    expect(failedRootCommands).toContain(
+      "gh issue edit 3 --repo owner/repo --remove-label ready-for-human",
+    );
+    expect(failedRootCommands).not.toContain(
+      "gh issue edit 2 --repo owner/repo --remove-label ready-for-human",
+    );
+
     await writeFile(state, JSON.stringify({ number: 0, isDraft: true }));
     result = run(
       "bash",
@@ -844,6 +885,10 @@ else process.exit(2);
     for (const id of [2, 3, 4])
       expect(specCommands).toContain(
         `gh issue edit ${id} --repo owner/repo --add-label shipyard:complete`,
+      );
+    for (const id of [2, 3, 4])
+      expect(specCommands).toContain(
+        `gh issue edit ${id} --repo owner/repo --remove-label ready-for-human`,
       );
     expect(
       specCommands.lastIndexOf(
@@ -887,6 +932,12 @@ else process.exit(2);
     );
     expect(partialCommands).not.toContain(
       "gh issue edit 4 --repo owner/repo --add-label shipyard:complete",
+    );
+    expect(partialCommands).toContain(
+      "gh issue edit 3 --repo owner/repo --remove-label ready-for-human",
+    );
+    expect(partialCommands).not.toContain(
+      "gh issue edit 2 --repo owner/repo --remove-label ready-for-human",
     );
     const beforeBlockedOutstanding = (await readFile(log, "utf8")).length;
     result = run(
