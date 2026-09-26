@@ -12,6 +12,8 @@ const initialCwd = process.cwd();
 const modelEnvironmentNames = [
   "SHIPYARD_ROUTINE_MODEL",
   "SHIPYARD_STRONG_MODEL",
+  "SHIPYARD_ROUTINE_REASONING_EFFORT",
+  "SHIPYARD_STRONG_REASONING_EFFORT",
   "SHIPYARD_CODEX_ROUTINE_MODEL",
   "SHIPYARD_CODEX_STRONG_MODEL",
   "SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT",
@@ -25,6 +27,7 @@ let envDirectory: string | undefined;
 const calls = vi.hoisted(() => ({
   events: [] as string[],
   pendingEdits: [] as string[],
+  pendingLabelCommands: [] as string[][],
   triaged: [] as Array<{ id: string; beforeEvents: number }>,
   verified: [] as string[],
   triageReady: true,
@@ -46,6 +49,7 @@ const calls = vi.hoisted(() => ({
   spec: false,
   multi: false,
   commands: [] as string[],
+  handoffInputs: [] as string[],
   localBranches: [] as string[],
   creates: [] as Array<{
     branch: string;
@@ -96,6 +100,8 @@ vi.mock("node:child_process", () => ({
     if (command === "gh" && args[0] === "label") return "";
     if (command === "gh" && args[0] === "issue" && args[1] === "edit") {
       calls.pendingEdits.push(args[2]!);
+      if (args.includes("shipyard:pending"))
+        calls.pendingLabelCommands.push(args);
       return "";
     }
     if (command === "bash" && args[0] === ".shipyard/block-scope.sh") {
@@ -252,7 +258,7 @@ vi.mock("@snappedly-tools/shipyard", () => {
           };
         return packet("integration passed");
       },
-      exec: async (command: string) => {
+      exec: async (command: string, options?: { stdin?: string }) => {
         calls.commands.push(command);
         if (command === "git rev-parse HEAD") {
           headReads++;
@@ -303,6 +309,7 @@ vi.mock("@snappedly-tools/shipyard", () => {
           return { exitCode: 0, stdout: "integrated", stderr: "" };
         }
         calls.events.push("handoff");
+        calls.handoffInputs.push(options?.stdin ?? "");
         if (calls.handoffThrows)
           throw new Error("transport lost during PR handoff");
         return {
@@ -361,6 +368,7 @@ vi.mock("@snappedly-tools/shipyard", () => {
           (typeof model === "string" ? undefined : model.effort)),
   });
   return {
+    REASONING_EFFORTS: ["low", "medium", "high", "xhigh", "max"],
     CODEX_REASONING_EFFORTS: ["low", "medium", "high", "xhigh", "max"],
     CODEX_MODELS: codexModels,
     codex: (
@@ -430,6 +438,7 @@ beforeEach(() => {
   envDirectory = undefined;
   calls.events.length = 0;
   calls.pendingEdits.length = 0;
+  calls.pendingLabelCommands.length = 0;
   calls.triaged.length = 0;
   calls.verified.length = 0;
   calls.triageReady = true;
@@ -441,6 +450,7 @@ beforeEach(() => {
   calls.spec = false;
   calls.multi = false;
   calls.commands.length = 0;
+  calls.handoffInputs.length = 0;
   calls.localBranches.length = 0;
   calls.creates.length = 0;
   calls.specContent.length = 0;

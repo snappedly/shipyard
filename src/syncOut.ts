@@ -180,6 +180,7 @@ export const countCommitsToSync = (
 export const syncOut = (
   hostRepoDir: string,
   handle: IsolatedSandboxHandle,
+  copiedPaths: readonly string[] = [],
 ): Effect.Effect<void, SyncError> =>
   Effect.gen(function* () {
     const worktreePath = handle.worktreePath;
@@ -235,11 +236,19 @@ export const syncOut = (
           }),
       ),
     );
-    const hasUntracked = lsFilesResult.stdout.length > 0;
-
-    const untrackedFiles = hasUntracked
-      ? lsFilesResult.stdout.split("\0").filter((f) => f.length > 0)
-      : [];
+    // A copied input can be untracked on an older branch. Only Git-committed
+    // changes to that path should return to the host as task output.
+    const untrackedFiles = lsFilesResult.stdout
+      .split("\0")
+      .filter((path) => path.length > 0)
+      .filter(
+        (path) =>
+          !copiedPaths.some((copiedPath) => {
+            const copied = posix.normalize(copiedPath).replace(/\/$/, "");
+            return path === copied || path.startsWith(`${copied}/`);
+          }),
+      );
+    const hasUntracked = untrackedFiles.length > 0;
 
     yield* Effect.try({
       try: () =>

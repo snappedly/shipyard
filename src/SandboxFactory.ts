@@ -285,7 +285,7 @@ export const WorktreeDockerSandboxFactory = {
                         copyPaths,
                         copyTimeoutMs: timeouts?.copyToWorktreeMs,
                       }),
-                      ({ sandbox, worktreePath, handle }) =>
+                      ({ sandbox, worktreePath, handle, copiedPaths }) =>
                         makeEffect(
                           {
                             hostWorktreePath: worktreeInfo.path,
@@ -296,6 +296,7 @@ export const WorktreeDockerSandboxFactory = {
                               syncOut(
                                 worktreeInfo.path,
                                 handle as IsolatedSandboxHandle,
+                                copiedPaths,
                               ),
                           },
                           sandbox,

@@ -42,7 +42,6 @@ import { assertNoSymlinkComponents } from "./pathSecurity.js";
 import { resolveCwd } from "./resolveCwd.js";
 import { assertResumeSessionExists } from "./resumePrecheck.js";
 import { registerShutdown } from "./shutdownRegistry.js";
-import { CLI_NAME } from "./runtimeNames.js";
 
 export interface CreateSandboxOptions {
   /** Explicit branch for the worktree (required). */
@@ -90,10 +89,39 @@ const runRequiredSandboxHook = (
       ? Effect.succeed(result)
       : Effect.fail(
           new Error(
-            `Sandbox setup failed (exit ${result.exitCode}): ${command}\n${result.stderr}`,
+            `Sandbox setup failed (exit ${result.exitCode}): ${command}\n${result.stderr || result.stdout}`,
           ),
         ),
   );
+
+const logSetupFailure = async (
+  hostRepoDir: string,
+  branch: string,
+  error: unknown,
+): Promise<void> => {
+  const logPath = buildDefaultLogPath(hostRepoDir, branch, undefined, "setup");
+  try {
+    await assertNoSymlinkComponents(hostRepoDir, logPath, "setup log path");
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const display = yield* Display;
+        yield* display.status(
+          error instanceof Error ? error.message : String(error),
+          "error",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.provide(FileDisplay.layer(logPath), NodeFileSystem.layer),
+        ),
+      ),
+    );
+    console.error(`Sandbox setup log: ${logPath}`);
+  } catch (logError) {
+    console.error(
+      `Could not write sandbox setup log: ${logError instanceof Error ? logError.message : String(logError)}`,
+    );
+  }
+};
 
 /**
  * Options accepted by `SandboxRunResult.resume()` / `.fork()`. Mirrors
@@ -677,6 +705,7 @@ export const createSandboxFromWorktree = async (
   let providerHandle: SessionTransferHandle | IsolatedSandboxHandle | undefined;
   let sandbox: SandboxService;
   let sandboxRepoDir: string;
+  let copiedPaths: readonly string[] = [];
 
   if (isTestMode) {
     sandbox = options._test!.buildSandbox!(worktreePath);
@@ -709,6 +738,7 @@ export const createSandboxFromWorktree = async (
     providerHandle = startResult.handle;
     sandbox = startResult.sandbox;
     sandboxRepoDir = startResult.worktreePath;
+    copiedPaths = startResult.copiedPaths;
   }
 
   // 3. Run onSandboxReady hooks (sandbox-side and host-side in parallel)
@@ -740,6 +770,9 @@ export const createSandboxFromWorktree = async (
           concurrency: "unbounded",
         });
       }).pipe(
+        Effect.tapError((error) =>
+          Effect.promise(() => logSetupFailure(hostRepoDir, branch, error)),
+        ),
         Effect.onError(() =>
           providerHandle
             ? Effect.promise(() => providerHandle!.close().catch(() => {}))
@@ -751,7 +784,12 @@ export const createSandboxFromWorktree = async (
 
   // 4. Build applyToHost callback
   const applyToHost = providerHandle
-    ? () => syncOut(worktreePath, providerHandle as IsolatedSandboxHandle)
+    ? () =>
+        syncOut(
+          worktreePath,
+          providerHandle as IsolatedSandboxHandle,
+          copiedPaths,
+        )
     : () => Effect.void;
 
   // 5. Build and return sandbox handle — container-only close (worktree owns worktree)
@@ -796,6 +834,7 @@ export const createSandbox = async (
   // Once the worktree exists, any later failure (e.g. a missing image surfacing
   // when the provider creates the container) tears down the container — if it
   // started — and removes the worktree so it is not orphaned on disk.
+  let copiedPaths: readonly string[] = [];
   const { hostRepoDir, worktreePath, providerHandle, sandbox, sandboxRepoDir } =
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -851,6 +890,7 @@ export const createSandbox = async (
             providerHandle = startResult.handle;
             sandbox = startResult.sandbox;
             sandboxRepoDir = startResult.worktreePath;
+            copiedPaths = startResult.copiedPaths;
           }
 
           // Run onSandboxReady hooks (sandbox-side and host-side in parallel). If
@@ -881,6 +921,11 @@ export const createSandbox = async (
               }
               yield* Effect.all(allEffects, { concurrency: "unbounded" });
             }).pipe(
+              Effect.tapError((error) =>
+                Effect.promise(() =>
+                  logSetupFailure(hostRepoDir, branch, error),
+                ),
+              ),
               Effect.onError(() =>
                 providerHandle
                   ? Effect.promise(() =>
@@ -906,7 +951,12 @@ export const createSandbox = async (
 
   // Build applyToHost callback (once, reused across runs)
   const applyToHost = providerHandle
-    ? () => syncOut(worktreePath, providerHandle as IsolatedSandboxHandle)
+    ? () =>
+        syncOut(
+          worktreePath,
+          providerHandle as IsolatedSandboxHandle,
+          copiedPaths,
+        )
     : () => Effect.void;
 
   let closed = false;

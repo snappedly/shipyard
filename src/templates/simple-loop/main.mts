@@ -22,24 +22,27 @@ const roleModels = {
   routine: readRoleModel("routine"),
   strong: readRoleModel("strong"),
 };
-const CODEX_REASONING_EFFORTS = shipyard.CODEX_REASONING_EFFORTS;
-type CodexReasoningEffort = shipyard.CodexReasoningEffort;
-const readCodexReasoningEffort = (
+const REASONING_EFFORTS = shipyard.REASONING_EFFORTS;
+type ReasoningEffort = shipyard.ReasoningEffort;
+const readRoleReasoningEffort = (
   role: ModelRole,
-): CodexReasoningEffort | undefined => {
-  if (!CODEX_PROVIDER) return undefined;
-  const envName = `SHIPYARD_CODEX_${role.toUpperCase()}_REASONING_EFFORT`;
-  const effort = process.env[envName]?.trim();
+): ReasoningEffort | undefined => {
+  const envName = `SHIPYARD_${role.toUpperCase()}_REASONING_EFFORT`;
+  const legacyName = `SHIPYARD_CODEX_${role.toUpperCase()}_REASONING_EFFORT`;
+  const sharedEffort = process.env[envName]?.trim();
+  const effort =
+    sharedEffort ||
+    (CODEX_PROVIDER ? process.env[legacyName]?.trim() : undefined);
   if (!effort) return undefined;
-  if (!(CODEX_REASONING_EFFORTS as readonly string[]).includes(effort))
+  if (!(REASONING_EFFORTS as readonly string[]).includes(effort))
     throw new Error(
-      `${envName} must be one of ${CODEX_REASONING_EFFORTS.join(", ")}; received "${effort}"`,
+      `${sharedEffort ? envName : legacyName} must be one of ${REASONING_EFFORTS.join(", ")}; received "${effort}"`,
     );
-  return effort as CodexReasoningEffort;
+  return effort as ReasoningEffort;
 };
 const roleEfforts = {
-  routine: readCodexReasoningEffort("routine"),
-  strong: readCodexReasoningEffort("strong"),
+  routine: readRoleReasoningEffort("routine"),
+  strong: readRoleReasoningEffort("strong"),
 };
 const readCodexRoleModel = (role: ModelRole, defaultModel: AgentModel) => {
   if (!CODEX_PROVIDER || typeof defaultModel === "string") return defaultModel;
@@ -173,11 +176,14 @@ for (let iteration = 0; iteration < 3; iteration++) {
         repository,
         "--add-label",
         "shipyard:pending",
+        "--remove-label",
+        "shipyard",
       ]);
     const sandbox = await shipyard.createSandbox({
       branch: issue.branch,
       sandbox: sandboxProvider,
       hooks,
+      copyToWorktree: [".shipyard/setup.sh"],
     });
     let evidence: string;
     try {
@@ -189,7 +195,7 @@ for (let iteration = 0; iteration < 3; iteration++) {
           agent: roleAgent("routine", shipyard.CODEX_MODELS.routine),
           maxIterations: 1,
           promptFile: "./.shipyard/triage-prompt.md",
-          promptArgs: { TASK_ID: ticketId },
+          promptArgs: { TASK_ID: ticketId, BASE_BRANCH: targetBranch },
         });
         verifyTriage(ticketId);
       }
@@ -225,6 +231,7 @@ for (let iteration = 0; iteration < 3; iteration++) {
     const publication = await shipyard.createSandbox({
       branch: issue.branch,
       sandbox: sandboxProvider,
+      copyToWorktree: [".shipyard/handoff.sh"],
     });
     try {
       publicationUncertain = true;

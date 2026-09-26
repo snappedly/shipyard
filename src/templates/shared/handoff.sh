@@ -103,6 +103,7 @@ for ((i=1; i<${#scope_ids[@]}; i++)); do
     echo "Could not mark ticket #${scope_ids[i]} complete; retry issue completion when GitHub is available" >&2
     exit 75
   fi
+  remove_issue_label "${scope_ids[i]}" ready-for-human
   remove_issue_label "${scope_ids[i]}" shipyard:blocked
   remove_issue_label "${scope_ids[i]}" shipyard:pending
 done
@@ -128,7 +129,11 @@ if ! gh label create "$status_label" --repo "$repo" --color "$status_color" --de
   echo "Warning: could not create $status_label" >&2
   status_synced=false
 fi
-if ! gh issue edit "$issue" --repo "$repo" --add-label "$status_label"; then
+if gh issue edit "$issue" --repo "$repo" --add-label "$status_label"; then
+  if [[ "$status_label" == shipyard:complete ]]; then
+    remove_issue_label "$issue" ready-for-human
+  fi
+else
   if [[ "$branch" == "shipyard/issue-$issue" ]]; then
     echo "Could not mark ticket #$issue complete; retry issue completion when GitHub is available" >&2
     exit 75
@@ -170,6 +175,6 @@ if [[ "$status_synced" == true ]]; then
     fi
   done
 else
-  echo "Warning: status labels need reconciliation; retaining ticket activation" >&2
+  echo "Warning: status labels need reconciliation; add shipyard to the ticket to retry" >&2
 fi
 printf '%s\n' "$url"

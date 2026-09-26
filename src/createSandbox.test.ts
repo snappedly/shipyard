@@ -1278,6 +1278,14 @@ describe("createSandbox", () => {
           _test: { buildSandbox: (sandboxDir) => makeLocalSandbox(sandboxDir) },
         }),
       ).rejects.toThrow("exit 17");
+      const logDir = join(hostDir, ".shipyard", "logs");
+      const dates = readdirSync(logDir);
+      expect(dates).toHaveLength(1);
+      const log = await readFile(
+        join(logDir, dates[0]!, "test-failed-install-setup.log"),
+        "utf8",
+      );
+      expect(log).toContain("Sandbox setup failed (exit 17): exit 17");
     } finally {
       await rm(hostDir, { recursive: true, force: true });
     }
@@ -1316,6 +1324,14 @@ describe("createSandbox", () => {
         }),
       ).rejects.toThrow("failed install");
       expect(closed).toBe(true);
+      const dates = readdirSync(join(hostDir, ".shipyard", "logs"));
+      expect(dates).toHaveLength(1);
+      expect(
+        await readFile(
+          join(hostDir, ".shipyard", "logs", dates[0]!, "main-setup.log"),
+          "utf8",
+        ),
+      ).toContain("failed install");
     } finally {
       await rm(hostDir, { recursive: true, force: true });
     }
@@ -2188,6 +2204,38 @@ describe("createSandbox", () => {
     try {
       const copied = await sandbox.exec("cat config.json");
       expect(JSON.parse(copied.stdout)).toEqual({ key: "value" });
+    } finally {
+      await sandbox.close();
+      await rm(hostDir, { recursive: true, force: true });
+    }
+  });
+
+  it("runs a copied setup script when the source branch predates it", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "sandbox-test-"));
+    await initRepo(hostDir);
+    await commitFile(hostDir, "init.txt", "init", "initial commit");
+    await execAsync("git branch stale", { cwd: hostDir });
+    await mkdir(join(hostDir, ".shipyard"));
+    await commitFile(
+      hostDir,
+      ".shipyard/setup.sh",
+      "#!/usr/bin/env bash\nprintf ready > setup-ran.txt\n",
+      "add setup script",
+    );
+
+    const sandbox = await createSandbox({
+      branch: "stale",
+      sandbox: testSandbox,
+      copyToWorktree: [".shipyard/setup.sh"],
+      hooks: {
+        sandbox: { onSandboxReady: [{ command: "bash .shipyard/setup.sh" }] },
+      },
+      cwd: hostDir,
+    });
+
+    try {
+      const result = await sandbox.exec("cat setup-ran.txt");
+      expect(result.stdout).toBe("ready");
     } finally {
       await sandbox.close();
       await rm(hostDir, { recursive: true, force: true });

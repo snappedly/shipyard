@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import {
   parseWorkBrief,
   type RiskLevel,
-  type WorkBrief,
   type WorkItemKind,
 } from "../contracts/index.js";
 import type {

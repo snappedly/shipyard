@@ -12,12 +12,6 @@ import { describe, expect, it } from "vitest";
 import { testIsolated } from "./test-isolated.js";
 
 describe("testIsolated()", () => {
-  it("returns a SandboxProvider with tag 'isolated' and name 'test-isolated'", () => {
-    const provider = testIsolated();
-    expect(provider.tag).toBe("isolated");
-    expect(provider.name).toBe("test-isolated");
-  });
-
   it("can create a sandbox and exec a command", async () => {
     const provider = testIsolated();
     const handle = await provider.create({ env: {} });

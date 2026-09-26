@@ -1,6 +1,7 @@
 import { Duration, Effect, Exit, TestClock, TestContext } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { exec } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +11,7 @@ import {
   type IsolatedSandboxHandle,
 } from "./SandboxProvider.js";
 import { startSandbox, COPY_PATHS_TIMEOUT_MS } from "./startSandbox.js";
+import { syncOut } from "./syncOut.js";
 import { testIsolated } from "./sandboxes/test-isolated.js";
 import { CopyToWorktreeTimeoutError } from "./errors.js";
 
@@ -258,6 +260,39 @@ it("copies configured paths from the original repository when syncing a worktree
       cwd: handle.worktreePath,
     });
     expect(copied.stdout).toBe("from-original");
+  } finally {
+    await handle?.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("does not return copied inputs as task changes from a stale branch", async () => {
+  const root = await mkdtemp(join(tmpdir(), "shipyard-copied-input-"));
+  const repo = join(root, "repo");
+  const worktree = join(root, "stale");
+  await mkdir(repo);
+  let handle: IsolatedSandboxHandle | undefined;
+  try {
+    await initRepo(repo);
+    await commitFile(repo, "initial.txt", "initial", "initial");
+    await execAsync(`git worktree add -b stale "${worktree}"`, { cwd: repo });
+    await commitFile(repo, "setup.sh", "runner input", "add setup");
+
+    const result = await Effect.runPromise(
+      startSandbox({
+        provider: testIsolated(),
+        hostRepoDir: worktree,
+        sourceRepoDir: repo,
+        env: {},
+        copyPaths: ["setup.sh"],
+      }),
+    );
+    handle = result.handle as IsolatedSandboxHandle;
+    await handle.exec("printf task > task.txt", { cwd: handle.worktreePath });
+    await Effect.runPromise(syncOut(worktree, handle, result.copiedPaths));
+
+    expect(existsSync(join(worktree, "setup.sh"))).toBe(false);
+    expect(await readFile(join(worktree, "task.txt"), "utf8")).toBe("task");
   } finally {
     await handle?.close();
     await rm(root, { recursive: true, force: true });

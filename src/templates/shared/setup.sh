@@ -18,7 +18,14 @@ if [[ -f package.json ]]; then
     else manager=npm; fi
   fi
   case "$manager" in
-    npm) npm install ;;
+    npm)
+      if [[ -f package-lock.json ]]; then
+        if ! npm ci; then
+          echo "npm ci failed; installing from package.json without changing package-lock.json" >&2
+          npm install --no-package-lock
+        fi
+      else npm install --no-package-lock
+      fi ;;
     pnpm) corepack pnpm install ;;
     yarn) corepack yarn install ;;
     bun)

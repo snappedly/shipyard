@@ -51,11 +51,13 @@ See the [getting started guide](docs/content/docs/index.mdx) for authentication 
 branch options.
 
 Fill in any credentials required in `.shipyard/.env`.
-`GH_TOKEN` in `.shipyard/.env` to a GH token with Contents, Issues, and Pull
+Set `GH_TOKEN` there before `runner start`; startup fails immediately if it is
+missing or blank. Use a GH token with Contents, Issues, and Pull
 Requests read/write access and Metadata read access.
 
 Set `SHIPYARD_ROUTINE_MODEL` and `SHIPYARD_STRONG_MODEL` in `.shipyard/.env`
-for the roles your template uses.
+for the roles your template uses. Both Codex and Claude Code workflows accept
+`SHIPYARD_ROUTINE_REASONING_EFFORT` and `SHIPYARD_STRONG_REASONING_EFFORT`.
 
 `simple-loop` uses routine for triage and
 implementation. `sequential-reviewer` also uses strong for issue reviews.

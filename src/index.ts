@@ -53,8 +53,16 @@ export type {
 } from "./Output.js";
 export { CwdError } from "./CwdError.js";
 export { claudeCode, codex } from "./AgentProvider.js";
-export { CODEX_MODELS, CODEX_REASONING_EFFORTS } from "./modelConfig.js";
-export type { CodexModelConfig, CodexReasoningEffort } from "./modelConfig.js";
+export {
+  CODEX_MODELS,
+  REASONING_EFFORTS,
+  CODEX_REASONING_EFFORTS,
+} from "./modelConfig.js";
+export type {
+  ReasoningEffort,
+  CodexModelConfig,
+  CodexReasoningEffort,
+} from "./modelConfig.js";
 export type {
   AgentProvider,
   AgentCommandOptions,

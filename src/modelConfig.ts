@@ -1,5 +1,5 @@
-/** Reasoning efforts accepted by the Codex CLI. */
-export const CODEX_REASONING_EFFORTS = [
+/** Reasoning efforts accepted by the built-in agent providers. */
+export const REASONING_EFFORTS = [
   "low",
   "medium",
   "high",
@@ -7,7 +7,9 @@ export const CODEX_REASONING_EFFORTS = [
   "max",
 ] as const;
 
-export type CodexReasoningEffort = (typeof CODEX_REASONING_EFFORTS)[number];
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+export const CODEX_REASONING_EFFORTS = REASONING_EFFORTS;
+export type CodexReasoningEffort = ReasoningEffort;
 
 /** A model identifier plus the reasoning policy used for that model role. */
 export interface CodexModelConfig {
@@ -20,9 +22,9 @@ export interface CodexModelConfig {
  *
  * Runtime environment variables override these defaults:
  *   SHIPYARD_CODEX_ROUTINE_MODEL
- *   SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT
+ *   SHIPYARD_ROUTINE_REASONING_EFFORT
  *   SHIPYARD_CODEX_STRONG_MODEL
- *   SHIPYARD_CODEX_STRONG_REASONING_EFFORT
+ *   SHIPYARD_STRONG_REASONING_EFFORT
  *
  * Keep the defaults here so runtime providers, generated templates, and the
  * repository workflows all use the same role definitions.
@@ -39,14 +41,16 @@ const readModel = (role: keyof typeof DEFAULT_CODEX_MODELS): string =>
 const readEffort = (
   role: keyof typeof DEFAULT_CODEX_MODELS,
 ): CodexReasoningEffort => {
-  const envName = `SHIPYARD_CODEX_${role.toUpperCase()}_REASONING_EFFORT`;
-  const value = process.env[envName]?.trim();
+  const envName = `SHIPYARD_${role.toUpperCase()}_REASONING_EFFORT`;
+  const legacyName = `SHIPYARD_CODEX_${role.toUpperCase()}_REASONING_EFFORT`;
+  const sharedValue = process.env[envName]?.trim();
+  const value = sharedValue || process.env[legacyName]?.trim();
   if (!value) return DEFAULT_CODEX_MODELS[role].effort;
-  if ((CODEX_REASONING_EFFORTS as readonly string[]).includes(value)) {
+  if ((REASONING_EFFORTS as readonly string[]).includes(value)) {
     return value as CodexReasoningEffort;
   }
   throw new Error(
-    `${envName} must be one of ${CODEX_REASONING_EFFORTS.join(", ")}; received "${value}"`,
+    `${sharedValue ? envName : legacyName} must be one of ${REASONING_EFFORTS.join(", ")}; received "${value}"`,
   );
 };
 

@@ -108,6 +108,10 @@ Work was not handed off. To retry, resolve the problem, remove shipyard:blocked,
 fi
 
 if [[ "$branch" == "shipyard/spec-$root" ]]; then
+  if ! remove_issue_status "$root" ready-for-human; then
+    echo "Warning: could not clear spec triage status" >&2
+    status_synced=false
+  fi
   if ! remove_issue_status "$root" shipyard:outstanding-tasks; then
     echo "Warning: could not clear spec status" >&2
     status_synced=false
@@ -122,9 +126,11 @@ else
 fi
 if [[ "$branch" == "shipyard/spec-$root" ]]; then
   for affected_id in "${affected_ids[@]:1}"; do
+    remove_issue_status "$affected_id" ready-for-human || status=75
     remove_issue_status "$affected_id" shipyard:pending || status=75
   done
 else
+  remove_issue_status "$root" ready-for-human || status=75
   remove_issue_status "$root" shipyard:pending || status=75
 fi
 

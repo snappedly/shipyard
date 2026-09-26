@@ -578,6 +578,44 @@ for (const name of ["triage","implement","implement-spec","code-cleanup","code-r
     expect(result.stderr).toContain("Could not install Snappedly skills");
   });
 
+  it("installs from the manifest when npm ci rejects a stale lockfile without changing it", async () => {
+    const { dir, bin } = await fixture();
+    const log = join(dir, "install.log");
+    await mkdir(join(dir, "home"));
+    await writeFile(
+      join(dir, "package.json"),
+      '{"packageManager":"npm@12.0.2"}',
+    );
+    await writeFile(join(dir, "package-lock.json"), "stale lockfile\n");
+    await executable(
+      join(bin, "npm"),
+      `const fs = require("node:fs");
+const args = process.argv.slice(2).join(" ");
+fs.appendFileSync(process.env.INSTALL_LOG, args + "\\n");
+if (args === "ci") process.exit(1);
+if (args !== "install --no-package-lock") process.exit(2);`,
+    );
+    await executable(
+      join(bin, "git"),
+      `const fs = require("node:fs"); const path = require("node:path");
+if (process.argv[2] === "remote") process.exit(0);
+const root = process.argv.at(-1);
+for (const name of ["triage","implement","implement-spec","code-cleanup","code-review","tdd"]) {
+  const dir = path.join(root,"skills","tools",name);
+  fs.mkdirSync(dir,{recursive:true}); fs.writeFileSync(path.join(dir,"SKILL.md"), name);
+}`,
+    );
+
+    const result = run("bash", [script("setup.sh")], dir, bin, {
+      INSTALL_LOG: log,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(await readFile(log, "utf8")).toBe("ci\ninstall --no-package-lock\n");
+    expect(await readFile(join(dir, "package-lock.json"), "utf8")).toBe(
+      "stale lockfile\n",
+    );
+  });
+
   it("publishes one ready PR, marks scoped issues complete, and removes activation", async () => {
     const { dir, bin } = await fixture();
     const log = join(dir, "handoff.log");
@@ -677,6 +715,18 @@ else process.exit(2);
       "gh issue edit 1 --repo owner/repo --add-label shipyard:complete",
     );
     expect(commands).toContain(
+      "gh issue edit 1 --repo owner/repo --remove-label ready-for-human",
+    );
+    expect(
+      commands.indexOf(
+        "gh issue edit 1 --repo owner/repo --add-label shipyard:complete",
+      ),
+    ).toBeLessThan(
+      commands.indexOf(
+        "gh issue edit 1 --repo owner/repo --remove-label ready-for-human",
+      ),
+    );
+    expect(commands).toContain(
       "gh issue edit 1 --repo owner/repo --remove-label shipyard:pending",
     );
     expect(commands.indexOf("gh pr ready 7 --repo owner/repo")).toBeLessThan(
@@ -716,7 +766,9 @@ else process.exit(2);
     expect((await readFile(log, "utf8")).slice(beforeUnready)).not.toContain(
       "--add-label shipyard:complete",
     );
-    expect(await readFile(log, "utf8")).not.toContain("ready-for-human");
+    expect((await readFile(log, "utf8")).slice(beforeUnready)).not.toContain(
+      "ready-for-human",
+    );
 
     result = run(
       "bash",
@@ -780,6 +832,33 @@ else process.exit(2);
     );
     expect(failedTicketCommands).not.toContain("--remove-label shipyard");
 
+    const beforeFailedRoot = (await readFile(log, "utf8")).length;
+    result = run(
+      "bash",
+      [
+        script("handoff.sh"),
+        "2",
+        "shipyard/spec-2",
+        "staging",
+        "owner/repo",
+        "2,3,4",
+      ],
+      dir,
+      bin,
+      { ...env, FAIL_COMPLETE_TICKET: "2" },
+      "Checks: pass; Review: approved",
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const failedRootCommands = (await readFile(log, "utf8")).slice(
+      beforeFailedRoot,
+    );
+    expect(failedRootCommands).toContain(
+      "gh issue edit 3 --repo owner/repo --remove-label ready-for-human",
+    );
+    expect(failedRootCommands).not.toContain(
+      "gh issue edit 2 --repo owner/repo --remove-label ready-for-human",
+    );
+
     await writeFile(state, JSON.stringify({ number: 0, isDraft: true }));
     result = run(
       "bash",
@@ -806,6 +885,10 @@ else process.exit(2);
     for (const id of [2, 3, 4])
       expect(specCommands).toContain(
         `gh issue edit ${id} --repo owner/repo --add-label shipyard:complete`,
+      );
+    for (const id of [2, 3, 4])
+      expect(specCommands).toContain(
+        `gh issue edit ${id} --repo owner/repo --remove-label ready-for-human`,
       );
     expect(
       specCommands.lastIndexOf(
@@ -849,6 +932,12 @@ else process.exit(2);
     );
     expect(partialCommands).not.toContain(
       "gh issue edit 4 --repo owner/repo --add-label shipyard:complete",
+    );
+    expect(partialCommands).toContain(
+      "gh issue edit 3 --repo owner/repo --remove-label ready-for-human",
+    );
+    expect(partialCommands).not.toContain(
+      "gh issue edit 2 --repo owner/repo --remove-label ready-for-human",
     );
     const beforeBlockedOutstanding = (await readFile(log, "utf8")).length;
     result = run(
@@ -924,7 +1013,7 @@ else process.exit(2);
       beforeStaleFailure,
     );
     expect(staleFailureCommands).not.toContain("--remove-label shipyard\n");
-    expect(result.stderr).toContain("retaining ticket activation");
+    expect(result.stderr).toContain("add shipyard to the ticket to retry");
   }, 15_000);
 
   it("hands off a bundle clone whose target exists only as a remote ref", async () => {
@@ -1066,7 +1155,10 @@ else if (args[0] === "pr" && args[1] === "list" && process.env.EXISTING_PR) cons
     expect(existingCommands).toContain(
       "pr edit 9 --repo owner/repo --add-label shipyard:blocked",
     );
-    expect(existingCommands).not.toContain("ready-for-human");
+    for (const id of [2, 3, 4])
+      expect(existingCommands).toContain(
+        `issue edit ${id} --repo owner/repo --remove-label ready-for-human`,
+      );
     expect(existingCommands).toContain(
       "issue edit 4 --repo owner/repo --add-label shipyard:blocked",
     );
@@ -1219,5 +1311,8 @@ else if (args[0] === "pr" && args[1] === "list" && process.env.EXISTING_PR) cons
     const standaloneCommands = await readFile(log, "utf8");
     expect(standaloneCommands.match(/issue comment 1 /g)).toHaveLength(1);
     expect(standaloneCommands).toContain("Tests failed");
+    expect(standaloneCommands).toContain(
+      "issue edit 1 --repo owner/repo --remove-label ready-for-human",
+    );
   }, 15_000);
 });

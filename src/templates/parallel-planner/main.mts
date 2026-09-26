@@ -27,24 +27,27 @@ const roleModels = {
   routine: readRoleModel("routine"),
   strong: readRoleModel("strong"),
 };
-const CODEX_REASONING_EFFORTS = shipyard.CODEX_REASONING_EFFORTS;
-type CodexReasoningEffort = shipyard.CodexReasoningEffort;
-const readCodexReasoningEffort = (
+const REASONING_EFFORTS = shipyard.REASONING_EFFORTS;
+type ReasoningEffort = shipyard.ReasoningEffort;
+const readRoleReasoningEffort = (
   role: ModelRole,
-): CodexReasoningEffort | undefined => {
-  if (!CODEX_PROVIDER) return undefined;
-  const envName = `SHIPYARD_CODEX_${role.toUpperCase()}_REASONING_EFFORT`;
-  const effort = process.env[envName]?.trim();
+): ReasoningEffort | undefined => {
+  const envName = `SHIPYARD_${role.toUpperCase()}_REASONING_EFFORT`;
+  const legacyName = `SHIPYARD_CODEX_${role.toUpperCase()}_REASONING_EFFORT`;
+  const sharedEffort = process.env[envName]?.trim();
+  const effort =
+    sharedEffort ||
+    (CODEX_PROVIDER ? process.env[legacyName]?.trim() : undefined);
   if (!effort) return undefined;
-  if (!(CODEX_REASONING_EFFORTS as readonly string[]).includes(effort))
+  if (!(REASONING_EFFORTS as readonly string[]).includes(effort))
     throw new Error(
-      `${envName} must be one of ${CODEX_REASONING_EFFORTS.join(", ")}; received "${effort}"`,
+      `${sharedEffort ? envName : legacyName} must be one of ${REASONING_EFFORTS.join(", ")}; received "${effort}"`,
     );
-  return effort as CodexReasoningEffort;
+  return effort as ReasoningEffort;
 };
 const roleEfforts = {
-  routine: readCodexReasoningEffort("routine"),
-  strong: readCodexReasoningEffort("strong"),
+  routine: readRoleReasoningEffort("routine"),
+  strong: readRoleReasoningEffort("strong"),
 };
 const readCodexRoleModel = (role: ModelRole, defaultModel: AgentModel) => {
   if (!CODEX_PROVIDER || typeof defaultModel === "string") return defaultModel;
@@ -166,6 +169,7 @@ const runWorker = async (scope: Scope, ticket: Ticket) => {
     baseBranch: scope.branch,
     sandbox: sandboxProvider,
     hooks,
+    copyToWorktree: [".shipyard/setup.sh"],
   });
   try {
     await sandbox.run({
@@ -173,7 +177,7 @@ const runWorker = async (scope: Scope, ticket: Ticket) => {
       maxIterations: 1,
       agent: roleAgent("routine", shipyard.CODEX_MODELS.routine),
       promptFile: "./.shipyard/triage-prompt.md",
-      promptArgs: { TASK_ID: ticket.id },
+      promptArgs: { TASK_ID: ticket.id, BASE_BRANCH: targetBranch },
     });
     verifyTriage(ticket.id);
     const implementation = await sandbox.run({
@@ -212,6 +216,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
   const plan = await shipyard.run({
     hooks,
     sandbox: sandboxProvider,
+    copyToWorktree: [".shipyard/setup.sh"],
     name: "planner",
     branchStrategy: { type: "branch", branch: plannerBranch },
     maxIterations: 1,
@@ -257,6 +262,8 @@ for (let iteration = 0; iteration < 10; iteration++) {
             repository,
             "--add-label",
             "shipyard:pending",
+            "--remove-label",
+            "shipyard",
           ]);
         if (
           scope.branch !==
@@ -271,6 +278,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
             branch: scope.branch,
             sandbox: sandboxProvider,
             hooks,
+            copyToWorktree: [".shipyard/setup.sh"],
           });
           await closeClean(seed);
           const tickets = scope.tickets ?? [];
@@ -305,6 +313,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
               branch: scope.branch,
               sandbox: sandboxProvider,
               hooks,
+              copyToWorktree: [".shipyard/setup.sh"],
             });
             try {
               for (const [index, outcome] of settled.entries()) {
@@ -430,6 +439,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
           branch: scope.branch,
           sandbox: sandboxProvider,
           hooks,
+          copyToWorktree: [".shipyard/setup.sh"],
         });
         let handoffEvidence: string;
         try {
@@ -439,7 +449,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
               maxIterations: 1,
               agent: roleAgent("routine", shipyard.CODEX_MODELS.routine),
               promptFile: "./.shipyard/triage-prompt.md",
-              promptArgs: { TASK_ID: id },
+              promptArgs: { TASK_ID: id, BASE_BRANCH: targetBranch },
             });
             verifyTriage(id);
             const standalone = await integration.run({
@@ -477,6 +487,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
         const publication = await shipyard.createSandbox({
           branch: scope.branch,
           sandbox: sandboxProvider,
+          copyToWorktree: [".shipyard/handoff.sh"],
         });
         try {
           const scopeIds = [

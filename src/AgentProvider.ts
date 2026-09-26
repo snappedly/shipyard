@@ -24,7 +24,11 @@ import {
 } from "./SessionStore.js";
 import type { SessionTransferHandle } from "./SandboxProvider.js";
 import { CODEX_MODELS } from "./modelConfig.js";
-import type { CodexModelConfig, CodexReasoningEffort } from "./modelConfig.js";
+import type {
+  CodexModelConfig,
+  CodexReasoningEffort,
+  ReasoningEffort,
+} from "./modelConfig.js";
 import { shellQuote } from "./shellQuote.js";
 
 const fileExists = async (path: string): Promise<boolean> => {
@@ -615,7 +619,7 @@ export const codex = (
 
 export interface ClaudeCodeOptions {
   /** Set to `null` to leave effort selection to the provider. */
-  readonly effort?: "low" | "medium" | "high" | "xhigh" | "max" | null;
+  readonly effort?: ReasoningEffort | null;
   /** Environment variables injected by this agent provider. */
   readonly env?: Record<string, string>;
   /** When false, session capture is disabled. Default: true. */
