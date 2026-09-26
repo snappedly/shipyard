@@ -147,7 +147,7 @@ const approved = (
     throw new Error(
       `${stage} has unresolved review findings: ${result.stdout.trim().slice(-1200)}`,
     );
-  return complete(result, stage);
+  return `Review: APPROVED\n${complete(result, stage)}`;
 };
 class TicketFailures extends Error {
   constructor(readonly failures: Array<{ id: string; reason: string }>) {

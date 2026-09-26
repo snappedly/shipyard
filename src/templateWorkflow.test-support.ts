@@ -49,6 +49,7 @@ const calls = vi.hoisted(() => ({
   spec: false,
   multi: false,
   commands: [] as string[],
+  handoffInputs: [] as string[],
   localBranches: [] as string[],
   creates: [] as Array<{
     branch: string;
@@ -257,7 +258,7 @@ vi.mock("@snappedly-tools/shipyard", () => {
           };
         return packet("integration passed");
       },
-      exec: async (command: string) => {
+      exec: async (command: string, options?: { stdin?: string }) => {
         calls.commands.push(command);
         if (command === "git rev-parse HEAD") {
           headReads++;
@@ -308,6 +309,7 @@ vi.mock("@snappedly-tools/shipyard", () => {
           return { exitCode: 0, stdout: "integrated", stderr: "" };
         }
         calls.events.push("handoff");
+        calls.handoffInputs.push(options?.stdin ?? "");
         if (calls.handoffThrows)
           throw new Error("transport lost during PR handoff");
         return {
@@ -448,6 +450,7 @@ beforeEach(() => {
   calls.spec = false;
   calls.multi = false;
   calls.commands.length = 0;
+  calls.handoffInputs.length = 0;
   calls.localBranches.length = 0;
   calls.creates.length = 0;
   calls.specContent.length = 0;

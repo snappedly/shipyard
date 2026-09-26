@@ -243,7 +243,7 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
           `Issue #${issue.id} has unresolved review findings: ${review.stdout.trim().slice(-1200)}`,
         );
       }
-      evidence = `${implementationEvidence}\n\n${reviewEvidence}`;
+      evidence = `${implementationEvidence}\n\nReview: APPROVED\n${reviewEvidence}`;
     } finally {
       await closeClean(sandbox);
     }
