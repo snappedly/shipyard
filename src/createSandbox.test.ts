@@ -1278,6 +1278,14 @@ describe("createSandbox", () => {
           _test: { buildSandbox: (sandboxDir) => makeLocalSandbox(sandboxDir) },
         }),
       ).rejects.toThrow("exit 17");
+      const logDir = join(hostDir, ".shipyard", "logs");
+      const dates = readdirSync(logDir);
+      expect(dates).toHaveLength(1);
+      const log = await readFile(
+        join(logDir, dates[0]!, "test-failed-install-setup.log"),
+        "utf8",
+      );
+      expect(log).toContain("Sandbox setup failed (exit 17): exit 17");
     } finally {
       await rm(hostDir, { recursive: true, force: true });
     }
@@ -1316,6 +1324,14 @@ describe("createSandbox", () => {
         }),
       ).rejects.toThrow("failed install");
       expect(closed).toBe(true);
+      const dates = readdirSync(join(hostDir, ".shipyard", "logs"));
+      expect(dates).toHaveLength(1);
+      expect(
+        await readFile(
+          join(hostDir, ".shipyard", "logs", dates[0]!, "main-setup.log"),
+          "utf8",
+        ),
+      ).toContain("failed install");
     } finally {
       await rm(hostDir, { recursive: true, force: true });
     }
