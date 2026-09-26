@@ -1066,7 +1066,10 @@ else if (args[0] === "pr" && args[1] === "list" && process.env.EXISTING_PR) cons
     expect(existingCommands).toContain(
       "pr edit 9 --repo owner/repo --add-label shipyard:blocked",
     );
-    expect(existingCommands).not.toContain("ready-for-human");
+    for (const id of [2, 3, 4])
+      expect(existingCommands).toContain(
+        `issue edit ${id} --repo owner/repo --remove-label ready-for-human`,
+      );
     expect(existingCommands).toContain(
       "issue edit 4 --repo owner/repo --add-label shipyard:blocked",
     );
@@ -1219,5 +1222,8 @@ else if (args[0] === "pr" && args[1] === "list" && process.env.EXISTING_PR) cons
     const standaloneCommands = await readFile(log, "utf8");
     expect(standaloneCommands.match(/issue comment 1 /g)).toHaveLength(1);
     expect(standaloneCommands).toContain("Tests failed");
+    expect(standaloneCommands).toContain(
+      "issue edit 1 --repo owner/repo --remove-label ready-for-human",
+    );
   }, 15_000);
 });
