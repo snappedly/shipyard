@@ -115,12 +115,14 @@ type Ticket = {
   body: string;
   state: string;
   blockedBy: Array<{ id: string; title: string; state: string }>;
+  triageReady: boolean;
 };
 type Scope = {
   id: string;
   title: string;
   branch: string;
   kind: "standalone" | "spec";
+  triageReady?: boolean;
   body?: string;
   tickets?: Ticket[];
   completedTicketIds?: string[];
@@ -172,13 +174,14 @@ const runWorker = async (scope: Scope, ticket: Ticket) => {
     copyToWorktree: [".shipyard/setup.sh"],
   });
   try {
-    await sandbox.run({
-      name: `triage #${ticket.id}`,
-      maxIterations: 1,
-      agent: roleAgent("routine", shipyard.CODEX_MODELS.routine),
-      promptFile: "./.shipyard/triage-prompt.md",
-      promptArgs: { TASK_ID: ticket.id, BASE_BRANCH: targetBranch },
-    });
+    if (!ticket.triageReady)
+      await sandbox.run({
+        name: `triage #${ticket.id}`,
+        maxIterations: 1,
+        agent: roleAgent("routine", shipyard.CODEX_MODELS.routine),
+        promptFile: "./.shipyard/triage-prompt.md",
+        promptArgs: { TASK_ID: ticket.id, BASE_BRANCH: targetBranch },
+      });
     verifyTriage(ticket.id);
     const implementation = await sandbox.run({
       name: "implementer",
@@ -444,13 +447,14 @@ for (let iteration = 0; iteration < 10; iteration++) {
         let handoffEvidence: string;
         try {
           if (scope.kind === "standalone") {
-            await integration.run({
-              name: `triage #${id}`,
-              maxIterations: 1,
-              agent: roleAgent("routine", shipyard.CODEX_MODELS.routine),
-              promptFile: "./.shipyard/triage-prompt.md",
-              promptArgs: { TASK_ID: id, BASE_BRANCH: targetBranch },
-            });
+            if (!scope.triageReady)
+              await integration.run({
+                name: `triage #${id}`,
+                maxIterations: 1,
+                agent: roleAgent("routine", shipyard.CODEX_MODELS.routine),
+                promptFile: "./.shipyard/triage-prompt.md",
+                promptArgs: { TASK_ID: id, BASE_BRANCH: targetBranch },
+              });
             verifyTriage(id);
             const standalone = await integration.run({
               name: "implementer",
