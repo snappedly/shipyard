@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { NodeFileSystem } from "@effect/platform-node";
 import { Effect } from "effect";
-import { resolveEnv } from "./EnvResolver.js";
+import { readEnvFile, resolveEnv } from "./EnvResolver.js";
 import { parseGitHubRepository } from "./RepositoryRunner.js";
 import {
   repositoryRunnerEnvironment,
@@ -93,6 +93,9 @@ export interface RunnerControlAdapters {
   readonly removeTree: (path: string) => Promise<void>;
   readonly commandExists: (command: string) => Promise<boolean>;
   readonly resolveEnvironment: (
+    repoDir: string,
+  ) => Promise<Record<string, string>>;
+  readonly readEnvironmentFile: (
     repoDir: string,
   ) => Promise<Record<string, string>>;
   readonly run: (
@@ -276,6 +279,10 @@ const defaultAdapters: RunnerControlAdapters = {
     Effect.runPromise(
       resolveEnv(repoDir).pipe(Effect.provide(NodeFileSystem.layer)),
     ),
+  readEnvironmentFile: (repoDir) =>
+    Effect.runPromise(
+      readEnvFile(repoDir).pipe(Effect.provide(NodeFileSystem.layer)),
+    ),
   run: async (command, args, options) => {
     const result = await execFileAsync(command, [...args], {
       cwd: options.cwd,
@@ -425,6 +432,17 @@ const requireRunnerContext = async (
   if (!(await adapters.exists(join(runnerDir, "run.sh")))) {
     throw new RunnerControlError(
       "The official repository runner executable is missing. Reinstall the repository runner.",
+    );
+  }
+
+  const configuredEnvironment = await adapters
+    .readEnvironmentFile(repoDir)
+    .catch((error) => {
+      throw controlFailure("Reading repository credentials", error);
+    });
+  if (!configuredEnvironment.GH_TOKEN?.trim()) {
+    throw new RunnerControlError(
+      "Set GH_TOKEN in .shipyard/.env before starting the repository runner.",
     );
   }
 

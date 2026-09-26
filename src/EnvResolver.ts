@@ -57,14 +57,8 @@ const parseEnvFile = (
     return vars;
   });
 
-/**
- * Resolve all env vars from .env files with process.env fallback.
- *
- * Precedence: .shipyard/.env > process.env
- * Only keys declared in .shipyard/.env are resolved from process.env.
- * Repo root .env is not part of the resolution chain.
- */
-export const resolveEnv = (
+/** Read .shipyard/.env without following a symlinked configuration path. */
+export const readEnvFile = (
   repoDir: string,
 ): Effect.Effect<
   Record<string, string>,
@@ -82,7 +76,22 @@ export const resolveEnv = (
           message: `Refusing symlinked environment path: ${e instanceof Error ? e.message : String(e)}`,
         }),
     });
-    const shipyardEnv = yield* parseEnvFile(envPath);
+    return yield* parseEnvFile(envPath);
+  });
+
+/**
+ * Resolve declared .shipyard/.env keys with process.env fallback for blanks.
+ * The repo root .env is not part of the resolution chain.
+ */
+export const resolveEnv = (
+  repoDir: string,
+): Effect.Effect<
+  Record<string, string>,
+  ConfigDirError,
+  FileSystem.FileSystem
+> =>
+  Effect.gen(function* () {
+    const shipyardEnv = yield* readEnvFile(repoDir);
 
     const result: Record<string, string> = {};
     for (const key of Object.keys(shipyardEnv)) {

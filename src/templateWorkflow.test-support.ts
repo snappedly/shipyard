@@ -12,6 +12,8 @@ const initialCwd = process.cwd();
 const modelEnvironmentNames = [
   "SHIPYARD_ROUTINE_MODEL",
   "SHIPYARD_STRONG_MODEL",
+  "SHIPYARD_ROUTINE_REASONING_EFFORT",
+  "SHIPYARD_STRONG_REASONING_EFFORT",
   "SHIPYARD_CODEX_ROUTINE_MODEL",
   "SHIPYARD_CODEX_STRONG_MODEL",
   "SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT",
@@ -25,6 +27,7 @@ let envDirectory: string | undefined;
 const calls = vi.hoisted(() => ({
   events: [] as string[],
   pendingEdits: [] as string[],
+  pendingLabelCommands: [] as string[][],
   triaged: [] as Array<{ id: string; beforeEvents: number }>,
   verified: [] as string[],
   triageReady: true,
@@ -96,6 +99,8 @@ vi.mock("node:child_process", () => ({
     if (command === "gh" && args[0] === "label") return "";
     if (command === "gh" && args[0] === "issue" && args[1] === "edit") {
       calls.pendingEdits.push(args[2]!);
+      if (args.includes("shipyard:pending"))
+        calls.pendingLabelCommands.push(args);
       return "";
     }
     if (command === "bash" && args[0] === ".shipyard/block-scope.sh") {
@@ -361,6 +366,7 @@ vi.mock("@snappedly-tools/shipyard", () => {
           (typeof model === "string" ? undefined : model.effort)),
   });
   return {
+    REASONING_EFFORTS: ["low", "medium", "high", "xhigh", "max"],
     CODEX_REASONING_EFFORTS: ["low", "medium", "high", "xhigh", "max"],
     CODEX_MODELS: codexModels,
     codex: (
@@ -430,6 +436,7 @@ beforeEach(() => {
   envDirectory = undefined;
   calls.events.length = 0;
   calls.pendingEdits.length = 0;
+  calls.pendingLabelCommands.length = 0;
   calls.triaged.length = 0;
   calls.verified.length = 0;
   calls.triageReady = true;

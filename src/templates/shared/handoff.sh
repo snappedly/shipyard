@@ -170,6 +170,6 @@ if [[ "$status_synced" == true ]]; then
     fi
   done
 else
-  echo "Warning: status labels need reconciliation; retaining ticket activation" >&2
+  echo "Warning: status labels need reconciliation; add shipyard to the ticket to retry" >&2
 fi
 printf '%s\n' "$url"

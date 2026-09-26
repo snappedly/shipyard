@@ -97,6 +97,22 @@ describe("generated workflow model routing", () => {
     ]);
   });
 
+  it("passes shared reasoning effort settings to Claude role agents", async () => {
+    await runGeneratedWorkflow(
+      "sequential-reviewer",
+      "claude-code",
+      "claude-opus-4-8",
+      false,
+      "SHIPYARD_ROUTINE_REASONING_EFFORT=max\nSHIPYARD_STRONG_REASONING_EFFORT=high\n",
+    );
+
+    expect(calls.agentInvocations.map(({ effort }) => effort)).toEqual([
+      "max",
+      "max",
+      "high",
+    ]);
+  });
+
   it("does not load model values from the repository-root .env", async () => {
     await loadEnvFile("", "SHIPYARD_ROUTINE_MODEL=root-only-model\n");
 
@@ -122,7 +138,7 @@ describe("generated workflow model routing", () => {
 
   it("applies an explicitly selected Codex effort to a role model", async () => {
     process.env.SHIPYARD_ROUTINE_MODEL = "new-routine";
-    process.env.SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT = "high";
+    process.env.SHIPYARD_ROUTINE_REASONING_EFFORT = "high";
 
     await importTemplate("simple-loop");
 
@@ -133,7 +149,7 @@ describe("generated workflow model routing", () => {
   });
 
   it("uses the Codex effort loaded from .shipyard/.env", async () => {
-    await loadEnvFile("SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT=high\n");
+    await loadEnvFile("SHIPYARD_ROUTINE_REASONING_EFFORT=high\n");
 
     await importTemplate("simple-loop");
 
@@ -156,7 +172,7 @@ describe("generated workflow model routing", () => {
 
   it("applies a .shipyard/.env Codex effort to a selected role model", async () => {
     await loadEnvFile(
-      "SHIPYARD_ROUTINE_MODEL=file-routine\nSHIPYARD_CODEX_ROUTINE_REASONING_EFFORT=high\n",
+      "SHIPYARD_ROUTINE_MODEL=file-routine\nSHIPYARD_ROUTINE_REASONING_EFFORT=high\n",
     );
 
     await importTemplate("simple-loop");
@@ -171,11 +187,11 @@ describe("generated workflow model routing", () => {
     "rejects an invalid %s Codex effort loaded from .shipyard/.env",
     async (role) => {
       await loadEnvFile(
-        `SHIPYARD_CODEX_${role.toUpperCase()}_REASONING_EFFORT=invalid\n`,
+        `SHIPYARD_${role.toUpperCase()}_REASONING_EFFORT=invalid\n`,
       );
 
       await expect(importTemplate("simple-loop")).rejects.toThrow(
-        `SHIPYARD_CODEX_${role.toUpperCase()}_REASONING_EFFORT must be one of`,
+        `SHIPYARD_${role.toUpperCase()}_REASONING_EFFORT must be one of`,
       );
 
       expect(calls.agentInvocations).toEqual([]);

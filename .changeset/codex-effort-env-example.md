@@ -2,4 +2,4 @@
 "@snappedly-tools/shipyard": minor
 ---
 
-Include optional per-role Codex reasoning effort settings in generated environment files.
+Include shared per-role reasoning effort settings for generated Codex and Claude Code workflows.

@@ -99,17 +99,20 @@ describe("InitService scaffold", () => {
       expect(envExample).toContain("Aliases can change their target over time");
       if (expectClaudeSetupTokenHint) {
         expect(envExample).toContain("claude setup-token");
-        expect(envExample).not.toContain(
-          "SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT",
+        expect(envExample).toMatch(/^# SHIPYARD_ROUTINE_MODEL=sonnet$/m);
+        expect(envExample).toMatch(
+          /^# SHIPYARD_ROUTINE_REASONING_EFFORT=high$/m,
         );
+        expect(envExample).toMatch(
+          /^# SHIPYARD_STRONG_REASONING_EFFORT=high$/m,
+        );
+        expect(envExample).not.toContain("SHIPYARD_CODEX_");
       } else {
         expect(envExample).not.toContain("claude setup-token");
-        expect(envExample).toContain(
-          "SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT=high",
-        );
-        expect(envExample).toContain(
-          "SHIPYARD_CODEX_STRONG_REASONING_EFFORT=xhigh",
-        );
+        expect(envExample).toMatch(/^SHIPYARD_ROUTINE_MODEL=gpt-6-luna$/m);
+        expect(envExample).toMatch(/^SHIPYARD_STRONG_MODEL=gpt-6-sol$/m);
+        expect(envExample).toMatch(/^SHIPYARD_ROUTINE_REASONING_EFFORT=max$/m);
+        expect(envExample).toMatch(/^SHIPYARD_STRONG_REASONING_EFFORT=high$/m);
         expect(envExample).toContain("low, medium, high, xhigh, or max");
       }
     },
@@ -464,6 +467,29 @@ describe("InitService scaffold", () => {
     );
     expect(envExample).toContain("codex login");
     expect(envExample).not.toContain("OPENAI_API_KEY=");
+    expect(envExample.trimEnd())
+      .toBe(`# Codex ChatGPT subscription authentication
+# On the host, run \`codex login\` and make sure \`~/.codex/auth.json\` exists.
+# Shipyard mounts that file read-only into the sandbox.
+# Do not add OPENAI_API_KEY here: that selects API-key billing instead.
+# Optional model choices for Shipyard workflows.
+# Choose models available to your Codex CLI account: https://learn.chatgpt.com/docs/models
+# The provider must support each value. Aliases can change their target over time.
+SHIPYARD_ROUTINE_MODEL=gpt-6-luna
+SHIPYARD_STRONG_MODEL=gpt-6-sol
+# Optional reasoning effort per role: low, medium, high, xhigh, or max.
+# Leave unset to use the provider's default effort.
+SHIPYARD_ROUTINE_REASONING_EFFORT=max
+SHIPYARD_STRONG_REASONING_EFFORT=high
+# GitHub personal access token — the agent uses it to read and manage GitHub Issues
+# Runner installation/start uses the host \`gh\` login for repository administration.
+# Create a fine-grained token: https://github.com/settings/personal-access-tokens/new
+# Required repository permissions: Contents, Issues, and Pull requests (Read and write); Metadata (Read)
+# Or leave blank and run: GH_TOKEN="$(gh auth token)" npx shipyard run
+GH_TOKEN=`);
+    expect(await readFile(join(dir, ".shipyard", ".env"), "utf-8")).toBe(
+      envExample,
+    );
   });
 
   it("keeps centralized Codex model references in multi-phase templates", async () => {

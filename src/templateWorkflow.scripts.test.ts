@@ -962,7 +962,7 @@ else process.exit(2);
       beforeStaleFailure,
     );
     expect(staleFailureCommands).not.toContain("--remove-label shipyard\n");
-    expect(result.stderr).toContain("retaining ticket activation");
+    expect(result.stderr).toContain("add shipyard to the ticket to retry");
   }, 15_000);
 
   it("hands off a bundle clone whose target exists only as a remote ref", async () => {
