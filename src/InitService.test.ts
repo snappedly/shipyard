@@ -99,8 +99,18 @@ describe("InitService scaffold", () => {
       expect(envExample).toContain("Aliases can change their target over time");
       if (expectClaudeSetupTokenHint) {
         expect(envExample).toContain("claude setup-token");
+        expect(envExample).not.toContain(
+          "SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT",
+        );
       } else {
         expect(envExample).not.toContain("claude setup-token");
+        expect(envExample).toContain(
+          "SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT=high",
+        );
+        expect(envExample).toContain(
+          "SHIPYARD_CODEX_STRONG_REASONING_EFFORT=xhigh",
+        );
+        expect(envExample).toContain("low, medium, high, xhigh, or max");
       }
     },
   );
