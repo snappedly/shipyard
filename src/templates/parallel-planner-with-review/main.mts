@@ -249,7 +249,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
       name: "planner",
       branchStrategy: { type: "branch", branch: plannerBranch },
       maxIterations: 1,
-      agent: roleAgent("strong", shipyard.CODEX_MODELS.strong),
+      agent: roleAgent("routine", shipyard.CODEX_MODELS.routine),
       promptFile: "./.shipyard/plan-prompt.md",
       output: shipyard.Output.object({ tag: "plan", schema: planSchema }),
     });

@@ -19,6 +19,7 @@ describe("CODEX_MODELS", () => {
     const { CODEX_MODELS } = await import("./modelConfig.js");
 
     expect(CODEX_MODELS.routine.effort).toBe("medium");
+    expect(CODEX_MODELS.strong.effort).toBe("high");
   });
 
   it("uses shared role effort settings ahead of legacy Codex settings", async () => {

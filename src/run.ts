@@ -172,6 +172,8 @@ export const buildDefaultLogPath = (
 export interface RunSummaryRowsOptions {
   readonly name?: string;
   readonly agentName: string;
+  readonly model?: string;
+  readonly reasoningEffort?: string;
   readonly sandboxName: string;
   readonly maxIterations: number;
   readonly branch: string;
@@ -186,6 +188,10 @@ export const buildRunSummaryRows = (
   options: RunSummaryRowsOptions,
 ): Record<string, string> => ({
   Agent: options.name ?? options.agentName,
+  ...(options.model ? { Model: options.model } : {}),
+  ...(options.reasoningEffort
+    ? { "Reasoning effort": options.reasoningEffort }
+    : {}),
   Sandbox: options.sandboxName,
   "Max iterations": String(options.maxIterations),
   Branch: options.branch,
@@ -234,10 +240,11 @@ export const buildUsageLines = (
 ): string[] =>
   iterations
     .filter((it): it is { usage: IterationUsage } => it.usage !== undefined)
-    .map(
-      (it) =>
-        `Reported input tokens: ${formatReportedInputTokens(it.usage)} (${Math.ceil(it.usage.cacheReadInputTokens / 1000)}k cache read)`,
-    );
+    .map((it) => {
+      const usage = it.usage;
+      const count = (tokens: number) => tokens.toLocaleString("en-US");
+      return `Reported input tokens: ${formatReportedInputTokens(usage)} (${count(usage.inputTokens)} uncached, ${count(usage.cacheCreationInputTokens)} cache write, ${count(usage.cacheReadInputTokens)} cache read); output tokens: ${count(usage.outputTokens)}`;
+    });
 
 /**
  * Controls where Shipyard writes iteration progress and agent output.
@@ -710,6 +717,8 @@ export async function run(
     const rows = buildRunSummaryRows({
       name: options.name,
       agentName,
+      model: provider.model,
+      reasoningEffort: provider.reasoningEffort,
       sandboxName: options.sandbox.name,
       maxIterations,
       branch: resolvedBranch,

@@ -293,6 +293,18 @@ describe("generated workflow model routing", () => {
     ]);
   });
 
+  it("uses the routine model for planning multiple reviewed scopes", async () => {
+    process.env.SHIPYARD_ROUTINE_MODEL = "routine-choice";
+    process.env.SHIPYARD_STRONG_MODEL = "strong-choice";
+    calls.multi = true;
+
+    await importTemplate("parallel-planner-with-review");
+
+    expect(
+      calls.agentInvocations.find(({ name }) => name === "planner"),
+    ).toMatchObject({ provider: "codex", model: "routine-choice" });
+  });
+
   it("routes dependency-wave integration to the strong model without reviews", async () => {
     process.env.SHIPYARD_ROUTINE_MODEL = "routine-choice";
     process.env.SHIPYARD_STRONG_MODEL = "strong-choice";
@@ -307,7 +319,7 @@ describe("generated workflow model routing", () => {
         model,
       ]),
     ).toEqual([
-      ["planner", "codex", "strong-choice"],
+      ["planner", "codex", "routine-choice"],
       ["triage #43", "codex", "routine-choice"],
       ["implementer", "codex", "routine-choice"],
       ["spec-integrator", "codex", "strong-choice"],
@@ -365,7 +377,8 @@ describe("generated workflow model routing", () => {
         expect(invocation.provider).toBe("claude-code");
         expect(invocation.model).toBe(
           invocation.name.startsWith("triage #") ||
-            invocation.name === "implementer"
+            invocation.name === "implementer" ||
+            invocation.name === "planner"
             ? "sonnet"
             : "host-strong",
         );
@@ -392,7 +405,8 @@ describe("generated workflow model routing", () => {
         expect(invocation.provider).toBe("codex");
         const routine =
           invocation.name.startsWith("triage #") ||
-          invocation.name === "implementer";
+          invocation.name === "implementer" ||
+          invocation.name === "planner";
         expect(invocation.model).toBe(
           routine ? "host-routine" : "single-model",
         );
@@ -416,7 +430,8 @@ describe("generated workflow model routing", () => {
       for (const invocation of calls.agentInvocations) {
         const routine =
           invocation.name.startsWith("triage #") ||
-          invocation.name === "implementer";
+          invocation.name === "implementer" ||
+          invocation.name === "planner";
         expect(invocation.provider).toBe("codex");
         expect(invocation.model).toBe(
           routine ? "legacy-routine" : "legacy-strong",

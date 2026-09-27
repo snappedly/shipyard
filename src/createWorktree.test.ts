@@ -666,7 +666,9 @@ describe("worktree.run()", () => {
       expect(result.iterations[0]!.usage).toBeDefined();
 
       const log = await readFile(logPath, "utf-8");
-      expect(log).toContain("Reported input tokens: 50k (0k cache read)");
+      expect(log).toContain(
+        "Reported input tokens: 50k (50,000 uncached, 0 cache write, 0 cache read); output tokens: 100",
+      );
     } finally {
       await ws.close();
       await rm(hostDir, { recursive: true, force: true });
@@ -786,7 +788,9 @@ describe("worktree.run()", () => {
       expect(result.iterations[0]!.sessionFilePath).toBeDefined();
 
       const log = await readFile(logPath, "utf-8");
-      expect(log).toContain("Reported input tokens: 50k (0k cache read)");
+      expect(log).toContain(
+        "Reported input tokens: 50k (50,000 uncached, 0 cache write, 0 cache read); output tokens: 100",
+      );
     } finally {
       await ws.close();
       await rm(hostDir, { recursive: true, force: true });

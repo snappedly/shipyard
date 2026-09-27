@@ -31,7 +31,7 @@ export interface CodexModelConfig {
  */
 const DEFAULT_CODEX_MODELS = {
   routine: { model: "gpt-5.6-luna", effort: "medium" },
-  strong: { model: "gpt-5.6-sol", effort: "max" },
+  strong: { model: "gpt-5.6-sol", effort: "high" },
 } as const satisfies Record<string, CodexModelConfig>;
 
 const readModel = (role: keyof typeof DEFAULT_CODEX_MODELS): string =>

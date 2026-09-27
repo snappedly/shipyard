@@ -200,6 +200,9 @@ export interface AgentSessionStorage {
 
 export interface AgentProvider {
   readonly name: string;
+  /** Model and reasoning effort passed to the provider CLI, when known. */
+  readonly model?: string;
+  readonly reasoningEffort?: ReasoningEffort;
   /** Environment variables injected by this agent provider. Merged at launch time with env resolver and sandbox provider env. */
   readonly env: Record<string, string>;
   /** Set only when this provider enforces `AgentCommandOptions.toolAllowlist`. */
@@ -560,6 +563,8 @@ export const codex = (
   // callers can still override it through CodexOptions.
   return {
     name: "codex",
+    model: modelId,
+    reasoningEffort: effort,
     env: options?.env ?? {},
     captureSessions: options?.captureSessions ?? true,
     sessionStorage: makeCodexSessionStorage(options),
@@ -649,6 +654,8 @@ export const claudeCode = (
   options?: ClaudeCodeOptions,
 ): AgentProvider & { readonly sessionStorage: AgentSessionStorage } => ({
   name: "claude-code",
+  model,
+  reasoningEffort: options?.effort ?? undefined,
   env: options?.env ?? {},
   captureSessions: options?.captureSessions ?? true,
   sessionStorage: makeClaudeSessionStorage(options),

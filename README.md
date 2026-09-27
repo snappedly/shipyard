@@ -61,8 +61,8 @@ for the roles your template uses. Both Codex and Claude Code workflows accept
 
 `simple-loop` uses routine for triage and
 implementation. `sequential-reviewer` also uses strong for issue reviews.
-Parallel planner templates use routine for ticket work and strong for planning,
-conflict resolution, and integration. The review-enabled planner also uses
+Parallel planner templates use routine for ticket work and planning, and strong for
+conflict resolution and integration. The review-enabled planner also uses
 strong for ticket and final specification reviews. See
 [agent setup](docs/content/docs/agents.mdx).
 

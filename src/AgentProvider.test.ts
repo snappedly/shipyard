@@ -126,6 +126,8 @@ describe("claudeCode factory", () => {
   it("buildPrintCommand includes --effort when specified", () => {
     const provider = claudeCode("claude-opus-4-8", { effort: "high" });
     const { command } = provider.buildPrintCommand(opts("do something"));
+    expect(provider.model).toBe("claude-opus-4-8");
+    expect(provider.reasoningEffort).toBe("high");
     expect(command).toContain("--effort high");
   });
 
@@ -454,6 +456,8 @@ describe("codex factory", () => {
   it("uses the strong role's configured reasoning effort", () => {
     const provider = codex(CODEX_MODELS.strong);
     const { command } = provider.buildPrintCommand(opts("do something"));
+    expect(provider.model).toBe(CODEX_MODELS.strong.model);
+    expect(provider.reasoningEffort).toBe(CODEX_MODELS.strong.effort);
     expect(command).toContain(
       `model_reasoning_effort="${CODEX_MODELS.strong.effort}"`,
     );

@@ -410,14 +410,17 @@ describe("buildRunSummaryRows", () => {
     expect(rows["Branch"]).toBe("shipyard/issue-160");
   });
 
-  it("does not include a Model row", () => {
+  it("shows configured model and reasoning effort", () => {
     const rows = buildRunSummaryRows({
       agentName: "claude-code",
       sandboxName: "docker",
       maxIterations: 1,
       branch: "main",
+      model: "gpt-5.6-sol",
+      reasoningEffort: "high",
     });
-    expect(rows["Model"]).toBeUndefined();
+    expect(rows["Model"]).toBe("gpt-5.6-sol");
+    expect(rows["Reasoning effort"]).toBe("high");
   });
 });
 
@@ -746,8 +749,8 @@ describe("buildUsageLines", () => {
       },
     ]);
     expect(lines).toEqual([
-      "Reported input tokens: 50k (0k cache read)",
-      "Reported input tokens: 100k (75k cache read)",
+      "Reported input tokens: 50k (50,000 uncached, 0 cache write, 0 cache read); output tokens: 1,000",
+      "Reported input tokens: 100k (25,000 uncached, 0 cache write, 75,000 cache read); output tokens: 2,000",
     ]);
   });
 
@@ -772,8 +775,8 @@ describe("buildUsageLines", () => {
       },
     ]);
     expect(lines).toEqual([
-      "Reported input tokens: 50k (0k cache read)",
-      "Reported input tokens: 100k (0k cache read)",
+      "Reported input tokens: 50k (50,000 uncached, 0 cache write, 0 cache read); output tokens: 1,000",
+      "Reported input tokens: 100k (100,000 uncached, 0 cache write, 0 cache read); output tokens: 2,000",
     ]);
   });
 
