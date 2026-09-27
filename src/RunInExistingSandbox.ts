@@ -16,7 +16,7 @@ import type { SandboxError } from "./errors.js";
 import {
   buildAgentStreamHandler,
   buildCompletionMessage,
-  buildContextWindowLines,
+  buildUsageLines,
   type LoggingOption,
 } from "./run.js";
 
@@ -59,7 +59,7 @@ export const runInExistingSandbox = (
     );
     yield* display.status(completion.message, completion.severity);
 
-    for (const line of buildContextWindowLines(result.iterations)) {
+    for (const line of buildUsageLines(result.iterations)) {
       yield* display.text(line);
     }
 

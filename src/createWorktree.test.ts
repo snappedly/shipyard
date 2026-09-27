@@ -640,7 +640,7 @@ describe("worktree.run()", () => {
     }
   });
 
-  it("emits 'Context window: NNNk' line when an iteration has usage", async () => {
+  it("reports input usage when an iteration has usage", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "ws-run-ctxwin-"));
     await initRepo(hostDir);
     await commitFile(hostDir, "init.txt", "init", "initial commit");
@@ -666,14 +666,14 @@ describe("worktree.run()", () => {
       expect(result.iterations[0]!.usage).toBeDefined();
 
       const log = await readFile(logPath, "utf-8");
-      expect(log).toContain("Context window: 50k");
+      expect(log).toContain("Reported input tokens: 50k (0k cache read)");
     } finally {
       await ws.close();
       await rm(hostDir, { recursive: true, force: true });
     }
   });
 
-  it("captures Claude session and emits 'Context window' from parsed usage (regression: #717)", async () => {
+  it("captures Claude session and reports parsed usage (regression: #717)", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "ws-run-claude-cap-"));
     const hostProjectsDir = await mkdtemp(
       join(tmpdir(), "ws-run-claude-host-projects-"),
@@ -786,7 +786,7 @@ describe("worktree.run()", () => {
       expect(result.iterations[0]!.sessionFilePath).toBeDefined();
 
       const log = await readFile(logPath, "utf-8");
-      expect(log).toContain("Context window: 50k");
+      expect(log).toContain("Reported input tokens: 50k (0k cache read)");
     } finally {
       await ws.close();
       await rm(hostDir, { recursive: true, force: true });
