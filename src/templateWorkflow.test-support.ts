@@ -245,7 +245,7 @@ vi.mock("@snappedly-tools/shipyard", () => {
         if (name === "reviewer") {
           calls.reviewCount++;
           return (
-            calls.reviewCount > 1 && calls.finalChanges
+            calls.reviewCount > (calls.spec ? 3 : 1) && calls.finalChanges
               ? calls.finalReviewApproved
               : calls.reviewApproved
           )

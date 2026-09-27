@@ -280,7 +280,6 @@ describe("generated workflow model routing", () => {
         model,
       ]),
     ).toEqual([
-      ["planner", "codex", "strong-choice"],
       ["triage #43", "codex", "routine-choice"],
       ["implementer", "codex", "routine-choice"],
       ["reviewer", "codex", "strong-choice"],

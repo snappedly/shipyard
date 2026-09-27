@@ -55,6 +55,10 @@ dependency-wave integration. `parallel-planner-with-review` also uses it for
 ticket reviews and the final review of the integrated specification. The
 selected provider handles both roles.
 
+With one ready scope, `parallel-planner-with-review` skips the planner agent.
+For a standalone issue, approved review goes directly to PR handoff. Spec
+scopes retain final integration and review of any subsequent correction.
+
 Set the role values in `.shipyard/.env`. A host environment value overrides
 the same entry in that file. Shipyard does not load the repository-root `.env`.
 `shipyard init --model <model>` supplies each role that has no

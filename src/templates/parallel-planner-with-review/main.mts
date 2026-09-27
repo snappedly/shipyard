@@ -216,6 +216,7 @@ const runWorker = async (scope: Scope, ticket: Ticket) => {
         BRANCH: branch,
         BASE_BRANCH: scope.branch,
         SCOPE: JSON.stringify(scope),
+        IMPLEMENTATION_EVIDENCE: packet,
       },
     });
     packet += `\n\n${approved(review, `Review of #${ticket.id}`)}`;
@@ -230,27 +231,30 @@ for (let iteration = 0; iteration < 10; iteration++) {
     execFileSync("node", [".shipyard/select-issues.mjs"], { encoding: "utf8" }),
   ) as Scope[];
   if (!scopes.length) break;
-  const localBranches = execFileSync(
-    "git",
-    ["for-each-ref", "--format=%(refname:short)", "refs/heads"],
-    { encoding: "utf8" },
-  )
-    .split(/\r?\n/)
-    .filter(Boolean);
-  const plannerBranch = await resolvePlannerBranch(localBranches);
-  fastForwardPlannerBranch(plannerBranch, targetBranch);
-  const plan = await shipyard.run({
-    hooks,
-    sandbox: sandboxProvider,
-    copyToWorktree: [".shipyard/setup.sh"],
-    name: "planner",
-    branchStrategy: { type: "branch", branch: plannerBranch },
-    maxIterations: 1,
-    agent: roleAgent("strong", shipyard.CODEX_MODELS.strong),
-    promptFile: "./.shipyard/plan-prompt.md",
-    output: shipyard.Output.object({ tag: "plan", schema: planSchema }),
-  });
-  const ids = plan.output.issues.map((item: { id: string }) => item.id);
+  let ids = scopes.map((scope) => scope.id);
+  if (scopes.length > 1) {
+    const localBranches = execFileSync(
+      "git",
+      ["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+      { encoding: "utf8" },
+    )
+      .split(/\r?\n/)
+      .filter(Boolean);
+    const plannerBranch = await resolvePlannerBranch(localBranches);
+    fastForwardPlannerBranch(plannerBranch, targetBranch);
+    const plan = await shipyard.run({
+      hooks,
+      sandbox: sandboxProvider,
+      copyToWorktree: [".shipyard/setup.sh"],
+      name: "planner",
+      branchStrategy: { type: "branch", branch: plannerBranch },
+      maxIterations: 1,
+      agent: roleAgent("strong", shipyard.CODEX_MODELS.strong),
+      promptFile: "./.shipyard/plan-prompt.md",
+      output: shipyard.Output.object({ tag: "plan", schema: planSchema }),
+    });
+    ids = plan.output.issues.map((item: { id: string }) => item.id);
+  }
   if (!ids.length)
     throw new Error("Planner returned no work for activated scopes");
   if (new Set(ids).size !== ids.length)
@@ -503,38 +507,47 @@ for (let iteration = 0; iteration < 10; iteration++) {
               BRANCH: scope.branch,
               BASE_BRANCH: targetBranch,
               SCOPE: JSON.stringify(scope),
+              IMPLEMENTATION_EVIDENCE: workerEvidence,
             },
           });
           workerEvidence += `\n\n${approved(review, `Review of #${id}`)}`;
-          const final = await integration.run({
-            name: "merger",
-            maxIterations: 1,
-            agent: roleAgent("strong", shipyard.CODEX_MODELS.strong),
-            promptFile: "./.shipyard/merge-prompt.md",
-            promptArgs: {
-              TASK_ID: id,
-              ISSUE_TITLE: scope.title,
-              BRANCH: scope.branch,
-              BASE_BRANCH: targetBranch,
-              SCOPE: JSON.stringify(scope),
-            },
-          });
-          const finalEvidence = complete(final, `Final integration of #${id}`);
-          handoffEvidence = `${workerEvidence}\n\n${finalEvidence}`;
-          if (final.commits.length) {
-            const finalReview = await integration.run({
-              name: "reviewer",
+          if (scope.kind === "spec") {
+            const final = await integration.run({
+              name: "merger",
               maxIterations: 1,
               agent: roleAgent("strong", shipyard.CODEX_MODELS.strong),
-              promptFile: "./.shipyard/review-prompt.md",
+              promptFile: "./.shipyard/merge-prompt.md",
               promptArgs: {
                 TASK_ID: id,
+                ISSUE_TITLE: scope.title,
                 BRANCH: scope.branch,
                 BASE_BRANCH: targetBranch,
                 SCOPE: JSON.stringify(scope),
               },
             });
-            handoffEvidence += `\n\n${approved(finalReview, `Final review of #${id}`)}`;
+            const finalEvidence = complete(
+              final,
+              `Final integration of #${id}`,
+            );
+            handoffEvidence = `${workerEvidence}\n\n${finalEvidence}`;
+            if (final.commits.length) {
+              const finalReview = await integration.run({
+                name: "reviewer",
+                maxIterations: 1,
+                agent: roleAgent("strong", shipyard.CODEX_MODELS.strong),
+                promptFile: "./.shipyard/review-prompt.md",
+                promptArgs: {
+                  TASK_ID: id,
+                  BRANCH: scope.branch,
+                  BASE_BRANCH: targetBranch,
+                  SCOPE: JSON.stringify(scope),
+                  IMPLEMENTATION_EVIDENCE: handoffEvidence,
+                },
+              });
+              handoffEvidence += `\n\n${approved(finalReview, `Final review of #${id}`)}`;
+            }
+          } else {
+            handoffEvidence = workerEvidence;
           }
         } finally {
           await closeClean(integration);

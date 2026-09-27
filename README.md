@@ -95,12 +95,12 @@ Then:
 
 ## Choose a workflow
 
-| Template                       | What it does                                       |
-| ------------------------------ | -------------------------------------------------- |
-| `simple-loop`                  | Works through labeled issues one at a time.        |
-| `sequential-reviewer`          | Implements and reviews issues before PR handoff.   |
-| `parallel-planner`             | Plans and works on independent issues in parallel. |
-| `parallel-planner-with-review` | Adds review to the parallel workflow.              |
+| Template                       | What it does                                                     |
+| ------------------------------ | ---------------------------------------------------------------- |
+| `simple-loop`                  | Works through labeled issues one at a time.                      |
+| `sequential-reviewer`          | Implements and reviews issues before PR handoff.                 |
+| `parallel-planner`             | Plans and works on independent issues in parallel.               |
+| `parallel-planner-with-review` | Reviews each change; plans multiple scopes and integrates specs. |
 
 The package root exports the core run, interactive, and sandbox APIs. Import
 hosted workflow coordination and GitHub integration APIs from

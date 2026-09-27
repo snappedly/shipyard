@@ -51,6 +51,7 @@ describe("generated issue workflows", () => {
   it.each(["parallel-planner", "parallel-planner-with-review"])(
     "%s stops and explains the alternate when a local branch ref conflicts",
     async (template) => {
+      calls.multi = true;
       calls.localBranches.push("shipyard/planner/20260920-210724-7707b7");
 
       await expect(
@@ -63,6 +64,7 @@ describe("generated issue workflows", () => {
   it.each(["parallel-planner", "parallel-planner-with-review"])(
     "%s reuses the selected conflict-free planner branch",
     async (template) => {
+      calls.multi = true;
       calls.localBranches.push(
         "shipyard/planner/20260920-210724-7707b7",
         "shipyard/planner-2",
@@ -201,33 +203,36 @@ describe("generated issue workflows", () => {
     ]);
   });
 
-  it("parallel-planner-with-review keeps review before final validation", async () => {
+  it("hands off a single standalone scope after review without planning or final validation agents", async () => {
     await import("./templates/parallel-planner-with-review/main.mts" as string);
     expect(calls.events).toEqual([
       "select",
-      "planner",
       "implementer",
       "reviewer",
-      "merger",
       "close",
       "handoff",
       "close",
       "select",
     ]);
+    expect(
+      calls.invocations.find((call) => call.name === "reviewer")?.args,
+    ).toHaveProperty("IMPLEMENTATION_EVIDENCE", "tests passed");
   });
 
-  it("re-reviews the final standalone commit before handoff", async () => {
+  it("re-reviews final spec corrections before handoff", async () => {
+    calls.spec = true;
     calls.finalChanges = true;
     await import("./templates/parallel-planner-with-review/main.mts" as string);
     expect(calls.events.filter((event) => event === "reviewer")).toHaveLength(
-      2,
+      4,
     );
     expect(calls.events.indexOf("handoff")).toBeGreaterThan(
       calls.events.lastIndexOf("reviewer"),
     );
   });
 
-  it("blocks handoff when review of final corrections has findings", async () => {
+  it("blocks spec handoff when review of final corrections has findings", async () => {
+    calls.spec = true;
     calls.finalChanges = true;
     calls.finalReviewApproved = false;
     await import("./templates/parallel-planner-with-review/main.mts" as string);
@@ -470,7 +475,6 @@ describe("generated issue workflows", () => {
     await import("./templates/parallel-planner-with-review/main.mts" as string);
     expect(calls.events).toEqual([
       "select",
-      "planner",
       "close",
       "implementer",
       "reviewer",
