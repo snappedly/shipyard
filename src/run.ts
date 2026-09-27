@@ -212,12 +212,12 @@ export const buildCompletionMessage = (
 };
 
 /**
- * Format the context window size from an iteration's usage data.
+ * Format reported input usage from an iteration.
  * Returns a string like "103k" representing the total input-side tokens
  * (inputTokens + cacheCreationInputTokens + cacheReadInputTokens)
  * rounded up to the nearest 1000.
  */
-export const formatContextWindowSize = (usage: IterationUsage): string => {
+export const formatReportedInputTokens = (usage: IterationUsage): string => {
   const total =
     usage.inputTokens +
     usage.cacheCreationInputTokens +
@@ -226,15 +226,18 @@ export const formatContextWindowSize = (usage: IterationUsage): string => {
 };
 
 /**
- * Build "Context window: NNNk" lines for iterations that have usage data.
+ * Build input-usage lines for iterations that have usage data.
  * Returns an empty array when no iterations carry usage.
  */
-export const buildContextWindowLines = (
+export const buildUsageLines = (
   iterations: readonly Pick<IterationResult, "usage">[],
 ): string[] =>
   iterations
     .filter((it): it is { usage: IterationUsage } => it.usage !== undefined)
-    .map((it) => `Context window: ${formatContextWindowSize(it.usage)}`);
+    .map(
+      (it) =>
+        `Reported input tokens: ${formatReportedInputTokens(it.usage)} (${Math.ceil(it.usage.cacheReadInputTokens / 1000)}k cache read)`,
+    );
 
 /**
  * Controls where Shipyard writes iteration progress and agent output.
@@ -749,7 +752,7 @@ export async function run(
     );
     yield* d.status(completion.message, completion.severity);
 
-    for (const line of buildContextWindowLines(orchestrateResult.iterations)) {
+    for (const line of buildUsageLines(orchestrateResult.iterations)) {
       yield* d.text(line);
     }
 

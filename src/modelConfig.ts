@@ -30,7 +30,7 @@ export interface CodexModelConfig {
  * repository workflows all use the same role definitions.
  */
 const DEFAULT_CODEX_MODELS = {
-  routine: { model: "gpt-5.6-luna", effort: "max" },
+  routine: { model: "gpt-5.6-luna", effort: "medium" },
   strong: { model: "gpt-5.6-sol", effort: "max" },
 } as const satisfies Record<string, CodexModelConfig>;
 

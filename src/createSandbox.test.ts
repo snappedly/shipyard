@@ -283,7 +283,7 @@ describe("createSandbox", () => {
     }
   });
 
-  it("sandbox.run() emits 'Context window: NNNk' line when an iteration has usage", async () => {
+  it("sandbox.run() reports input usage when an iteration has usage", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "sandbox-test-"));
     await initRepo(hostDir);
     await commitFile(hostDir, "init.txt", "init", "initial commit");
@@ -315,14 +315,14 @@ describe("createSandbox", () => {
       expect(result.iterations[0]!.usage).toBeDefined();
 
       const log = await readFile(logPath, "utf-8");
-      expect(log).toContain("Context window: 50k");
+      expect(log).toContain("Reported input tokens: 50k (0k cache read)");
     } finally {
       await sandbox.close();
       await rm(hostDir, { recursive: true, force: true });
     }
   });
 
-  it("sandbox.run() captures Claude session and emits 'Context window' from parsed usage (regression: #717)", async () => {
+  it("sandbox.run() captures Claude session and reports parsed usage (regression: #717)", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "sandbox-claude-cap-"));
     const hostProjectsDir = await mkdtemp(
       join(tmpdir(), "sandbox-claude-host-projects-"),
@@ -451,7 +451,7 @@ describe("createSandbox", () => {
       expect(result.iterations[0]!.sessionFilePath).toBeDefined();
 
       const log = await readFile(logPath, "utf-8");
-      expect(log).toContain("Context window: 50k");
+      expect(log).toContain("Reported input tokens: 50k (0k cache read)");
     } finally {
       await sandbox.close();
       await rm(hostDir, { recursive: true, force: true });
