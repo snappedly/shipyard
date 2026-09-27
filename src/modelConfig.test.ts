@@ -15,6 +15,12 @@ afterEach(() => {
 });
 
 describe("CODEX_MODELS", () => {
+  it("uses medium effort for routine work by default", async () => {
+    const { CODEX_MODELS } = await import("./modelConfig.js");
+
+    expect(CODEX_MODELS.routine.effort).toBe("medium");
+  });
+
   it("uses shared role effort settings ahead of legacy Codex settings", async () => {
     process.env.SHIPYARD_ROUTINE_REASONING_EFFORT = "max";
     process.env.SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT = "low";

@@ -72,7 +72,7 @@ versioned model ID when you need a fixed target.
 For Codex and Claude Code workflows, set per-role reasoning effort in
 `.shipyard/.env` with `SHIPYARD_ROUTINE_REASONING_EFFORT` and
 `SHIPYARD_STRONG_REASONING_EFFORT`. The generated Codex `.env.example` sets
-routine effort to `max` and strong effort to `high`. The Claude Code example
+routine effort to `medium` and strong effort to `high`. The Claude Code example
 leaves both settings commented out. Init copies the example into `.env`.
 Remove either entry to use the provider's default effort. Valid values are
 `low`, `medium`, `high`, `xhigh`, and `max`; invalid values stop the workflow

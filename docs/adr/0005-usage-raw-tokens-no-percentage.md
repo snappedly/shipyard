@@ -1,6 +1,6 @@
 # Usage exposes raw token counts, not context window percentage
 
-`IterationResult.usage` reports raw token counts (`inputTokens`, `cacheCreationInputTokens`, `cacheReadInputTokens`, `outputTokens`) extracted from the last assistant message in the agent session JSONL. It deliberately omits `contextWindowSize` and `usedPercentage`, even though these are the metrics callers most naturally want.
+`IterationResult.usage` reports raw token counts (`inputTokens`, `cacheCreationInputTokens`, `cacheReadInputTokens`, `outputTokens`). Codex reports cumulative usage for the turn; Claude Code supplies the last assistant message's usage from its session JSONL. The run log labels the sum of input-side counts as reported input tokens and shows cache-read tokens separately. It deliberately omits `contextWindowSize` and `usedPercentage`, even though these are the metrics callers most naturally want.
 
 Context window size is not available from any data source Shipyard reads. The session JSONL contains token counts but not the model's context limit. Claude Code's statusline mechanism provides `context_window_size`, but it is a display feature piped to a configured shell script — not accessible from the streaming output or session files. Even that source has known accuracy issues: as of 2026-04, some models report incorrect values (e.g. `claude-sonnet-4-6` reports 200,000 instead of 1,000,000). A hardcoded model-to-size lookup table was rejected as stale-prone and subject to the same bugs.
 

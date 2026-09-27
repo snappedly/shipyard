@@ -47,7 +47,7 @@ SHIPYARD_ROUTINE_MODEL=gpt-6-luna
 SHIPYARD_STRONG_MODEL=gpt-6-sol
 # Optional reasoning effort per role: low, medium, high, xhigh, or max.
 # Leave unset to use the provider's default effort.
-SHIPYARD_ROUTINE_REASONING_EFFORT=max
+SHIPYARD_ROUTINE_REASONING_EFFORT=medium
 SHIPYARD_STRONG_REASONING_EFFORT=high`
     : `# Optional model choices for Shipyard workflows.
 # Choose aliases or model IDs available to your Claude Code provider: https://code.claude.com/docs/en/model-config

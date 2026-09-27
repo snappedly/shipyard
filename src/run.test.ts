@@ -10,14 +10,14 @@ import { tmpdir } from "node:os";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
   buildCompletionMessage,
-  buildContextWindowLines,
+  buildUsageLines,
   buildDefaultLogPath,
   buildLogDirectoryName,
   buildLogFilename,
   buildRunSummaryRows,
   buildStructuredOutputRetryFeedback,
   DEFAULT_MAX_ITERATIONS,
-  formatContextWindowSize,
+  formatReportedInputTokens,
   printFileDisplayStartup,
   run,
   sanitizeBranchForFilename,
@@ -678,7 +678,7 @@ describe("run() error logging to file", () => {
   });
 });
 
-describe("formatContextWindowSize", () => {
+describe("formatReportedInputTokens", () => {
   const roundingCases: readonly {
     readonly description: string;
     readonly inputTokens: number;
@@ -704,7 +704,7 @@ describe("formatContextWindowSize", () => {
 
   it.each(roundingCases)("$description", ({ inputTokens, expected }) => {
     expect(
-      formatContextWindowSize({
+      formatReportedInputTokens({
         inputTokens,
         cacheCreationInputTokens: 0,
         cacheReadInputTokens: 0,
@@ -715,7 +715,7 @@ describe("formatContextWindowSize", () => {
 
   it("sums inputTokens, cacheCreationInputTokens, and cacheReadInputTokens", () => {
     expect(
-      formatContextWindowSize({
+      formatReportedInputTokens({
         inputTokens: 50000,
         cacheCreationInputTokens: 25000,
         cacheReadInputTokens: 25000,
@@ -725,9 +725,9 @@ describe("formatContextWindowSize", () => {
   });
 });
 
-describe("buildContextWindowLines", () => {
+describe("buildUsageLines", () => {
   it("returns one line per iteration with usage data", () => {
-    const lines = buildContextWindowLines([
+    const lines = buildUsageLines([
       {
         usage: {
           inputTokens: 50000,
@@ -738,18 +738,21 @@ describe("buildContextWindowLines", () => {
       },
       {
         usage: {
-          inputTokens: 100000,
+          inputTokens: 25000,
           cacheCreationInputTokens: 0,
-          cacheReadInputTokens: 0,
+          cacheReadInputTokens: 75000,
           outputTokens: 2000,
         },
       },
     ]);
-    expect(lines).toEqual(["Context window: 50k", "Context window: 100k"]);
+    expect(lines).toEqual([
+      "Reported input tokens: 50k (0k cache read)",
+      "Reported input tokens: 100k (75k cache read)",
+    ]);
   });
 
   it("skips iterations without usage data", () => {
-    const lines = buildContextWindowLines([
+    const lines = buildUsageLines([
       {
         usage: {
           inputTokens: 50000,
@@ -768,16 +771,19 @@ describe("buildContextWindowLines", () => {
         },
       },
     ]);
-    expect(lines).toEqual(["Context window: 50k", "Context window: 100k"]);
+    expect(lines).toEqual([
+      "Reported input tokens: 50k (0k cache read)",
+      "Reported input tokens: 100k (0k cache read)",
+    ]);
   });
 
   it("returns empty array when no iterations have usage", () => {
-    const lines = buildContextWindowLines([{}, {}, {}]);
+    const lines = buildUsageLines([{}, {}, {}]);
     expect(lines).toEqual([]);
   });
 
   it("returns empty array for empty iterations list", () => {
-    const lines = buildContextWindowLines([]);
+    const lines = buildUsageLines([]);
     expect(lines).toEqual([]);
   });
 });

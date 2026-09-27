@@ -111,7 +111,9 @@ describe("InitService scaffold", () => {
         expect(envExample).not.toContain("claude setup-token");
         expect(envExample).toMatch(/^SHIPYARD_ROUTINE_MODEL=gpt-6-luna$/m);
         expect(envExample).toMatch(/^SHIPYARD_STRONG_MODEL=gpt-6-sol$/m);
-        expect(envExample).toMatch(/^SHIPYARD_ROUTINE_REASONING_EFFORT=max$/m);
+        expect(envExample).toMatch(
+          /^SHIPYARD_ROUTINE_REASONING_EFFORT=medium$/m,
+        );
         expect(envExample).toMatch(/^SHIPYARD_STRONG_REASONING_EFFORT=high$/m);
         expect(envExample).toContain("low, medium, high, xhigh, or max");
       }
@@ -479,7 +481,7 @@ SHIPYARD_ROUTINE_MODEL=gpt-6-luna
 SHIPYARD_STRONG_MODEL=gpt-6-sol
 # Optional reasoning effort per role: low, medium, high, xhigh, or max.
 # Leave unset to use the provider's default effort.
-SHIPYARD_ROUTINE_REASONING_EFFORT=max
+SHIPYARD_ROUTINE_REASONING_EFFORT=medium
 SHIPYARD_STRONG_REASONING_EFFORT=high
 # GitHub personal access token — the agent uses it to read and manage GitHub Issues
 # Runner installation/start uses the host \`gh\` login for repository administration.
