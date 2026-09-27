@@ -52,8 +52,18 @@ branch options.
 
 Fill in any credentials required in `.shipyard/.env`.
 Set `GH_TOKEN` there before `runner start`; startup fails immediately if it is
-missing or blank. Use a GH token with Contents, Issues, and Pull
-Requests read/write access and Metadata read access.
+missing or blank. For a [fine-grained GitHub token](https://github.com/settings/personal-access-tokens),
+select the target repository under **Repository access** and grant these
+**Repository permissions**:
+
+- **Contents: Read and write** to push Shipyard's task branch.
+- **Issues: Read and write** to read issues and update their status.
+- **Pull requests: Read and write** to create and update the handoff PR.
+- **Metadata: Read-only** (included by GitHub).
+
+The host `gh` login does not replace `GH_TOKEN` inside the Docker sandbox. A
+token without Contents write access can pass issue triage but fail at PR handoff
+with a GitHub 403.
 
 Set `SHIPYARD_ROUTINE_MODEL` and `SHIPYARD_STRONG_MODEL` in `.shipyard/.env`
 for the roles your template uses. Both Codex and Claude Code workflows accept
