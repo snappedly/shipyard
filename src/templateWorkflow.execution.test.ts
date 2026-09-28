@@ -10,6 +10,43 @@ describe("generated issue workflows", () => {
     "parallel-planner",
     "parallel-planner-with-review",
   ])(
+    "%s reports sandbox GitHub access failures before triage",
+    async (template) => {
+      calls.triageAccessError = "authentication failed";
+      await import(`./templates/${template}/main.mts` as string);
+
+      expect(calls.triaged).toEqual([]);
+      expect(calls.verified).toEqual([]);
+      expect(calls.events).not.toContain("implementer");
+      expect(calls.blocked[0]?.reason).toContain("authentication failed");
+    },
+  );
+
+  it.each([
+    "simple-loop",
+    "sequential-reviewer",
+    "parallel-planner",
+    "parallel-planner-with-review",
+  ])(
+    "%s retains a failed label edit in the blocked reason",
+    async (template) => {
+      calls.triageReady = false;
+      calls.triageOutput = "gh: Resource not accessible by integration";
+      await import(`./templates/${template}/main.mts` as string);
+
+      expect(calls.triaged.map((item) => item.id)).toEqual(["42"]);
+      expect(calls.blocked[0]?.reason).toContain(
+        "gh: Resource not accessible by integration",
+      );
+    },
+  );
+
+  it.each([
+    "simple-loop",
+    "sequential-reviewer",
+    "parallel-planner",
+    "parallel-planner-with-review",
+  ])(
     "%s removes activation when marking a ticket pending",
     async (template) => {
       await import(`./templates/${template}/main.mts` as string);
@@ -45,6 +82,23 @@ describe("generated issue workflows", () => {
           "--remove-label",
           "shipyard",
         ]);
+    },
+  );
+
+  it.each(["parallel-planner", "parallel-planner-with-review"])(
+    "%s reports sandbox GitHub access failures for spec children",
+    async (template) => {
+      calls.spec = true;
+      calls.triageAccessError = "authentication failed";
+      await import(`./templates/${template}/main.mts` as string);
+
+      expect(calls.triaged).toEqual([]);
+      expect(calls.verified).toEqual([]);
+      expect(calls.blocked[0]).toMatchObject({
+        root: "42",
+        failed: "43",
+        reason: expect.stringContaining("authentication failed"),
+      });
     },
   );
 
@@ -114,6 +168,9 @@ describe("generated issue workflows", () => {
     calls.initiallyReady = true;
     await import(`./templates/${template}/main.mts` as string);
     expect(calls.triaged).toEqual([]);
+    expect(calls.commands).not.toContain(
+      "gh issue view 42 --repo owner/repo --json number --jq .number",
+    );
     expect(calls.verified).toEqual(["42"]);
     expect(calls.events).toContain("implementer");
   });
