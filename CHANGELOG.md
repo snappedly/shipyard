@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.11.1
+
+### Patch Changes
+
+- 8586fb1: Report input token usage without calling it a context window, keep small implementation assignments focused, and default routine Codex work to medium reasoning effort.
+- 8586fb1: Keep init progress updates on one terminal line so animation frames do not accumulate in narrow windows.
+
 ## 0.11.0
 
 ### Minor Changes
