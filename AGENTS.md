@@ -27,14 +27,26 @@ Before executing any development tasks, internalize the constraints inside `./AG
 
 ## Agent skills
 
+### Code host
+
+GitHub hosts branches and PRs for `snappedly/shipyard`; humans merge task and promotion PRs. See `docs/agents/code-host.md`.
+
 ### Work tracker
 
 GitHub Issues in `snappedly/shipyard`, operated with `gh`; PRs are not a triage request surface. See `docs/agents/issue-tracker.md`.
 
 ### Team workflow
 
-Small clear changes use focused verification and local review; planned work uses issue-backed implementation, cleanup, review, and PR delivery to `staging`; future releases require human approval of the exact `production` candidate. See `docs/agents/workflow.md`.
+Small clear changes use focused verification and local review; planned work uses issue-backed implementation, cleanup, review, and PR delivery to `staging`. Run `npm run check` before PR submission. Humans merge task and production promotion PRs; the approved promotion triggers automatic npm release. Read `docs/agents/workflow.md` before implementation, PR creation or merge, and completion-based issue or spec closure.
+
+### Triage roles
+
+GitHub labels map triage states and bug or enhancement categories. See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
 Single-context layout: `CONTEXT.md` plus `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+### Frontend
+
+The docs site uses Fumadocs UI under `docs/app/`, `docs/components/`, and `docs/content/docs/`. See `docs/agents/frontend.md`.
