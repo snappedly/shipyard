@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.2
+
+### Patch Changes
+
+- 631cdd3: Report sandbox GitHub access errors and failed triage output when blocking an issue.
+
 ## 0.11.1
 
 ### Patch Changes
