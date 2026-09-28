@@ -96,7 +96,7 @@ const closeClean = async (sandbox: {
   if (preservedWorktreePath)
     throw new Error(`Sandbox has uncommitted work at ${preservedWorktreePath}`);
 };
-const verifyTriage = (ticketId: string) => {
+const verifyTriage = (ticketId: string, triageOutput?: string) => {
   try {
     execFileSync("bash", [".shipyard/verify-triage.sh", ticketId, repository], {
       encoding: "utf8",
@@ -105,8 +105,30 @@ const verifyTriage = (ticketId: string) => {
     const detail = (error as { stderr?: string | Buffer }).stderr
       ?.toString()
       .trim();
-    throw new Error(detail || `Could not verify triage for #${ticketId}`);
+    const reason = detail || `Could not verify triage for #${ticketId}`;
+    const output = triageOutput?.trim();
+    throw new Error(
+      output ? `${reason}; triage output: ${output.slice(-1200)}` : reason,
+    );
   }
+};
+const verifyTriageAccess = async (
+  sandbox: {
+    exec: (
+      command: string,
+    ) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
+  },
+  ticketId: string,
+) => {
+  if (!/^\d+$/.test(ticketId))
+    throw new Error(`Invalid issue number: ${ticketId}`);
+  const result = await sandbox.exec(
+    `gh issue view ${ticketId} --repo ${repository} --json number --jq .number`,
+  );
+  if (result.exitCode !== 0)
+    throw new Error(
+      `Cannot triage issue #${ticketId}: GitHub access failed in the sandbox: ${result.stderr.trim() || result.stdout.trim() || `exit ${result.exitCode}`}`,
+    );
 };
 const planSchema = z.object({ issues: z.array(z.object({ id: z.string() })) });
 type Ticket = {
@@ -174,15 +196,19 @@ const runWorker = async (scope: Scope, ticket: Ticket) => {
     copyToWorktree: [".shipyard/setup.sh"],
   });
   try {
-    if (!ticket.triageReady)
-      await sandbox.run({
+    let triageOutput: string | undefined;
+    if (!ticket.triageReady) {
+      await verifyTriageAccess(sandbox, ticket.id);
+      const triage = await sandbox.run({
         name: `triage #${ticket.id}`,
         maxIterations: 1,
         agent: roleAgent("routine", shipyard.CODEX_MODELS.routine),
         promptFile: "./.shipyard/triage-prompt.md",
         promptArgs: { TASK_ID: ticket.id, BASE_BRANCH: targetBranch },
       });
-    verifyTriage(ticket.id);
+      triageOutput = triage.stdout;
+    }
+    verifyTriage(ticket.id, triageOutput);
     const implementation = await sandbox.run({
       name: "implementer",
       maxIterations: 100,
@@ -447,15 +473,19 @@ for (let iteration = 0; iteration < 10; iteration++) {
         let handoffEvidence: string;
         try {
           if (scope.kind === "standalone") {
-            if (!scope.triageReady)
-              await integration.run({
+            let triageOutput: string | undefined;
+            if (!scope.triageReady) {
+              await verifyTriageAccess(integration, id);
+              const triage = await integration.run({
                 name: `triage #${id}`,
                 maxIterations: 1,
                 agent: roleAgent("routine", shipyard.CODEX_MODELS.routine),
                 promptFile: "./.shipyard/triage-prompt.md",
                 promptArgs: { TASK_ID: id, BASE_BRANCH: targetBranch },
               });
-            verifyTriage(id);
+              triageOutput = triage.stdout;
+            }
+            verifyTriage(id, triageOutput);
             const standalone = await integration.run({
               name: "implementer",
               maxIterations: 100,
