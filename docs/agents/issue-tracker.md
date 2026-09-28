@@ -1,23 +1,20 @@
 # Issue tracker: GitHub
 
-Work items and approved executable specs for `snappedly/shipyard` live in GitHub Issues. Use the `gh` CLI for tracker operations. Planning notes, domain context, and ADRs remain in repository documentation.
+Work items and approved executable specs live at https://github.com/snappedly/shipyard/issues. Use authenticated `gh` with `--repo snappedly/shipyard` for every issue command. The current connection can read issues and has repository admin permission to create and update them. Code-host operations live in `docs/agents/code-host.md`. Planning notes, domain context, and ADRs remain in repository documentation.
 
 ## Conventions
 
-- Create an issue with `gh issue create --title "..." --body "..."`.
-- Read an issue with `gh issue view <number> --comments`, including labels when needed.
-- List issues with `gh issue list --state open --json number,title,body,labels,comments` and filter by the labels and states the calling skill needs.
-- Comment with `gh issue comment <number> --body "..."`.
-- Apply or remove labels with `gh issue edit <number> --add-label "..."` or `--remove-label "..."`.
-- Close with `gh issue close <number> --comment "..."`.
+- Create: `gh issue create --repo snappedly/shipyard --title "..." --body "..."`.
+- Read: `gh issue view <number> --repo snappedly/shipyard --comments`.
+- List: `gh issue list --repo snappedly/shipyard --state open --json number,title,body,labels,comments`.
+- Comment: `gh issue comment <number> --repo snappedly/shipyard --body "..."`.
+- Edit: `gh issue edit <number> --repo snappedly/shipyard --title "..." --body "..."`.
+- Apply or remove a label: `gh issue edit <number> --repo snappedly/shipyard --add-label "..."` or `--remove-label "..."`.
+- Close after the event in `docs/agents/workflow.md`: `gh issue close <number> --repo snappedly/shipyard --comment "..."`.
 
-Infer the repository from `git remote -v`; `gh` uses the current clone automatically.
+Before publishing, verify the destination with a known issue, such as `gh issue view 73 --repo snappedly/shipyard`. Issue identifiers are `snappedly/shipyard#<number>` or issue URLs. Qualify bare numbers when a PR could be meant.
 
-## Pull requests as a request surface
-
-**PRs as a request surface: no.** External PRs are not included in triage request discovery. Maintainer-owned PRs remain part of implementation and review workflows.
-
-GitHub shares one number space across issues and PRs. Resolve a bare `#42` with `gh pr view 42` and fall back to `gh issue view 42` when the calling workflow permits either surface.
+Triage states use `docs/agents/triage-labels.md`. Apply one of `bug` or `enhancement` to each executable issue with the label command above. A planning spec is a parent issue; executable tickets are its sub-issues. Only executable tickets receive `ready-for-agent`.
 
 ## When a skill publishes work
 
@@ -25,8 +22,8 @@ Create a GitHub issue unless the calling skill says to update an existing issue.
 
 ## When a skill fetches work
 
-Run `gh issue view <number> --comments` for an issue reference. Fetch a PR with `gh pr view <number> --comments` and `gh pr diff <number>` when PR work is in scope.
+Run the scoped issue view command above. Fetch PRs through `docs/agents/code-host.md`.
 
 ## Blocking relationships
 
-When the workflow supports parent and child work, prefer GitHub's native sub-issue and issue-dependency relationships. If unavailable, record the parent or blocker in the issue body using the convention named by the calling skill.
+Use GitHub's native sub-issues and dependencies. Read children with `gh api repos/snappedly/shipyard/issues/<parent>/sub_issues` and a child's parent with `gh api repos/snappedly/shipyard/issues/<child>/parent`. Add a child with `gh api --method POST repos/snappedly/shipyard/issues/<parent>/sub_issues -F sub_issue_id=<child-database-id>`. Read blockers with `gh api repos/snappedly/shipyard/issues/<blocked>/dependencies/blocked_by`; add one with `gh api --method POST repos/snappedly/shipyard/issues/<blocked>/dependencies/blocked_by -F issue_id=<blocker-database-id>`. Obtain database IDs with `gh api repos/snappedly/shipyard/issues/<number> --jq .id`. If an API operation is unavailable, put `Parent: snappedly/shipyard#<number>` or `Blocked by: snappedly/shipyard#<number>` in the issue body.

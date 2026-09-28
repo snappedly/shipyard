@@ -1,4 +1,4 @@
-# Triage Labels
+# Triage labels
 
 The skills speak in terms of five canonical triage roles. This file maps those roles to the actual label strings used in this repo's issue tracker.
 
@@ -12,6 +12,4 @@ The skills speak in terms of five canonical triage roles. This file maps those r
 
 When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use the corresponding label string from this table.
 
-Edit the right-hand column to match whatever vocabulary you actually use.
-
----
+Apply one state label and exactly one `bug` or `enhancement` category label per triaged executable issue. Use `gh issue edit <number> --repo snappedly/shipyard --add-label "<label>" --remove-label "<old-state>"` for a transition. The same command applies `ready-for-agent` for `to-spec` and `to-tickets`.

@@ -30,10 +30,12 @@ Shipyard's feedback-loop contract is implemented by the package scripts, Git hoo
 - Formatting/autofix: `npx lint-staged` formats supported staged files before commit.
 - Static feedback: `npm run typecheck` runs `tsgo --noEmit` against the configured TypeScript program.
 - Focused behavior: `npm test -- <affected-test-file>` runs the relevant Vitest file; changed logic should be tested at an existing public boundary.
-- Standard repository check: `npm run check` runs `npm run format:check`, `npm run typecheck`, `npm run build`, and the full `npm test` suite. It is self-contained on a clean checkout.
-- Frontend feedback: not applicable to the root CLI/library package. The documentation site is a separate `docs/` package and should use its own preview contract when UI work begins.
+- Standard repository check: `npm run check` runs formatting, typechecking, build, package validation, and the full test suite. Run it before submitting a PR.
+- Docs site: run `npm --prefix docs run dev` for visual inspection and `npm --prefix docs run build` when docs package output changes. No docs-specific test runner or CI check is configured.
 
-The pre-commit hook runs staged formatting and then the cheap typecheck. The full test suite is not a commit-time hook because it is a broader check reserved for explicit local, agent, or release verification.
+For unstaged edits, use `npx prettier --write <files>` or `npm run format` for the whole repository. The pre-commit hook uses `npx lint-staged` and `npm run typecheck`.
+
+The full test suite is not a commit-time hook. `npm run check` is the PR feedback loop; use focused tests while developing.
 
 ### Broader and release loop
 
@@ -64,9 +66,17 @@ Small, low-risk changes receive local review of the diff against the request and
 
 ## Pull or merge request
 
-The default integration branch is `staging`. Changes intended for integration land through a pull request to `staging`; after staging verification, `staging` is merged into the protected `production` branch. Small changes may perform local review inline but still use the same delivery path. The recommended merge strategy is squash merge. The agent may push the task branch and create or update its pull request after applicable checks pass.
+The default integration branch is `staging`. Use squash merge for task PRs. The agent may push a task branch and open a draft PR after cleanup and applicable checks. It may mark the PR ready after the required review is complete. A small change can open a ready PR after inline local review.
 
-Issues close when the change is merged to `staging` and required CI passes. A future release task may remain open until its production release verification completes.
+| Transition                           | Actor and event                                                                                                                                     | Evidence                                                                    |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Task PR merge to `staging`           | Human merges after required checks and review pass for the current head.                                                                            | Merged PR and passing CI.                                                   |
+| Executable issue closure             | Agent closes after the task PR is merged to `staging` and required CI passes. Do not use PR closing keywords.                                       | Merged PR, passing CI, closure comment.                                     |
+| Parent spec closure                  | Human records acceptance on the parent after every child closes and the integrated behavior is verified on staging; agent then closes the parent.   | Closed children, staging verification, acceptance comment, closure comment. |
+| Promotion to `production`            | Human approves the current promotion candidate after staging verification and merges the promotion PR. A changed candidate requires renewed review. | Promotion PR review and merge, staging evidence.                            |
+| Version PR merge and npm publication | GitHub Actions merges the generated version PR after exact-head CI and publishes the resulting exact `production` commit.                           | Release workflow, artifact checksum, npm version, GitHub release.           |
+
+A release-specific issue can remain open through production verification when its acceptance criteria require it.
 
 The staging deployment is the non-production verification path. Testers install its npm prerelease with `@snappedly-tools/shipyard@staging`; it never advances the production `latest` dist-tag.
 
@@ -76,13 +86,13 @@ Package publication is automated by `release.yml`. Pending changesets create or 
 
 The production deployment publishes the npm package; it does not deploy an always-on Shipyard service. The staging deployment publishes a prerelease of the same package for testing.
 
-If a separate production service deployment is added, the candidate must be identified by its exact `production` commit plus immutable version/artifact where available. A changed candidate invalidates prior approval, and any deployment-system approval gate must prevent an unapproved service candidate from deploying. The npm package release is intentionally unattended after its exact-candidate checks.
+The human promotion merge authorizes the automatic npm release. The workflow verifies the exact resulting `production` commit and artifact before publishing; no separate post-merge approval is required. If a service deployment is added, define its candidate and deployment approval gate before enabling agent-controlled promotion.
 
 ## Verification and recovery
 
-For staging, verify the exact prerelease version and `staging` dist-tag, install it in the test project, and run the relevant CLI smoke behavior. For production, verify the exact artifact/version, package or CLI smoke behavior, deployment result, and relevant health signals.
+For staging, verify the exact prerelease version and `staging` dist-tag, install it in the test project, and run the relevant CLI smoke behavior. For production, check `npm view @snappedly-tools/shipyard version dist.integrity`, inspect the dist-tags, install the released package, run `npx shipyard --help`, and confirm the matching GitHub tag and release.
 
-Recovery is by revert or roll-forward through a new pull request. No production migrations exist in this repository. Future migrations must document whether rollback is unsafe and require a forward-compatible recovery plan.
+Before npm accepts a failed publication, fix the cause and rerun the workflow or merge a correction. After publication, deprecate a broken version if needed and release a corrected patch; do not overwrite the version. A code correction goes through a new PR. No production migrations exist. Future migrations must state when rollback is unsafe.
 
 ## Handoff
 
