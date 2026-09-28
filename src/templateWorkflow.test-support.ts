@@ -32,6 +32,7 @@ const calls = vi.hoisted(() => ({
   verified: [] as string[],
   triageReady: true,
   triageAccessError: "",
+  triageOutput: "",
   initiallyReady: false,
   envFileExists: false,
   providerFailureModel: "",
@@ -226,7 +227,9 @@ vi.mock("@snappedly-tools/shipyard", () => {
             id: name.slice("triage #".length),
             beforeEvents: calls.events.length,
           });
-          return packet("triage applied");
+          return calls.triageOutput
+            ? { stdout: calls.triageOutput, commits: [] }
+            : packet("triage applied");
         }
         calls.events.push(name);
         calls.invocations.push({ name, branch, args: promptArgs ?? {} });
@@ -456,6 +459,7 @@ beforeEach(() => {
   calls.verified.length = 0;
   calls.triageReady = true;
   calls.triageAccessError = "";
+  calls.triageOutput = "";
   calls.initiallyReady = false;
   calls.envFileExists = false;
   calls.providerFailureModel = "";

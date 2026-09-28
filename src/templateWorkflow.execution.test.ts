@@ -28,6 +28,25 @@ describe("generated issue workflows", () => {
     "parallel-planner",
     "parallel-planner-with-review",
   ])(
+    "%s retains a failed label edit in the blocked reason",
+    async (template) => {
+      calls.triageReady = false;
+      calls.triageOutput = "gh: Resource not accessible by integration";
+      await import(`./templates/${template}/main.mts` as string);
+
+      expect(calls.triaged.map((item) => item.id)).toEqual(["42"]);
+      expect(calls.blocked[0]?.reason).toContain(
+        "gh: Resource not accessible by integration",
+      );
+    },
+  );
+
+  it.each([
+    "simple-loop",
+    "sequential-reviewer",
+    "parallel-planner",
+    "parallel-planner-with-review",
+  ])(
     "%s removes activation when marking a ticket pending",
     async (template) => {
       await import(`./templates/${template}/main.mts` as string);

@@ -2,4 +2,4 @@
 "@snappedly-tools/shipyard": patch
 ---
 
-Report sandbox GitHub access errors before attempting issue triage.
+Report sandbox GitHub access errors and failed triage output when blocking an issue.

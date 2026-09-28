@@ -96,7 +96,7 @@ const closeClean = async (sandbox: {
   if (preservedWorktreePath)
     throw new Error(`Sandbox has uncommitted work at ${preservedWorktreePath}`);
 };
-const verifyTriage = (ticketId: string) => {
+const verifyTriage = (ticketId: string, triageOutput?: string) => {
   try {
     execFileSync("bash", [".shipyard/verify-triage.sh", ticketId, repository], {
       encoding: "utf8",
@@ -105,7 +105,11 @@ const verifyTriage = (ticketId: string) => {
     const detail = (error as { stderr?: string | Buffer }).stderr
       ?.toString()
       .trim();
-    throw new Error(detail || `Could not verify triage for #${ticketId}`);
+    const reason = detail || `Could not verify triage for #${ticketId}`;
+    const output = triageOutput?.trim();
+    throw new Error(
+      output ? `${reason}; triage output: ${output.slice(-1200)}` : reason,
+    );
   }
 };
 const verifyTriageAccess = async (
@@ -192,17 +196,19 @@ const runWorker = async (scope: Scope, ticket: Ticket) => {
     copyToWorktree: [".shipyard/setup.sh"],
   });
   try {
+    let triageOutput: string | undefined;
     if (!ticket.triageReady) {
       await verifyTriageAccess(sandbox, ticket.id);
-      await sandbox.run({
+      const triage = await sandbox.run({
         name: `triage #${ticket.id}`,
         maxIterations: 1,
         agent: roleAgent("routine", shipyard.CODEX_MODELS.routine),
         promptFile: "./.shipyard/triage-prompt.md",
         promptArgs: { TASK_ID: ticket.id, BASE_BRANCH: targetBranch },
       });
+      triageOutput = triage.stdout;
     }
-    verifyTriage(ticket.id);
+    verifyTriage(ticket.id, triageOutput);
     const implementation = await sandbox.run({
       name: "implementer",
       maxIterations: 100,
@@ -467,17 +473,19 @@ for (let iteration = 0; iteration < 10; iteration++) {
         let handoffEvidence: string;
         try {
           if (scope.kind === "standalone") {
+            let triageOutput: string | undefined;
             if (!scope.triageReady) {
               await verifyTriageAccess(integration, id);
-              await integration.run({
+              const triage = await integration.run({
                 name: `triage #${id}`,
                 maxIterations: 1,
                 agent: roleAgent("routine", shipyard.CODEX_MODELS.routine),
                 promptFile: "./.shipyard/triage-prompt.md",
                 promptArgs: { TASK_ID: id, BASE_BRANCH: targetBranch },
               });
+              triageOutput = triage.stdout;
             }
-            verifyTriage(id);
+            verifyTriage(id, triageOutput);
             const standalone = await integration.run({
               name: "implementer",
               maxIterations: 100,
