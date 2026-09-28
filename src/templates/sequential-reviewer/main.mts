@@ -105,6 +105,24 @@ const verifyTriage = (ticketId: string) => {
     throw new Error(detail || `Could not verify triage for #${ticketId}`);
   }
 };
+const verifyTriageAccess = async (
+  sandbox: {
+    exec: (
+      command: string,
+    ) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
+  },
+  ticketId: string,
+) => {
+  if (!/^\d+$/.test(ticketId))
+    throw new Error(`Invalid issue number: ${ticketId}`);
+  const result = await sandbox.exec(
+    `gh issue view ${ticketId} --repo ${repository} --json number --jq .number`,
+  );
+  if (result.exitCode !== 0)
+    throw new Error(
+      `Cannot triage issue #${ticketId}: GitHub access failed in the sandbox: ${result.stderr.trim() || result.stdout.trim() || `exit ${result.exitCode}`}`,
+    );
+};
 
 const handoffEvidence = (stdout: string): string | undefined =>
   [...stdout.matchAll(/<handoff>([\s\S]*?)<\/handoff>/g)].at(-1)?.[1]?.trim();
@@ -200,7 +218,8 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
             ? issue.tickets?.find((ticket) => ticket.id === ticketId)
                 ?.triageReady
             : issue.triageReady;
-        if (!ready)
+        if (!ready) {
+          await verifyTriageAccess(sandbox, ticketId);
           await sandbox.run({
             name: `triage #${ticketId}`,
             agent: roleAgent("routine", shipyard.CODEX_MODELS.routine),
@@ -208,6 +227,7 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
             promptFile: "./.shipyard/triage-prompt.md",
             promptArgs: { TASK_ID: ticketId, BASE_BRANCH: targetBranch },
           });
+        }
         verifyTriage(ticketId);
       }
       const implement = await sandbox.run({

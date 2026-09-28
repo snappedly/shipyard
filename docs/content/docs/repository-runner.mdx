@@ -76,6 +76,8 @@ differently cased label, issue edit, or comment does not wake it.
 The bundled issue templates install Snappedly skills and repository
 dependencies inside their Docker sandbox. Shipyard runs `/triage` when an
 activated ticket lacks the sole `ready-for-agent` state, then rereads the issue.
+Before triage, Shipyard checks that the sandbox can read the issue through `gh`.
+If that check fails, the blocked issue reports the GitHub error.
 For an already triaged ticket, add `ready-for-agent` before `shipyard` to skip
 agent triage. Shipyard still verifies the live issue state before implementation.
 Triage checks the integration branch, so a retry does not mistake work on its

@@ -108,6 +108,24 @@ const verifyTriage = (ticketId: string) => {
     throw new Error(detail || `Could not verify triage for #${ticketId}`);
   }
 };
+const verifyTriageAccess = async (
+  sandbox: {
+    exec: (
+      command: string,
+    ) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
+  },
+  ticketId: string,
+) => {
+  if (!/^\d+$/.test(ticketId))
+    throw new Error(`Invalid issue number: ${ticketId}`);
+  const result = await sandbox.exec(
+    `gh issue view ${ticketId} --repo ${repository} --json number --jq .number`,
+  );
+  if (result.exitCode !== 0)
+    throw new Error(
+      `Cannot triage issue #${ticketId}: GitHub access failed in the sandbox: ${result.stderr.trim() || result.stdout.trim() || `exit ${result.exitCode}`}`,
+    );
+};
 const planSchema = z.object({ issues: z.array(z.object({ id: z.string() })) });
 type Ticket = {
   id: string;
@@ -184,7 +202,8 @@ const runWorker = async (scope: Scope, ticket: Ticket) => {
     copyToWorktree: [".shipyard/setup.sh"],
   });
   try {
-    if (!ticket.triageReady)
+    if (!ticket.triageReady) {
+      await verifyTriageAccess(sandbox, ticket.id);
       await sandbox.run({
         name: `triage #${ticket.id}`,
         maxIterations: 1,
@@ -192,6 +211,7 @@ const runWorker = async (scope: Scope, ticket: Ticket) => {
         promptFile: "./.shipyard/triage-prompt.md",
         promptArgs: { TASK_ID: ticket.id, BASE_BRANCH: targetBranch },
       });
+    }
     verifyTriage(ticket.id);
     const implementation = await sandbox.run({
       name: "implementer",
@@ -470,7 +490,8 @@ for (let iteration = 0; iteration < 10; iteration++) {
         let handoffEvidence: string;
         try {
           if (scope.kind === "standalone") {
-            if (!scope.triageReady)
+            if (!scope.triageReady) {
+              await verifyTriageAccess(integration, id);
               await integration.run({
                 name: `triage #${id}`,
                 maxIterations: 1,
@@ -478,6 +499,7 @@ for (let iteration = 0; iteration < 10; iteration++) {
                 promptFile: "./.shipyard/triage-prompt.md",
                 promptArgs: { TASK_ID: id, BASE_BRANCH: targetBranch },
               });
+            }
             verifyTriage(id);
             const standalone = await integration.run({
               name: "implementer",

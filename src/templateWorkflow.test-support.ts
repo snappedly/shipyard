@@ -31,6 +31,7 @@ const calls = vi.hoisted(() => ({
   triaged: [] as Array<{ id: string; beforeEvents: number }>,
   verified: [] as string[],
   triageReady: true,
+  triageAccessError: "",
   initiallyReady: false,
   envFileExists: false,
   providerFailureModel: "",
@@ -265,6 +266,13 @@ vi.mock("@snappedly-tools/shipyard", () => {
       },
       exec: async (command: string, options?: { stdin?: string }) => {
         calls.commands.push(command);
+        if (command.startsWith("gh issue view ")) {
+          return {
+            exitCode: calls.triageAccessError ? 4 : 0,
+            stdout: calls.triageAccessError ? "" : "42",
+            stderr: calls.triageAccessError,
+          };
+        }
         if (command === "git rev-parse HEAD") {
           headReads++;
           return {
@@ -447,6 +455,7 @@ beforeEach(() => {
   calls.triaged.length = 0;
   calls.verified.length = 0;
   calls.triageReady = true;
+  calls.triageAccessError = "";
   calls.initiallyReady = false;
   calls.envFileExists = false;
   calls.providerFailureModel = "";
