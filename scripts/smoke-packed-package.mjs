@@ -45,7 +45,7 @@ try {
     [
       'import * as shipyard from "@snappedly-tools/shipyard-v1";',
       'import { docker } from "@snappedly-tools/shipyard-v1/sandboxes/docker";',
-      "void [shipyard-v1, docker];",
+      "void [shipyard, docker];",
     ].join("\n"),
   );
   await writeFile(
