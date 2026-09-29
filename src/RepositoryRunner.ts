@@ -175,7 +175,7 @@ const defaultAdapters: RunnerInstallAdapters = {
     const response = await fetch(url, {
       headers: {
         Accept: "application/vnd.github+json",
-        "User-Agent": "shipyard-runner-installer",
+        "User-Agent": "shipyard-v1-runner-installer",
         "X-GitHub-Api-Version": "2022-11-28",
       },
     });
@@ -186,7 +186,7 @@ const defaultAdapters: RunnerInstallAdapters = {
   },
   fetchBytes: async (url) => {
     const response = await fetch(url, {
-      headers: { "User-Agent": "shipyard-runner-installer" },
+      headers: { "User-Agent": "shipyard-v1-runner-installer" },
     });
     if (!response.ok) {
       throw new Error(`GitHub returned HTTP ${response.status}`);
@@ -355,7 +355,7 @@ export const removeExistingRepositoryRunnerRegistrations = async (
 ): Promise<void> => {
   if (options.conflict.runners.some(({ id }) => id === undefined)) {
     throw new RunnerInstallError(
-      "GitHub did not provide runner IDs, so Shipyard cannot safely remove the existing registrations. Remove them in GitHub Settings > Actions > Runners, then retry.",
+      "GitHub did not provide runner IDs, so Shipyard V1 cannot safely remove the existing registrations. Remove them in GitHub Settings > Actions > Runners, then retry.",
     );
   }
 
@@ -441,7 +441,7 @@ export const installRepositoryRunner = async (
   const runnerDir = join(configDir, RUNNER_DIR);
   if (!(await adapters.exists(configDir))) {
     throw new RunnerInstallError(
-      `No ${CONFIG_DIR}/ found. Run \`shipyard init\` in this repository first.`,
+      `No ${CONFIG_DIR}/ found. Run \`shipyard-v1 init\` in this repository first.`,
     );
   }
   const runnerExists = await adapters.exists(runnerDir);
@@ -475,7 +475,7 @@ export const installRepositoryRunner = async (
   const identity = parseGitHubRepository(gitRemote.stdout);
   const repository = `${identity.owner}/${identity.repository}`;
   const repoUrl = `https://github.com/${repository}`;
-  const runnerName = `shipyard-${normalizeNamePart(identity.repository)}-${normalizeNamePart(adapters.hostname())}`;
+  const runnerName = `shipyard-v1-${normalizeNamePart(identity.repository)}-${normalizeNamePart(adapters.hostname())}`;
 
   await adapters
     .run("gh", ["auth", "status", "--hostname", "github.com"], {

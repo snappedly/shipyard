@@ -72,12 +72,21 @@ describe("addDependencyCommand", () => {
 
 describe("removeDependencyCommand", () => {
   it.each([
-    { pm: "npm" as const, expected: "npm uninstall @snappedly-tools/shipyard" },
-    { pm: "pnpm" as const, expected: "pnpm remove @snappedly-tools/shipyard" },
-    { pm: "yarn" as const, expected: "yarn remove @snappedly-tools/shipyard" },
-    { pm: "bun" as const, expected: "bun remove @snappedly-tools/shipyard" },
+    {
+      pm: "npm" as const,
+      expected: "npm uninstall @snappedly-tools/shipyard-v1",
+    },
+    {
+      pm: "pnpm" as const,
+      expected: "pnpm remove @snappedly-tools/shipyard-v1",
+    },
+    {
+      pm: "yarn" as const,
+      expected: "yarn remove @snappedly-tools/shipyard-v1",
+    },
+    { pm: "bun" as const, expected: "bun remove @snappedly-tools/shipyard-v1" },
   ])("$pm builds '$expected'", ({ pm, expected }) => {
-    expect(removeDependencyCommand(pm, "@snappedly-tools/shipyard")).toBe(
+    expect(removeDependencyCommand(pm, "@snappedly-tools/shipyard-v1")).toBe(
       expected,
     );
   });

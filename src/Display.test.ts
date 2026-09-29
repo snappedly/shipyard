@@ -267,7 +267,7 @@ describe("FileDisplay", () => {
   });
 
   const setup = () => {
-    const dir = mkdtempSync(join(tmpdir(), "shipyard-display-"));
+    const dir = mkdtempSync(join(tmpdir(), "shipyard-v1-display-"));
     const logPath = join(dir, "test.log");
     const layer = Layer.provide(
       FileDisplay.layer(logPath),
@@ -284,7 +284,7 @@ describe("FileDisplay", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const d = yield* Display;
-        yield* d.intro("shipyard");
+        yield* d.intro("shipyard-v1");
       }).pipe(Effect.provide(layer)),
     );
 
@@ -553,7 +553,7 @@ describe("FileDisplay", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const d = yield* Display;
-        yield* d.intro("shipyard");
+        yield* d.intro("shipyard-v1");
       }).pipe(Effect.provide(layer)),
     );
 
@@ -631,7 +631,7 @@ describe("SilentDisplay - toolCall", () => {
 
 describe("FileDisplay - toolCall", () => {
   const setup = () => {
-    const dir = mkdtempSync(join(tmpdir(), "shipyard-display-"));
+    const dir = mkdtempSync(join(tmpdir(), "shipyard-v1-display-"));
     const logPath = join(dir, "test.log");
     const layer = Layer.provide(
       FileDisplay.layer(logPath),

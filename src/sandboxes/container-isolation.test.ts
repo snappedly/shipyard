@@ -14,7 +14,7 @@ import { shellQuote } from "../shellQuote.js";
 import type { IsolatedSandboxHandle } from "../SandboxProvider.js";
 
 const exec = promisify(execFile);
-const imageName = process.env.SHIPYARD_TEST_DOCKER_IMAGE;
+const imageName = process.env.SHIPYARD_V1_TEST_DOCKER_IMAGE;
 
 it.skipIf(!imageName)(
   "docker abort terminates the interactive process inside the container",
@@ -28,7 +28,7 @@ it.skipIf(!imageName)(
       hostRepoPath: process.cwd(),
       env: {},
     })) as IsolatedSandboxHandle;
-    const marker = `/tmp/shipyard-abort-test-${Date.now()}.pid`;
+    const marker = `/tmp/shipyard-v1-abort-test-${Date.now()}.pid`;
     const controller = new AbortController();
     try {
       const execution = handle.interactiveExec!(
@@ -67,7 +67,9 @@ it.skipIf(!imageName)(
 it.skipIf(!imageName)(
   "docker isolates Git metadata while syncing ordinary changes",
   async () => {
-    const root = await mkdtemp(join(tmpdir(), "shipyard-container-security-"));
+    const root = await mkdtemp(
+      join(tmpdir(), "shipyard-v1-container-security-"),
+    );
     let handle: IsolatedSandboxHandle | undefined;
     try {
       await exec("git", ["init", "-b", "main", root]);
@@ -136,7 +138,7 @@ it.skipIf(!imageName)(
 it.skipIf(!imageName)(
   "docker runs the default merge strategy and removes its temporary branch",
   async () => {
-    const root = await mkdtemp(join(tmpdir(), "shipyard-container-run-"));
+    const root = await mkdtemp(join(tmpdir(), "shipyard-v1-container-run-"));
     try {
       await exec("git", ["init", "-b", "main", root]);
       const git = (...args: string[]) => exec("git", args, { cwd: root });

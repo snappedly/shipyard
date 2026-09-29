@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest an improvement to Shipyard
+about: Suggest an improvement to Shipyard V1
 title: ""
 labels: enhancement
 assignees: ""

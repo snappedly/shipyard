@@ -49,16 +49,16 @@ const runCli = async (args: string, cwd: string, env?: NodeJS.ProcessEnv) => {
     (args === "init" || args.startsWith("init ")) &&
     !args.includes("--help")
   ) {
-    const binDir = join(cwd, ".shipyard-cli-test-bin");
+    const binDir = join(cwd, ".shipyard-v1-cli-test-bin");
     await mkdir(binDir, { recursive: true });
-    const dockerArgsFile = join(cwd, ".shipyard-cli-docker-args");
+    const dockerArgsFile = join(cwd, ".shipyard-v1-cli-docker-args");
     await writeFile(
       join(binDir, "docker"),
-      '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$SHIPYARD_TEST_DOCKER_ARGS"\n',
+      '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$SHIPYARD_V1_TEST_DOCKER_ARGS"\n',
       { mode: 0o755 },
     );
     runEnv.PATH = `${binDir}:${runEnv.PATH ?? ""}`;
-    runEnv.SHIPYARD_TEST_DOCKER_ARGS = dockerArgsFile;
+    runEnv.SHIPYARD_V1_TEST_DOCKER_ARGS = dockerArgsFile;
   }
   return execAsync(`node ${cliPath} ${args}`, { cwd, env: runEnv });
 };
@@ -69,7 +69,7 @@ const cliTestLayer = Layer.merge(NodeContext.layer, ClackDisplay.layer);
 
 const runCliInProcess = (args: ReadonlyArray<string>) =>
   Effect.runPromiseExit(
-    cli(["node", "shipyard", ...args]).pipe(Effect.provide(cliTestLayer)),
+    cli(["node", "shipyard-v1", ...args]).pipe(Effect.provide(cliTestLayer)),
   );
 
 const runCliInProcessAt = async (
@@ -83,7 +83,7 @@ const runCliInProcessAt = async (
     return displayRef === undefined
       ? await runCliInProcess(args)
       : await Effect.runPromiseExit(
-          cli(["node", "shipyard", ...args]).pipe(
+          cli(["node", "shipyard-v1", ...args]).pipe(
             Effect.provide(
               Layer.merge(NodeContext.layer, SilentDisplay.layer(displayRef)),
             ),
@@ -121,13 +121,13 @@ const writePosixCommand = async (path: string, source: string) => {
 };
 
 const createRunnerUninstallFixture = async (hostDir: string) => {
-  const configDir = join(hostDir, ".shipyard");
+  const configDir = join(hostDir, ".shipyard-v1");
   const runnerDir = join(configDir, "runner");
   const workflowPath = join(
     hostDir,
     ".github",
     "workflows",
-    "shipyard-wake.yml",
+    "shipyard-v1-wake.yml",
   );
   await Promise.all([
     mkdir(runnerDir, { recursive: true }),
@@ -142,8 +142,8 @@ const createRunnerUninstallFixture = async (hostDir: string) => {
         schemaVersion: 1,
         repository: "owner/repo",
         repositoryUrl: "https://github.com/owner/repo",
-        name: "shipyard-owner-repo-test",
-        label: "shipyard",
+        name: "shipyard-v1-owner-repo-test",
+        label: "shipyard-v1",
         version: "2.331.0",
       })}\n`,
     ),
@@ -152,17 +152,17 @@ const createRunnerUninstallFixture = async (hostDir: string) => {
       join(hostDir, "package.json"),
       JSON.stringify({
         packageManager: "npm@12.0.2",
-        devDependencies: { "@snappedly-tools/shipyard": "^0.7.0" },
+        devDependencies: { "@snappedly-tools/shipyard-v1": "^0.7.0" },
       }),
     ),
   ]);
   return { configDir, runnerDir, workflowPath };
 };
 
-describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
+describe("shipyard-v1 CLI", { timeout: cliTestTimeoutMs }, () => {
   it("shows help with --help flag", async () => {
     const { stdout } = await runCli("--help", process.cwd());
-    expect(stdout).toContain("shipyard");
+    expect(stdout).toContain("shipyard-v1");
     expect(stdout).toContain("docker");
     expect(stdout).toContain("init");
     expect(stdout).toContain("uninstall");
@@ -198,7 +198,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
 
   it("uninstall requires confirmation before changing repository files", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-uninstall-confirm-"));
-    const configDir = join(hostDir, ".shipyard");
+    const configDir = join(hostDir, ".shipyard-v1");
     await mkdir(configDir);
     await writeFile(join(configDir, "main.ts"), "export {};\n");
 
@@ -213,16 +213,16 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     );
   });
 
-  it("uninstall removes the entire Shipyard directory and wake workflow", async () => {
+  it("uninstall removes the entire Shipyard V1 directory and wake workflow", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-uninstall-"));
-    const configDir = join(hostDir, ".shipyard");
+    const configDir = join(hostDir, ".shipyard-v1");
     const logsDir = join(configDir, "logs");
     const worktreeDir = join(configDir, "worktrees", "active-task");
     const workflowPath = join(
       hostDir,
       ".github",
       "workflows",
-      "shipyard-wake.yml",
+      "shipyard-v1-wake.yml",
     );
     await Promise.all([
       mkdir(logsDir, { recursive: true }),
@@ -249,12 +249,12 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     await expect(readFile(workflowPath, "utf8")).rejects.toThrow();
     expect(await Ref.get(displayRef).pipe(Effect.runPromise)).toContainEqual({
       _tag: "status",
-      message: "Shipyard uninstalled from this repository.",
+      message: "Shipyard V1 uninstalled from this repository.",
       severity: "success",
     });
   });
 
-  it("uninstall removes the declared Shipyard package with the detected manager", async () => {
+  it("uninstall removes the declared Shipyard V1 package with the detected manager", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-uninstall-package-"));
     const binDir = join(hostDir, "bin");
     const callsPath = join(hostDir, "package-manager-call.txt");
@@ -263,7 +263,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
       join(hostDir, "package.json"),
       JSON.stringify({
         packageManager: "npm@12.0.2",
-        devDependencies: { "@snappedly-tools/shipyard": "^0.7.0" },
+        devDependencies: { "@snappedly-tools/shipyard-v1": "^0.7.0" },
       }),
     );
     const npmPath = join(
@@ -273,16 +273,16 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     await writeFile(
       npmPath,
       process.platform === "win32"
-        ? '@echo off\r\n> "%SHIPYARD_NPM_CALLS%" echo %*\r\n'
-        : '#!/usr/bin/env node\nrequire("node:fs").writeFileSync(process.env.SHIPYARD_NPM_CALLS, process.argv.slice(2).join(" "))\n',
+        ? '@echo off\r\n> "%SHIPYARD_V1_NPM_CALLS%" echo %*\r\n'
+        : '#!/usr/bin/env node\nrequire("node:fs").writeFileSync(process.env.SHIPYARD_V1_NPM_CALLS, process.argv.slice(2).join(" "))\n',
     );
     if (process.platform !== "win32") await chmod(npmPath, 0o755);
 
     const originalPath = process.env.PATH;
-    const originalCallsPath = process.env.SHIPYARD_NPM_CALLS;
+    const originalCallsPath = process.env.SHIPYARD_V1_NPM_CALLS;
     const displayRef = Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([]);
     process.env.PATH = `${binDir}${delimiter}${originalPath ?? ""}`;
-    process.env.SHIPYARD_NPM_CALLS = callsPath;
+    process.env.SHIPYARD_V1_NPM_CALLS = callsPath;
     try {
       const result = await runCliInProcessAt(
         ["uninstall", "--yes"],
@@ -292,19 +292,19 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
 
       expect(Exit.isSuccess(result)).toBe(true);
       await expect(readFile(callsPath, "utf8")).resolves.toBe(
-        "uninstall @snappedly-tools/shipyard",
+        "uninstall @snappedly-tools/shipyard-v1",
       );
       expect(await Ref.get(displayRef).pipe(Effect.runPromise)).toContainEqual({
         _tag: "status",
-        message: "Removed @snappedly-tools/shipyard with npm.",
+        message: "Removed @snappedly-tools/shipyard-v1 with npm.",
         severity: "success",
       });
     } finally {
       if (originalPath === undefined) delete process.env.PATH;
       else process.env.PATH = originalPath;
       if (originalCallsPath === undefined)
-        delete process.env.SHIPYARD_NPM_CALLS;
-      else process.env.SHIPYARD_NPM_CALLS = originalCallsPath;
+        delete process.env.SHIPYARD_V1_NPM_CALLS;
+      else process.env.SHIPYARD_V1_NPM_CALLS = originalCallsPath;
     }
   });
 
@@ -341,7 +341,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
         await readFile(join(hostDir, "package.json"), "utf8"),
       ) as { devDependencies: Record<string, string> };
       expect(packageJson.devDependencies).toHaveProperty(
-        "@snappedly-tools/shipyard",
+        "@snappedly-tools/shipyard-v1",
       );
     },
   );
@@ -358,7 +358,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
         writePosixCommand(join(binDir, "gh"), "process.exit(1);"),
         writePosixCommand(
           join(binDir, "npm"),
-          'require("node:fs").writeFileSync(process.env.SHIPYARD_NPM_CALLS, process.argv.slice(2).join(" "));',
+          'require("node:fs").writeFileSync(process.env.SHIPYARD_V1_NPM_CALLS, process.argv.slice(2).join(" "));',
         ),
       ]);
       const displayRef = Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([]);
@@ -366,7 +366,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
       const result = await withEnvironment(
         {
           PATH: `${binDir}${delimiter}${process.env.PATH ?? ""}`,
-          SHIPYARD_NPM_CALLS: npmCalls,
+          SHIPYARD_V1_NPM_CALLS: npmCalls,
         },
         () =>
           runCliInProcessAt(
@@ -386,14 +386,14 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
       await expect(readFile(fixture.workflowPath, "utf8")).rejects.toThrow();
       await expect(access(fixture.configDir)).rejects.toThrow();
       await expect(readFile(npmCalls, "utf8")).resolves.toBe(
-        "uninstall @snappedly-tools/shipyard",
+        "uninstall @snappedly-tools/shipyard-v1",
       );
       expect(await Ref.get(displayRef).pipe(Effect.runPromise)).toContainEqual(
         expect.objectContaining({
           _tag: "status",
           severity: "warn",
           message: expect.stringContaining(
-            "Remove runner shipyard-owner-repo-test",
+            "Remove runner shipyard-v1-owner-repo-test",
           ),
         }),
       );
@@ -406,7 +406,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
       const hostDir = await mkdtemp(
         join(tmpdir(), "cli-uninstall-package-fail-"),
       );
-      const configDir = join(hostDir, ".shipyard");
+      const configDir = join(hostDir, ".shipyard-v1");
       const binDir = join(hostDir, "bin");
       await Promise.all([mkdir(configDir), mkdir(binDir)]);
       await Promise.all([
@@ -414,7 +414,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
         writeFile(
           join(hostDir, "package.json"),
           JSON.stringify({
-            devDependencies: { "@snappedly-tools/shipyard": "^0.7.0" },
+            devDependencies: { "@snappedly-tools/shipyard-v1": "^0.7.0" },
           }),
         ),
         writePosixCommand(join(binDir, "npm"), "process.exit(7);"),
@@ -439,14 +439,14 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
         await readFile(join(hostDir, "package.json"), "utf8"),
       ) as { devDependencies: Record<string, string> };
       expect(packageJson.devDependencies).toHaveProperty(
-        "@snappedly-tools/shipyard",
+        "@snappedly-tools/shipyard-v1",
       );
     },
   );
 
   it("runner purge removes all default run logs regardless of age", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-log-purge-"));
-    const logsDir = join(hostDir, ".shipyard", "logs");
+    const logsDir = join(hostDir, ".shipyard-v1", "logs");
     await mkdir(join(logsDir, "2000-01-01"), { recursive: true });
     await mkdir(join(logsDir, "2099-12-31"), { recursive: true });
     await writeFile(join(logsDir, "audit.log"), "root-level run log");
@@ -489,7 +489,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     expect(stdout).toContain("remove-image");
   });
 
-  it("docker build-image errors when .shipyard/ is missing", async () => {
+  it("docker build-image errors when .shipyard-v1/ is missing", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
     await initRepo(hostDir);
     await commitFile(hostDir, "hello.txt", "hello", "initial commit");
@@ -500,11 +500,11 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     } catch (err: unknown) {
       const { stdout, stderr } = err as { stdout: string; stderr: string };
       const output = stdout + stderr;
-      expect(output).toContain("No .shipyard/ found");
+      expect(output).toContain("No .shipyard-v1/ found");
     }
   });
 
-  it("run errors when .shipyard/ is missing", async () => {
+  it("run errors when .shipyard-v1/ is missing", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
     await initRepo(hostDir);
     await commitFile(hostDir, "hello.txt", "hello", "initial commit");
@@ -513,7 +513,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
 
     expect(Exit.isFailure(result)).toBe(true);
     if (Exit.isFailure(result)) {
-      expect(Cause.pretty(result.cause)).toContain("No .shipyard/ found");
+      expect(Cause.pretty(result.cause)).toContain("No .shipyard-v1/ found");
     }
   });
 
@@ -521,14 +521,14 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
     await initRepo(hostDir);
     await commitFile(hostDir, "hello.txt", "hello", "initial commit");
-    await mkdir(join(hostDir, ".shipyard"));
+    await mkdir(join(hostDir, ".shipyard-v1"));
 
     const result = await runCliInProcessAt(["run", "--skip-build"], hostDir);
 
     expect(Exit.isFailure(result)).toBe(true);
     if (Exit.isFailure(result)) {
       const output = Cause.pretty(result.cause);
-      expect(output).toContain("No Shipyard entrypoint found");
+      expect(output).toContain("No Shipyard V1 entrypoint found");
       expect(output).toContain("main.ts");
       expect(output).toContain("main.mts");
     }
@@ -536,7 +536,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
 
   it("run applies automatic log retention before resolving the entrypoint", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-log-retention-"));
-    const logsDir = join(hostDir, ".shipyard", "logs");
+    const logsDir = join(hostDir, ".shipyard-v1", "logs");
     await mkdir(join(logsDir, "2000-01-01"), { recursive: true });
     const rootLog = join(logsDir, "audit.log");
     await writeFile(rootLog, "root-level run log");
@@ -552,7 +552,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     expect(Exit.isFailure(result)).toBe(true);
     if (Exit.isFailure(result)) {
       expect(Cause.pretty(result.cause)).toContain(
-        "No Shipyard entrypoint found",
+        "No Shipyard V1 entrypoint found",
       );
     }
     await expect(readdir(logsDir)).resolves.not.toContain("2000-01-01");
@@ -566,7 +566,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
 
   it("run continues when automatic log retention fails", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-log-retention-error-"));
-    const configDir = join(hostDir, ".shipyard");
+    const configDir = join(hostDir, ".shipyard-v1");
     await mkdir(configDir);
     await writeFile(join(configDir, "logs"), "not a directory");
     const displayRef = Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([]);
@@ -580,7 +580,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     expect(Exit.isFailure(result)).toBe(true);
     if (Exit.isFailure(result)) {
       expect(Cause.pretty(result.cause)).toContain(
-        "No Shipyard entrypoint found",
+        "No Shipyard V1 entrypoint found",
       );
     }
     expect(await Ref.get(displayRef).pipe(Effect.runPromise)).toContainEqual({
@@ -596,7 +596,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
       const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
       await initRepo(hostDir);
       await commitFile(hostDir, "hello.txt", "hello", "initial commit");
-      const configDir = join(hostDir, ".shipyard");
+      const configDir = join(hostDir, ".shipyard-v1");
       const binDir = join(hostDir, "bin");
       await mkdir(configDir);
       await mkdir(binDir);
@@ -623,7 +623,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
       });
 
       expect(stdout).toContain("Building Docker image");
-      expect(stdout).toContain("Running .shipyard/main.mts");
+      expect(stdout).toContain("Running .shipyard-v1/main.mts");
       expect(await readFile(dockerArgsFile, "utf8")).toContain("build -t");
       expect(await readFile(npxArgsFile, "utf8")).toContain("--no-install tsx");
       expect(await readFile(npxArgsFile, "utf8")).toContain(
@@ -789,20 +789,20 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     expect(output).toContain("Init is incomplete");
     expect(output).not.toContain("Init complete");
     expect(
-      await readFile(join(hostDir, ".shipyard-cli-docker-args"), "utf8"),
+      await readFile(join(hostDir, ".shipyard-v1-cli-docker-args"), "utf8"),
     ).toContain("build -t");
-    const entries = await readdir(join(hostDir, ".shipyard"));
+    const entries = await readdir(join(hostDir, ".shipyard-v1"));
     expect(entries).toContain("Dockerfile");
     expect(entries).toContain("prompt.md");
     expect(
-      await readFile(join(hostDir, ".shipyard", "Dockerfile"), "utf8"),
+      await readFile(join(hostDir, ".shipyard-v1", "Dockerfile"), "utf8"),
     ).toContain("GitHub CLI");
     expect(
-      await readFile(join(hostDir, ".shipyard", ".env.example"), "utf8"),
+      await readFile(join(hostDir, ".shipyard-v1", ".env.example"), "utf8"),
     ).toContain("GH_TOKEN=");
     expect(
       await readdir(join(hostDir, ".github", "workflows")).catch(() => []),
-    ).not.toContain("shipyard-wake.yml");
+    ).not.toContain("shipyard-v1-wake.yml");
   });
 
   it("init advances one progress bar across setup stages", async () => {
@@ -883,7 +883,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     });
     await writeFile(
       join(binDir, "gh"),
-      `#!/bin/sh\nif [ "$1" = label ]; then\n  touch "${firstLabel}"\n  sleep 0.1\n  if [ "$3" = shipyard:outstanding-tasks ]; then touch "${lastLabel}"; fi\nfi\n`,
+      `#!/bin/sh\nif [ "$1" = label ]; then\n  touch "${firstLabel}"\n  sleep 0.1\n  if [ "$3" = shipyard-v1:outstanding-tasks ]; then touch "${lastLabel}"; fi\nfi\n`,
       { mode: 0o755 },
     );
 
@@ -948,11 +948,11 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     );
 
     const main = await readFile(
-      join(hostDir, ".shipyard", "main.mts"),
+      join(hostDir, ".shipyard-v1", "main.mts"),
       "utf-8",
     );
     const envExample = await readFile(
-      join(hostDir, ".shipyard", ".env.example"),
+      join(hostDir, ".shipyard-v1", ".env.example"),
       "utf-8",
     );
     expect(main).toContain('hostPath: "~/.codex/auth.json"');
@@ -1000,7 +1000,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     }
   });
 
-  it("init creates the five Shipyard issue labels", async () => {
+  it("init creates the five Shipyard V1 issue labels", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
     await initRepo(hostDir);
     await commitFile(hostDir, "hello.txt", "hello", "initial commit");
@@ -1029,7 +1029,7 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
     expect(failure.stdout + failure.stderr).not.toContain("Init complete");
     const commands = await readFile(ghArgsFile, "utf8");
     for (const label of [
-      "shipyard",
+      "shipyard-v1",
       "bug",
       "enhancement",
       "needs-triage",
@@ -1037,10 +1037,10 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
       "ready-for-agent",
       "ready-for-human",
       "wontfix",
-      "shipyard:blocked",
-      "shipyard:pending",
-      "shipyard:complete",
-      "shipyard:outstanding-tasks",
+      "shipyard-v1:blocked",
+      "shipyard-v1:pending",
+      "shipyard-v1:complete",
+      "shipyard-v1:outstanding-tasks",
     ])
       expect(commands).toContain(`label create ${label} `);
   });
@@ -1065,7 +1065,9 @@ describe("shipyard CLI", { timeout: cliTestTimeoutMs }, () => {
       "Repository runner installation failed",
     );
     expect(failure.stdout + failure.stderr).not.toContain("Init complete");
-    expect(await readdir(join(hostDir, ".shipyard"))).toContain("Dockerfile");
+    expect(await readdir(join(hostDir, ".shipyard-v1"))).toContain(
+      "Dockerfile",
+    );
   });
 
   it("init reports label provisioning failure for a connected repository", async () => {

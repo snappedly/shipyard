@@ -10,14 +10,14 @@ import { getAgent, scaffold } from "./InitService.js";
 const initialRepository = process.env.GH_REPO;
 const initialCwd = process.cwd();
 const modelEnvironmentNames = [
-  "SHIPYARD_ROUTINE_MODEL",
-  "SHIPYARD_STRONG_MODEL",
-  "SHIPYARD_ROUTINE_REASONING_EFFORT",
-  "SHIPYARD_STRONG_REASONING_EFFORT",
-  "SHIPYARD_CODEX_ROUTINE_MODEL",
-  "SHIPYARD_CODEX_STRONG_MODEL",
-  "SHIPYARD_CODEX_ROUTINE_REASONING_EFFORT",
-  "SHIPYARD_CODEX_STRONG_REASONING_EFFORT",
+  "SHIPYARD_V1_ROUTINE_MODEL",
+  "SHIPYARD_V1_STRONG_MODEL",
+  "SHIPYARD_V1_ROUTINE_REASONING_EFFORT",
+  "SHIPYARD_V1_STRONG_REASONING_EFFORT",
+  "SHIPYARD_V1_CODEX_ROUTINE_MODEL",
+  "SHIPYARD_V1_CODEX_STRONG_MODEL",
+  "SHIPYARD_V1_CODEX_ROUTINE_REASONING_EFFORT",
+  "SHIPYARD_V1_CODEX_STRONG_REASONING_EFFORT",
 ] as const;
 const initialModelEnvironment = Object.fromEntries(
   modelEnvironmentNames.map((name) => [name, process.env[name]]),
@@ -103,11 +103,11 @@ vi.mock("node:child_process", () => ({
     if (command === "gh" && args[0] === "label") return "";
     if (command === "gh" && args[0] === "issue" && args[1] === "edit") {
       calls.pendingEdits.push(args[2]!);
-      if (args.includes("shipyard:pending"))
+      if (args.includes("shipyard-v1:pending"))
         calls.pendingLabelCommands.push(args);
       return "";
     }
-    if (command === "bash" && args[0] === ".shipyard/block-scope.sh") {
+    if (command === "bash" && args[0] === ".shipyard-v1/block-scope.sh") {
       calls.events.push("blocked");
       calls.blocked.push({
         root: args[1]!,
@@ -117,7 +117,7 @@ vi.mock("node:child_process", () => ({
       });
       return "";
     }
-    if (command === "bash" && args[0] === ".shipyard/verify-triage.sh") {
+    if (command === "bash" && args[0] === ".shipyard-v1/verify-triage.sh") {
       calls.verified.push(args[1]!);
       if (!calls.triageReady)
         throw Object.assign(new Error("Triage gate failed"), {
@@ -125,7 +125,7 @@ vi.mock("node:child_process", () => ({
         });
       return "";
     }
-    if (command === "node" && args[0] === ".shipyard/select-issues.mjs") {
+    if (command === "node" && args[0] === ".shipyard-v1/select-issues.mjs") {
       calls.events.push("select");
       return JSON.stringify(
         calls.selected++ === 0
@@ -135,7 +135,7 @@ vi.mock("node:child_process", () => ({
                   id: "42",
                   title: "Spec",
                   body: "planning spec",
-                  branch: "shipyard/spec-42",
+                  branch: "shipyard-v1/spec-42",
                   kind: "spec",
                   tickets: [
                     {
@@ -161,7 +161,7 @@ vi.mock("node:child_process", () => ({
                 {
                   id: "42",
                   title: "Fix bug",
-                  branch: "shipyard/issue-42",
+                  branch: "shipyard-v1/issue-42",
                   kind: "standalone",
                   triageReady: calls.initiallyReady,
                 },
@@ -170,7 +170,7 @@ vi.mock("node:child_process", () => ({
                       {
                         id: "45",
                         title: "Another",
-                        branch: "shipyard/issue-45",
+                        branch: "shipyard-v1/issue-45",
                         kind: "standalone",
                         triageReady: calls.initiallyReady,
                       },
@@ -186,10 +186,10 @@ vi.mock("node:child_process", () => ({
 vi.mock("node:fs", () => ({
   existsSync: () => calls.envFileExists,
 }));
-vi.mock("@snappedly-tools/shipyard/sandboxes/docker", () => ({
+vi.mock("@snappedly-tools/shipyard-v1/sandboxes/docker", () => ({
   docker: () => ({}),
 }));
-vi.mock("@snappedly-tools/shipyard", () => {
+vi.mock("@snappedly-tools/shipyard-v1", () => {
   const packet = (text: string) => ({
     completionSignal: "<promise>COMPLETE</promise>",
     stdout: `<handoff>${text}</handoff>`,
@@ -354,11 +354,11 @@ vi.mock("@snappedly-tools/shipyard", () => {
   const codexModel = (role: "routine" | "strong") => ({
     ...((calls.codexModelsSnapshot ?? {})[role] ?? {
       model:
-        process.env[`SHIPYARD_CODEX_${role.toUpperCase()}_MODEL`]?.trim() ||
+        process.env[`SHIPYARD_V1_CODEX_${role.toUpperCase()}_MODEL`]?.trim() ||
         `${role}-default`,
       effort:
         process.env[
-          `SHIPYARD_CODEX_${role.toUpperCase()}_REASONING_EFFORT`
+          `SHIPYARD_V1_CODEX_${role.toUpperCase()}_REASONING_EFFORT`
         ]?.trim() || "max",
     }),
   });
@@ -509,9 +509,9 @@ export const loadEnvFile = async (
   content: string,
   rootEnv = "",
 ): Promise<void> => {
-  envDirectory = await mkdtemp(join(tmpdir(), "shipyard-template-env-"));
-  await mkdir(join(envDirectory, ".shipyard"));
-  await writeFile(join(envDirectory, ".shipyard", ".env"), content);
+  envDirectory = await mkdtemp(join(tmpdir(), "shipyard-v1-template-env-"));
+  await mkdir(join(envDirectory, ".shipyard-v1"));
+  await writeFile(join(envDirectory, ".shipyard-v1", ".env"), content);
   if (rootEnv) await writeFile(join(envDirectory, ".env"), rootEnv);
   process.chdir(envDirectory);
   calls.envFileExists = true;
@@ -519,7 +519,7 @@ export const loadEnvFile = async (
 
 const captureCodexModels = () => {
   const modelFor = (role: "routine" | "strong") => {
-    const prefix = `SHIPYARD_CODEX_${role.toUpperCase()}`;
+    const prefix = `SHIPYARD_V1_CODEX_${role.toUpperCase()}`;
     return {
       model: process.env[`${prefix}_MODEL`]?.trim() || `${role}-default`,
       effort: process.env[`${prefix}_REASONING_EFFORT`]?.trim() || "max",
@@ -561,12 +561,12 @@ export const runGeneratedWorkflow = async (
         templateName,
       }).pipe(Effect.provide(NodeFileSystem.layer)),
     );
-    await writeFile(join(generatedRoot, ".shipyard", ".env"), envContent);
+    await writeFile(join(generatedRoot, ".shipyard-v1", ".env"), envContent);
     process.chdir(generatedRoot);
     calls.envFileExists = true;
     captureCodexModels();
     await import(
-      pathToFileURL(join(generatedRoot, ".shipyard", "main.mts")).href
+      pathToFileURL(join(generatedRoot, ".shipyard-v1", "main.mts")).href
     );
   } finally {
     process.chdir(initialCwd);

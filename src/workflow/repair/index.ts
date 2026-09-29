@@ -18,7 +18,10 @@ import type {
 } from "../coordinator/index.js";
 import type { PostgresQueryClient } from "../coordinator/postgres-storage.js";
 import { PostgresWorkflowPhaseRecordStore } from "../phase-storage.js";
-import { parseRepairBatchResult } from "./persistence.js";
+import {
+  hasRepairMarkerComment,
+  parseRepairBatchResult,
+} from "./persistence.js";
 import {
   executePhase,
   type ExecutePhaseOptions,
@@ -221,7 +224,7 @@ const issueBody = (
   pullRequestNumber: number | undefined,
 ): string =>
   [
-    "## Shipyard bounded PR repair",
+    "## Shipyard V1 bounded PR repair",
     "",
     pullRequestNumber === undefined
       ? "Existing PR: not supplied"
@@ -273,7 +276,7 @@ const publicationComplete = (result: RepairBatchResult): boolean => {
   const link = result.linkPublication;
   return (
     publicationSucceeded(link) &&
-    link.remote.body.startsWith(`<!-- shipyard:${link.marker} -->\n`)
+    hasRepairMarkerComment(link.remote.body, link.marker)
   );
 };
 
@@ -552,9 +555,9 @@ export const scheduleBoundedRepair = async (
   const issuePublication = await input.publication.publishRepairIssue({
     jobId: input.jobId,
     lease,
-    title: `[Shipyard] Repair PR #${batch.pullRequestNumber ?? brief.identity.itemId}`,
+    title: `[Shipyard V1] Repair PR #${batch.pullRequestNumber ?? brief.identity.itemId}`,
     body: issueBody(batch, batch.pullRequestNumber),
-    labels: ["shipyard:pr-repair"],
+    labels: ["shipyard-v1:pr-repair"],
   });
   const linkPublication =
     issuePublication.remote?.htmlUrl !== undefined &&

@@ -1,4 +1,4 @@
-# Shipyard
+# Shipyard V1
 
 A TypeScript toolkit that orchestrates AI coding agents inside Docker sandboxes, managing the lifecycle of sandboxes, branches, prompts, and iterations.
 
@@ -6,7 +6,7 @@ A TypeScript toolkit that orchestrates AI coding agents inside Docker sandboxes,
 
 ### Core concepts
 
-**Shipyard**:
+**Shipyard V1**:
 The TypeScript CLI tool that orchestrates an **agent** inside a **sandbox**.
 _Avoid_: "the tool", "the CLI", "RALPH"
 
@@ -15,7 +15,7 @@ The Docker container that constrains the **agent**'s access.
 _Avoid_: "container" (too specific), "Docker sandbox" (ambiguous with Claude's built-in feature), "workspace"
 
 **Host**:
-The developer's machine where Shipyard runs and the real git repo lives.
+The developer's machine where Shipyard V1 runs and the real git repo lives.
 _Avoid_: "local" (ambiguous -- the sandbox also has a local filesystem)
 
 **Agent**:
@@ -39,7 +39,7 @@ Configuration on a **sandbox provider** that controls how the agent's changes re
 _Avoid_: "worktree mode" (old name), "branch mode"
 
 **Merge-to-head (branch strategy)**:
-A **branch strategy** where Shipyard creates a temporary branch, the agent works on it, and changes are merged back to HEAD.
+A **branch strategy** where Shipyard V1 creates a temporary branch, the agent works on it, and changes are merged back to HEAD.
 _Avoid_: `"temp-branch"` (old name), "auto-branch"
 
 **Branch (branch strategy)**:
@@ -47,7 +47,7 @@ A **branch strategy** where commits land on an explicitly named branch provided 
 _Avoid_: "named-branch"
 
 **Worktree**:
-A git worktree created in `.shipyard/worktrees/` on the **host**, used by the **merge-to-head** and **branch** strategies. The **worktree** is the Git sync source and destination; commits from the **sandbox** are pulled back into it. Created explicitly via `createWorktree()` or implicitly by `run()`/`interactive()`.
+A git worktree created in `.shipyard-v1/worktrees/` on the **host**, used by the **merge-to-head** and **branch** strategies. The **worktree** is the Git sync source and destination; commits from the **sandbox** are pulled back into it. Created explicitly via `createWorktree()` or implicitly by `run()`/`interactive()`.
 _Avoid_: "workspace", "branch copy", "clone"
 
 **Source branch**:
@@ -55,7 +55,7 @@ The branch the **agent** works on -- determined by the **branch strategy**.
 _Avoid_: "working branch", "agent branch"
 
 **Target branch**:
-The **host**'s active branch at `run()` time -- the branch Shipyard merges into when using **merge-to-head**.
+The **host**'s active branch at `run()` time -- the branch Shipyard V1 merges into when using **merge-to-head**.
 _Avoid_: "base branch", "destination branch", "merge target"
 
 ### Agents
@@ -91,7 +91,7 @@ A silence-based grace window that takes over from the **idle timeout** once a **
 _Avoid_: "grace period" (too generic), "post-completion timeout", "completion grace window", "drain timeout"
 
 **Structured output**:
-A schema-validated JSON payload emitted by the **agent** inside a caller-specified XML tag and returned to the caller of `run()`. Configured via `output: Output.object({ tag, schema })`. Orthogonal to the **completion signal** -- a run can use either, both, or neither. The caller owns the prompt-side instruction telling the agent to emit the tag; Shipyard does not inject it, and `run()` errors early if the resolved prompt does not contain the configured tag.
+A schema-validated JSON payload emitted by the **agent** inside a caller-specified XML tag and returned to the caller of `run()`. Configured via `output: Output.object({ tag, schema })`. Orthogonal to the **completion signal** -- a run can use either, both, or neither. The caller owns the prompt-side instruction telling the agent to emit the tag; Shipyard V1 does not inject it, and `run()` errors early if the resolved prompt does not contain the configured tag.
 _Avoid_: "output payload", "result", "JSON output"
 
 **Output schema**:
@@ -129,7 +129,7 @@ A `` !`command` `` marker in a **prompt** that evaluates a shell command inside 
 _Avoid_: "command" (overloaded), "inline command", "prompt command"
 
 **Built-in prompt argument**:
-A **prompt argument** that Shipyard injects automatically -- not provided by the user via `promptArgs`.
+A **prompt argument** that Shipyard V1 injects automatically -- not provided by the user via `promptArgs`.
 _Avoid_: "system variable", "auto argument", "default prompt argument"
 
 ### Hooks
@@ -149,8 +149,8 @@ The CLI command that scaffolds the **config directory** in a **host** repo.
 _Avoid_: "create", "bootstrap", "new"
 
 **Config directory**:
-The `.shipyard/` directory in a **host** repo containing sandbox configuration.
-_Avoid_: ".shipyard folder", "shipyard dir"
+The `.shipyard-v1/` directory in a **host** repo containing sandbox configuration.
+_Avoid_: ".shipyard-v1 folder", "shipyard-v1 dir"
 
 **Issue tracker**:
 A source of **tasks** for the **agent**. GitHub Issues is the only supported integration. **Init** configures it automatically.
@@ -167,11 +167,11 @@ _Avoid_: "template expansion", "interpolation"
 ### Infrastructure
 
 **Build-image**:
-A provider-namespaced CLI command that rebuilds the image (e.g. `shipyard docker build-image`).
+A provider-namespaced CLI command that rebuilds the image (e.g. `shipyard-v1 docker build-image`).
 _Avoid_: "setup-sandbox" (old name)
 
 **Remove-image**:
-A provider-namespaced CLI command that removes the image (e.g. `shipyard docker remove-image`).
+A provider-namespaced CLI command that removes the image (e.g. `shipyard-v1 docker remove-image`).
 _Avoid_: "cleanup-sandbox" (old name)
 
 **Agent session**:
@@ -189,26 +189,26 @@ _Avoid_: "branch" (overloaded with git branches), "copy session"
 ### Display
 
 **Log-to-file mode**:
-The display mode where Shipyard writes iteration progress and agent output to a **run log**.
+The display mode where Shipyard V1 writes iteration progress and agent output to a **run log**.
 _Avoid_: "file mode", "file logging", "quiet mode"
 
 **Run log**:
-A log file written to `.shipyard/logs/YYYY-MM-DD/` during a run session, where
+A log file written to `.shipyard-v1/logs/YYYY-MM-DD/` during a run session, where
 the directory is the run's local calendar date.
 _Avoid_: "log file" (too generic), "output file"
 
 **Terminal mode**:
-The display mode where Shipyard renders an interactive UI in the terminal with spinners and styled status messages.
+The display mode where Shipyard V1 renders an interactive UI in the terminal with spinners and styled status messages.
 _Avoid_: "stdout mode", "interactive mode", "CLI mode" (ambiguous with the CLI itself)
 
 **Agent stream event**:
 A single item in the **agent**'s output stream -- either a `text` chunk or a `toolCall` -- surfaced to the caller of `run()` so the stream can be forwarded to an external observability system. Available only in **log-to-file mode** via the `onAgentStreamEvent` callback on the `logging` option. Each event carries its `iteration` number and a `timestamp`.
 _Avoid_: "log event" (the log file contains more than just agent output), "display entry" (internal UI type)
 
-### Shipyard workflow
+### Shipyard V1 workflow
 
 **Workflow item**:
-A coordinator-owned source item, such as a GitHub issue or a PR repair, tracked through the Shipyard lifecycle. A workflow item is not the existing engine **Task** selected by an **agent**.
+A coordinator-owned source item, such as a GitHub issue or a PR repair, tracked through the Shipyard V1 lifecycle. A workflow item is not the existing engine **Task** selected by an **agent**.
 _Avoid_: "task" when referring to coordinator state, "job" (too narrow for waiting and review)
 
 **Executable brief**:
@@ -243,17 +243,17 @@ The authority that owns workflow identity, authorization, lifecycle transitions,
 _Avoid_: "agent" (the coordinator may use an **agent**, but is not one)
 
 **Self-hosted deployment**:
-A supported Shipyard deployment in which a user-managed **host** receives **wake-up triggers** and invokes Shipyard for a repository.
+A supported Shipyard V1 deployment in which a user-managed **host** receives **wake-up triggers** and invokes Shipyard V1 for a repository.
 _Avoid_: "Mac mode", "local mode", "pilot"
 
 **Wake-up trigger**:
-A signal that starts a finite Shipyard run because eligible **tasks** may exist. It neither identifies nor reserves a particular **task**.
+A signal that starts a finite Shipyard V1 run because eligible **tasks** may exist. It neither identifies nor reserves a particular **task**.
 _Avoid_: "task event", "work assignment"
 
 **Activation label**:
-The lowercase `shipyard` GitHub issue label that marks an issue as eligible to become a **task** and whose addition emits a **wake-up trigger**.
-_Avoid_: `Shipyard`, "trigger label", "runner label"
+The lowercase `shipyard-v1` GitHub issue label that marks an issue as eligible to become a **task** and whose addition emits a **wake-up trigger**.
+_Avoid_: `Shipyard V1`, "trigger label", "runner label"
 
 **Repository runner**:
-A **host**-side executor assigned to one repository that consumes **wake-up triggers** and invokes Shipyard against that repository.
+A **host**-side executor assigned to one repository that consumes **wake-up triggers** and invokes Shipyard V1 against that repository.
 _Avoid_: "agent runner", "daemon", "service"

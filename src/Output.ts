@@ -54,7 +54,7 @@ export type OutputDefinition =
  * Helpers for declaring structured output on `run()`.
  *
  * ```ts
- * import { Output, run } from "@snappedly-tools/shipyard";
+ * import { Output, run } from "@snappedly-tools/shipyard-v1";
  * import { z } from "zod";
  *
  * const result = await run({

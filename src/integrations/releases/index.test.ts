@@ -15,7 +15,7 @@ const candidate: ReleaseCandidate = {
   version: "0.1.1",
 };
 const policy: ReleasePolicy = {
-  repository: "snappedly/shipyard",
+  repository: "snappedly/shipyard-v1",
   stagingName: "configured-staging",
   productionName: "configured-production",
   requiredStagingChecks: ["smoke-check"],
@@ -48,7 +48,7 @@ describe("release integration", () => {
       policy,
       store: new InMemoryReleaseStore(),
       transport: { requestDeployment },
-      actor: { id: "shipyard", role: "release-coordinator" },
+      actor: { id: "shipyard-v1", role: "release-coordinator" },
       now: () => "2026-09-17T12:00:00.000Z",
     });
     expect((await integration.requestStaging(candidate)).outcome).toBe(
@@ -89,13 +89,13 @@ describe("release integration", () => {
       environment: "staging",
       environmentName: policy.stagingName,
       candidate,
-      actor: { id: "shipyard", role: "release-coordinator" },
+      actor: { id: "shipyard-v1", role: "release-coordinator" },
     });
     expect(requestDeployment.mock.calls[1]?.[0]).toMatchObject({
       environment: "production",
       environmentName: policy.productionName,
       candidate,
-      actor: { id: "shipyard", role: "release-coordinator" },
+      actor: { id: "shipyard-v1", role: "release-coordinator" },
     });
   });
 
@@ -107,7 +107,7 @@ describe("release integration", () => {
       policy,
       store: new InMemoryReleaseStore(),
       transport: { requestDeployment },
-      actor: { id: "shipyard", role: "release-coordinator" },
+      actor: { id: "shipyard-v1", role: "release-coordinator" },
       now: () => "2026-09-17T12:00:00.000Z",
     });
 
@@ -146,7 +146,7 @@ describe("release integration", () => {
       policy,
       store: new InMemoryReleaseStore(),
       transport: { requestDeployment },
-      actor: { id: "shipyard", role: "release-coordinator" },
+      actor: { id: "shipyard-v1", role: "release-coordinator" },
       now: () => "2026-09-17T12:00:00.000Z",
     });
     await integration.requestStaging(candidate);
@@ -192,7 +192,7 @@ describe("release integration", () => {
       policy,
       store: new InMemoryReleaseStore(),
       transport: { requestDeployment, reconcileDeployment },
-      actor: { id: "shipyard", role: "release-coordinator" },
+      actor: { id: "shipyard-v1", role: "release-coordinator" },
       now: () => "2026-09-17T12:00:00.000Z",
     });
 
@@ -222,7 +222,7 @@ describe("release integration", () => {
           throw new Error("transport failed");
         },
       },
-      actor: { id: "shipyard", role: "release-coordinator" },
+      actor: { id: "shipyard-v1", role: "release-coordinator" },
       now: () => "2026-09-17T12:00:00.000Z",
     });
 
@@ -240,7 +240,7 @@ describe("release integration", () => {
       policy,
       store: new InMemoryReleaseStore(),
       transport: { requestDeployment: async () => ({ deploymentId: "x" }) },
-      actor: { id: "shipyard", role: "release-coordinator" },
+      actor: { id: "shipyard-v1", role: "release-coordinator" },
     });
 
     expect(
@@ -253,11 +253,11 @@ describe("release integration", () => {
       }),
     ).toMatchObject({ outcome: "blocked" });
     for (const artifactRef of [
-      "registry.invalid/shipyard:latest",
-      `registry.invalid/shipyard:latest?expected=${candidate.artifactDigest}`,
+      "registry.invalid/shipyard-v1:latest",
+      `registry.invalid/shipyard-v1:latest?expected=${candidate.artifactDigest}`,
       `registry.invalid/shipyard@${candidate.artifactDigest}?mutable=true`,
-      "npm:@snappedly-tools/shipyard@next",
-      "github:snappedly/shipyard@main",
+      "npm:@snappedly-tools/shipyard-v1@next",
+      "github:snappedly/shipyard-v1@main",
       `registry.invalid/shipyard@SHA256:${"d".repeat(64)}`,
     ]) {
       expect(
@@ -267,7 +267,7 @@ describe("release integration", () => {
     expect(
       await integration.requestStaging({
         ...candidate,
-        artifactRef: "npm:@snappedly-tools/shipyard@0.1.1",
+        artifactRef: "npm:@snappedly-tools/shipyard-v1@0.1.1",
       }),
     ).toMatchObject({ outcome: "requested" });
 
@@ -275,7 +275,7 @@ describe("release integration", () => {
       policy,
       store: new InMemoryReleaseStore(),
       transport: { requestDeployment: async () => ({ deploymentId: "x" }) },
-      actor: { id: "shipyard", role: "release-coordinator" },
+      actor: { id: "shipyard-v1", role: "release-coordinator" },
       validateArtifactRef: (value) =>
         value.artifactRef.startsWith("provider:immutable:")
           ? undefined
@@ -294,7 +294,7 @@ describe("release integration", () => {
       policy: { ...policy, approvalFreshnessSeconds: 300 },
       store: new InMemoryReleaseStore(),
       transport: { requestDeployment: async () => ({ deploymentId: "stage" }) },
-      actor: { id: "shipyard", role: "release-coordinator" },
+      actor: { id: "shipyard-v1", role: "release-coordinator" },
       now: () => "2026-09-17T12:10:00.000Z",
     });
     await integration.requestStaging(candidate);
@@ -319,7 +319,7 @@ describe("release integration", () => {
       policy: { ...policy, approvalFreshnessSeconds: 300 },
       store: new InMemoryReleaseStore(),
       transport: { requestDeployment },
-      actor: { id: "shipyard", role: "release-coordinator" },
+      actor: { id: "shipyard-v1", role: "release-coordinator" },
       now: () => now,
     });
     await integration.requestStaging(candidate);
@@ -347,7 +347,7 @@ describe("release integration", () => {
       policy,
       store: new InMemoryReleaseStore(),
       transport: { requestDeployment: async () => ({ deploymentId: "stage" }) },
-      actor: { id: "shipyard", role: "release-coordinator" },
+      actor: { id: "shipyard-v1", role: "release-coordinator" },
       now: () => "2026-09-17T12:00:00.000Z",
     });
     await integration.requestStaging(candidate);
@@ -357,7 +357,7 @@ describe("release integration", () => {
       integration.approveProduction({
         candidate,
         approval: {
-          actor: { id: "shipyard", role: "release-coordinator" },
+          actor: { id: "shipyard-v1", role: "release-coordinator" },
           approvedAt: "2026-09-17T12:00:00.000Z",
           candidate,
         },
@@ -375,7 +375,7 @@ describe("release integration", () => {
       policy,
       store: new InMemoryReleaseStore(),
       transport: { requestDeployment },
-      actor: { id: "shipyard", role: "release-coordinator" },
+      actor: { id: "shipyard-v1", role: "release-coordinator" },
       now: () => "2026-09-17T12:00:00.000Z",
     });
     await integration.requestStaging(candidate);
@@ -413,7 +413,7 @@ describe("release integration", () => {
         policy: { ...policy, recoveryMode },
         store,
         transport: { requestDeployment },
-        actor: { id: "shipyard", role: "release-coordinator" },
+        actor: { id: "shipyard-v1", role: "release-coordinator" },
         now: () => "2026-09-17T12:00:00.000Z",
       });
       await integration.requestStaging(candidate);
@@ -484,7 +484,7 @@ it.each([
       policy,
       store,
       transport: { requestDeployment },
-      actor: { id: "shipyard", role: "release-coordinator" as const },
+      actor: { id: "shipyard-v1", role: "release-coordinator" as const },
       now: () => "2026-09-17T12:00:00.000Z",
     };
     const original = new ReleaseIntegration(options);

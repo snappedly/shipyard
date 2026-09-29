@@ -13,7 +13,7 @@ import { commitAndPushInitSetup } from "./InitGitSetup.js";
 
 describe("commitAndPushInitSetup", () => {
   it("pushes package manifests with setup without committing unrelated staged files", () => {
-    const dir = mkdtempSync(join(tmpdir(), "shipyard-init-git-"));
+    const dir = mkdtempSync(join(tmpdir(), "shipyard-v1-init-git-"));
     const repoDir = join(dir, "repo");
     const remoteDir = join(dir, "remote.git");
     mkdirSync(repoDir);
@@ -34,20 +34,20 @@ describe("commitAndPushInitSetup", () => {
 
       writeFileSync(
         join(repoDir, "package.json"),
-        '{"name":"app","devDependencies":{"@snappedly-tools/shipyard":"^0.9.1"}}\n',
+        '{"name":"app","devDependencies":{"@snappedly-tools/shipyard-v1":"^0.9.1"}}\n',
       );
       writeFileSync(
         join(repoDir, "package-lock.json"),
         '{"lockfileVersion":3}\n',
       );
-      mkdirSync(join(repoDir, ".shipyard"));
-      writeFileSync(join(repoDir, ".shipyard", "main.mts"), "export {};\n");
-      writeFileSync(join(repoDir, ".shipyard", ".gitignore"), ".env\n");
-      writeFileSync(join(repoDir, ".shipyard", ".env"), "GH_TOKEN=secret\n");
+      mkdirSync(join(repoDir, ".shipyard-v1"));
+      writeFileSync(join(repoDir, ".shipyard-v1", "main.mts"), "export {};\n");
+      writeFileSync(join(repoDir, ".shipyard-v1", ".gitignore"), ".env\n");
+      writeFileSync(join(repoDir, ".shipyard-v1", ".env"), "GH_TOKEN=secret\n");
       mkdirSync(join(repoDir, ".github", "workflows"), { recursive: true });
       writeFileSync(
-        join(repoDir, ".github", "workflows", "shipyard-wake.yml"),
-        "name: Shipyard\n",
+        join(repoDir, ".github", "workflows", "shipyard-v1-wake.yml"),
+        "name: Shipyard V1\n",
       );
       writeFileSync(join(repoDir, "unrelated.txt"), "keep staged\n");
       git("add", "unrelated.txt");
@@ -59,9 +59,9 @@ describe("commitAndPushInitSetup", () => {
       expect(
         git("show", "--pretty=format:", "--name-only", "HEAD").split("\n"),
       ).toEqual([
-        ".github/workflows/shipyard-wake.yml",
-        ".shipyard/.gitignore",
-        ".shipyard/main.mts",
+        ".github/workflows/shipyard-v1-wake.yml",
+        ".shipyard-v1/.gitignore",
+        ".shipyard-v1/main.mts",
         "package-lock.json",
         "package.json",
       ]);
@@ -69,7 +69,7 @@ describe("commitAndPushInitSetup", () => {
       expect(git("rev-parse", "HEAD")).toBe(
         git("rev-parse", "refs/remotes/origin/main"),
       );
-      expect(readFileSync(join(repoDir, ".shipyard", ".env"), "utf8")).toBe(
+      expect(readFileSync(join(repoDir, ".shipyard-v1", ".env"), "utf8")).toBe(
         "GH_TOKEN=secret\n",
       );
     } finally {

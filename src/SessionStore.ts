@@ -53,7 +53,7 @@ export interface HostSessionLookup {
    *  with this id exists anywhere under the searched root. */
   readonly path: string | undefined;
   /** The host directory that was scanned — surfaced in not-found errors so the
-   *  user knows where Shipyard looked. */
+   *  user knows where Shipyard V1 looked. */
   readonly searchedRoot: string;
 }
 

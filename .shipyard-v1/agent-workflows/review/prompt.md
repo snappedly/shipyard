@@ -34,7 +34,7 @@ You are an expert code reviewer. Your job is not just to comment. Actively impro
    - Decline: do not change code, reply with why
    - Defer: no reply, only for stale/context-only comments
 
-Read `CONTEXT.md`, relevant ADRs, and `.shipyard/CODING_STANDARDS.md`.
+Read `CONTEXT.md`, relevant ADRs, and `.shipyard-v1/CODING_STANDARDS.md`.
 
 Before committing, read the repository's configured feedback-loop contract and run every applicable check for this change. Use the configured static check and focused behavior tests when they exist; include formatting, build, or broader checks when the contract or change requires them. Fix failures before committing.
 

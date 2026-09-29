@@ -1,5 +1,5 @@
 ---
-"@snappedly-tools/shipyard": patch
+"@snappedly-tools/shipyard-v1": patch
 ---
 
 Keep init progress updates on one terminal line so animation frames do not accumulate in narrow windows.

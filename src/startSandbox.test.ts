@@ -46,7 +46,7 @@ describe("startSandbox", () => {
     });
 
     it("creates handle, syncs repo, and returns sandboxLayer", async () => {
-      const hostDir = await mkdtemp(join(tmpdir(), "shipyard-test-"));
+      const hostDir = await mkdtemp(join(tmpdir(), "shipyard-v1-test-"));
       tempDirs.push(hostDir);
       await initRepo(hostDir);
       await commitFile(hostDir, "hello.txt", "hello world", "initial");
@@ -73,7 +73,7 @@ describe("startSandbox", () => {
     });
 
     it("copies copyPaths into the sandbox after sync", async () => {
-      const hostDir = await mkdtemp(join(tmpdir(), "shipyard-test-"));
+      const hostDir = await mkdtemp(join(tmpdir(), "shipyard-v1-test-"));
       tempDirs.push(hostDir);
       await initRepo(hostDir);
       await commitFile(hostDir, "hello.txt", "hello", "initial");
@@ -100,13 +100,13 @@ describe("startSandbox", () => {
     });
 
     it("rejects protected runner paths before isolated copy-in", async () => {
-      const hostDir = await mkdtemp(join(tmpdir(), "shipyard-test-"));
+      const hostDir = await mkdtemp(join(tmpdir(), "shipyard-v1-test-"));
       tempDirs.push(hostDir);
       await initRepo(hostDir);
       await commitFile(hostDir, "hello.txt", "hello", "initial");
-      await mkdir(join(hostDir, ".shipyard", "runner"), { recursive: true });
+      await mkdir(join(hostDir, ".shipyard-v1", "runner"), { recursive: true });
       await writeFile(
-        join(hostDir, ".shipyard", "runner", ".credentials"),
+        join(hostDir, ".shipyard-v1", "runner", ".credentials"),
         "secret",
       );
 
@@ -117,7 +117,7 @@ describe("startSandbox", () => {
           hostRepoDir: hostDir,
           sourceRepoDir: hostDir,
           env: {},
-          copyPaths: [".shipyard"],
+          copyPaths: [".shipyard-v1"],
         }),
       );
 
@@ -128,7 +128,7 @@ describe("startSandbox", () => {
     });
 
     it("times out when copyIn hangs", async () => {
-      const hostDir = await mkdtemp(join(tmpdir(), "shipyard-test-"));
+      const hostDir = await mkdtemp(join(tmpdir(), "shipyard-v1-test-"));
       tempDirs.push(hostDir);
       await initRepo(hostDir);
       await commitFile(hostDir, "hello.txt", "hello", "initial");
@@ -190,7 +190,7 @@ describe("startSandbox", () => {
     }, 15_000);
 
     it("skips missing copyPaths without error", async () => {
-      const hostDir = await mkdtemp(join(tmpdir(), "shipyard-test-"));
+      const hostDir = await mkdtemp(join(tmpdir(), "shipyard-v1-test-"));
       tempDirs.push(hostDir);
       await initRepo(hostDir);
       await commitFile(hostDir, "hello.txt", "hello", "initial");
@@ -226,7 +226,7 @@ it("closes an isolated sandbox if repository initialization fails", async () => 
     Effect.runPromise(
       startSandbox({
         provider,
-        hostRepoDir: "/nonexistent/shipyard-repo",
+        hostRepoDir: "/nonexistent/shipyard-v1-repo",
         env: {},
       }),
     ),
@@ -235,7 +235,7 @@ it("closes an isolated sandbox if repository initialization fails", async () => 
 });
 
 it("copies configured paths from the original repository when syncing a worktree", async () => {
-  const root = await mkdtemp(join(tmpdir(), "shipyard-copy-source-"));
+  const root = await mkdtemp(join(tmpdir(), "shipyard-v1-copy-source-"));
   const worktree = join(root, "worktree");
   const repo = join(root, "repo");
   const { mkdir } = await import("node:fs/promises");
@@ -267,7 +267,7 @@ it("copies configured paths from the original repository when syncing a worktree
 });
 
 it("does not return copied inputs as task changes from a stale branch", async () => {
-  const root = await mkdtemp(join(tmpdir(), "shipyard-copied-input-"));
+  const root = await mkdtemp(join(tmpdir(), "shipyard-v1-copied-input-"));
   const repo = join(root, "repo");
   const worktree = join(root, "stale");
   await mkdir(repo);

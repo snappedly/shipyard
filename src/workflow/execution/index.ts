@@ -207,7 +207,7 @@ const normalizeCommits = (
   commits.map((commit) => (typeof commit === "string" ? commit : commit.sha));
 
 const reviewBranch = (assignment: Assignment): string =>
-  `shipyard/review/${assignment.id.replace(/[^a-zA-Z0-9._-]+/g, "-")}`;
+  `shipyard-v1/review/${assignment.id.replace(/[^a-zA-Z0-9._-]+/g, "-")}`;
 
 const failureMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -749,8 +749,8 @@ const runResultToResponse = (
     branch: result.branch || branch,
     headSha,
     report: {
-      summary: "Phase completed by the Shipyard engine.",
-      evidence: ["The existing Shipyard run interface returned."],
+      summary: "Phase completed by the Shipyard V1 engine.",
+      evidence: ["The existing Shipyard V1 run interface returned."],
       checks: [],
       commits,
       artifacts: [],
@@ -808,7 +808,7 @@ const sandboxResultToResponse = (
     branch,
     headSha: commits.at(-1) ?? "",
     report: {
-      summary: "Phase completed by the Shipyard sandbox.",
+      summary: "Phase completed by the Shipyard V1 sandbox.",
       evidence: ["The existing Sandbox interface returned."],
       checks: [],
       commits,

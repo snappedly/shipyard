@@ -23,7 +23,7 @@ Use risk-proportional verification:
 
 ## Feedback loops
 
-Shipyard's feedback-loop contract is implemented by the package scripts, Git hooks, and CI workflow. Use the shortest applicable loop during development and report the command, result, and scope.
+Shipyard V1's feedback-loop contract is implemented by the package scripts, Git hooks, and CI workflow. Use the shortest applicable loop during development and report the command, result, and scope.
 
 ### Local and agent loop
 
@@ -78,19 +78,19 @@ The default integration branch is `staging`. Use squash merge for task PRs. The 
 
 A release-specific issue can remain open through production verification when its acceptance criteria require it.
 
-The staging deployment is the non-production verification path. Testers install its npm prerelease with `@snappedly-tools/shipyard@staging`; it never advances the production `latest` dist-tag.
+The staging deployment is the non-production verification path. Testers install its npm prerelease with `@snappedly-tools/shipyard-v1@staging`; it never advances the production `latest` dist-tag.
 
 ## Production release
 
 Package publication is automated by `release.yml`. Pending changesets create or update a version pull request, and the workflow automatically merges it after its exact-head CI passes. The workflow then dispatches a publish run for the resulting `production` commit, reruns `npm run check`, inspects the package manifest, and publishes through npm trusted publishing via the unprotected `production` environment. See `RELEASING.md`.
 
-The production deployment publishes the npm package; it does not deploy an always-on Shipyard service. The staging deployment publishes a prerelease of the same package for testing.
+The production deployment publishes the npm package; it does not deploy an always-on Shipyard V1 service. The staging deployment publishes a prerelease of the same package for testing.
 
 The human promotion merge authorizes the automatic npm release. The workflow verifies the exact resulting `production` commit and artifact before publishing; no separate post-merge approval is required. If a service deployment is added, define its candidate and deployment approval gate before enabling agent-controlled promotion.
 
 ## Verification and recovery
 
-For staging, verify the exact prerelease version and `staging` dist-tag, install it in the test project, and run the relevant CLI smoke behavior. For production, check `npm view @snappedly-tools/shipyard version dist.integrity`, inspect the dist-tags, install the released package, run `npx shipyard --help`, and confirm the matching GitHub tag and release.
+For staging, verify the exact prerelease version and `staging` dist-tag, install it in the test project, and run the relevant CLI smoke behavior. For production, check `npm view @snappedly-tools/shipyard-v1 version dist.integrity`, inspect the dist-tags, install the released package, run `npx shipyard-v1 --help`, and confirm the matching GitHub tag and release.
 
 Before npm accepts a failed publication, fix the cause and rerun the workflow or merge a correction. After publication, deprecate a broken version if needed and release a corrected patch; do not overwrite the version. A code correction goes through a new PR. No production migrations exist. Future migrations must state when rollback is unsafe.
 

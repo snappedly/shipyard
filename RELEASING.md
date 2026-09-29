@@ -1,4 +1,4 @@
-# Releasing Shipyard
+# Releasing Shipyard V1
 
 The default branch is `staging`, where changes are tested before they are
 merged into the protected `production` branch. A push to `staging` publishes
@@ -8,10 +8,11 @@ package.
 ## One-time setup
 
 1. Confirm that the `snappedly-tools` npm organization owns the
-   `@snappedly-tools/shipyard` package scope.
-2. Configure npm trusted publishing for:
+   `@snappedly-tools/shipyard-v1` package scope.
+2. After the first package publish described below, configure npm trusted
+   publishing for:
    - GitHub organization: `snappedly`
-   - repository: `shipyard`
+   - repository: `shipyard-v1`
    - workflow: `release.yml`
    - environment: `production`
    - allowed action: `npm publish`
@@ -34,10 +35,33 @@ after that check passes.
 Trusted publishing uses short-lived OIDC credentials, so the workflow does not
 need an npm write token.
 
+### Bootstrap the renamed npm package
+
+`@snappedly-tools/shipyard-v1` is a new npm package. npm requires a package to
+exist before it can have a trusted publisher. After the task PR merges to
+`staging`, the first **Deploy staging** run can build and smoke-test the package
+but cannot publish it through OIDC. An npm maintainer must:
+
+1. Download `npm-staging-package-<staging commit>` from that run and verify
+   `shipyard-v1-staging.tgz.sha256` against the tarball.
+2. Publish that exact tarball with npm account authentication:
+
+   ```sh
+   NPM_CONFIG_PROVENANCE=false npm publish shipyard-v1-staging.tgz --access public --tag staging
+   ```
+
+3. Add trusted publishers for `staging.yml` and `release.yml` using the fields
+   above, then dispatch a new **Deploy staging** run with
+   `gh workflow run staging.yml --ref staging`. A new run ID gives the package a
+   new prerelease version. Complete this before promotion to `production`.
+
+The bootstrap publish lacks a provenance attestation. Later workflow publishes
+use OIDC and provenance. See [npm's trust prerequisites](https://docs.npmjs.com/cli/v11/commands/npm-trust/).
+
 ## Prepare a change
 
 Every user-facing change pull request includes a changeset for
-`@snappedly-tools/shipyard`:
+`@snappedly-tools/shipyard-v1`:
 
 - bug fix: `patch`
 - feature or breaking change: `minor` while the package is pre-1.0
@@ -53,7 +77,7 @@ move the `latest` dist-tag, create a GitHub release, or publish to the
 production environment. Install it with:
 
 ```sh
-npm install --save-dev @snappedly-tools/shipyard@staging
+npm install --save-dev @snappedly-tools/shipyard-v1@staging
 ```
 
 Every push to `production` runs the **Release npm package** workflow after the
@@ -88,10 +112,10 @@ nothing. The staging workflow always publishes the tested staging candidate.
 Verify the published version and install path:
 
 ```sh
-npm view @snappedly-tools/shipyard version dist.integrity
-npm view @snappedly-tools/shipyard dist-tags
-npm install --save-dev @snappedly-tools/shipyard
-npx shipyard --help
+npm view @snappedly-tools/shipyard-v1 version dist.integrity
+npm view @snappedly-tools/shipyard-v1 dist-tags
+npm install --save-dev @snappedly-tools/shipyard-v1
+npx shipyard-v1 --help
 ```
 
 Confirm that the matching tag and release are visible on the repository's

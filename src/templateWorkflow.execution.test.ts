@@ -58,9 +58,9 @@ describe("generated issue workflows", () => {
         "--repo",
         "owner/repo",
         "--add-label",
-        "shipyard:pending",
+        "shipyard-v1:pending",
         "--remove-label",
-        "shipyard",
+        "shipyard-v1",
       ]);
     },
   );
@@ -78,9 +78,9 @@ describe("generated issue workflows", () => {
       for (const args of calls.pendingLabelCommands)
         expect(args.slice(-4)).toEqual([
           "--add-label",
-          "shipyard:pending",
+          "shipyard-v1:pending",
           "--remove-label",
-          "shipyard",
+          "shipyard-v1",
         ]);
     },
   );
@@ -105,11 +105,11 @@ describe("generated issue workflows", () => {
   it.each(["parallel-planner", "parallel-planner-with-review"])(
     "%s stops and explains the alternate when a local branch ref conflicts",
     async (template) => {
-      calls.localBranches.push("shipyard/planner/20260920-210724-7707b7");
+      calls.localBranches.push("shipyard-v1/planner/20260920-210724-7707b7");
 
       await expect(
         import(`./templates/${template}/main.mts` as string),
-      ).rejects.toThrow(/interactive terminal.*'shipyard\/planner-2'/);
+      ).rejects.toThrow(/interactive terminal.*'shipyard-v1\/planner-2'/);
       expect(calls.plannerBranches).toEqual([]);
     },
   );
@@ -118,12 +118,12 @@ describe("generated issue workflows", () => {
     "%s reuses the selected conflict-free planner branch",
     async (template) => {
       calls.localBranches.push(
-        "shipyard/planner/20260920-210724-7707b7",
-        "shipyard/planner-2",
+        "shipyard-v1/planner/20260920-210724-7707b7",
+        "shipyard-v1/planner-2",
       );
 
       await import(`./templates/${template}/main.mts` as string);
-      expect(calls.plannerBranches).toEqual(["shipyard/planner-2"]);
+      expect(calls.plannerBranches).toEqual(["shipyard-v1/planner-2"]);
     },
   );
 
@@ -313,13 +313,13 @@ describe("generated issue workflows", () => {
       "select",
     ]);
     expect(calls.creates.map((item) => item.branch)).toEqual([
-      "shipyard/issue-42",
-      "shipyard/issue-42",
+      "shipyard-v1/issue-42",
+      "shipyard-v1/issue-42",
     ]);
   });
 
   it("blocks publication when implementation leaves uncommitted work", async () => {
-    calls.dirtyBranch = "shipyard/issue-42";
+    calls.dirtyBranch = "shipyard-v1/issue-42";
     await import("./templates/simple-loop/main.mts" as string);
     expect(calls.events).not.toContain("handoff");
     expect(calls.blocked[0]?.reason).toContain("uncommitted work");
@@ -327,7 +327,7 @@ describe("generated issue workflows", () => {
 
   it("blocks spec integration when a child leaves uncommitted work", async () => {
     calls.spec = true;
-    calls.dirtyBranch = "shipyard/spec-42-issue-43";
+    calls.dirtyBranch = "shipyard-v1/spec-42-issue-43";
     await import("./templates/parallel-planner/main.mts" as string);
     expect(calls.events).not.toContain("handoff");
     expect(calls.blocked[0]).toMatchObject({ root: "42", failed: "43" });
@@ -418,13 +418,13 @@ describe("generated issue workflows", () => {
       calls.invocations
         .filter((call) => call.name === "implementer")
         .map((call) => call.branch),
-    ).toEqual(["shipyard/spec-42-issue-43", "shipyard/spec-42-issue-44"]);
+    ).toEqual(["shipyard-v1/spec-42-issue-43", "shipyard-v1/spec-42-issue-44"]);
     expect(
       calls.invocations.find((call) => call.name === "merger")?.branch,
-    ).toBe("shipyard/spec-42");
+    ).toBe("shipyard-v1/spec-42");
     expect(
       calls.commands.find((command) =>
-        command.startsWith("bash .shipyard/handoff.sh"),
+        command.startsWith("bash .shipyard-v1/handoff.sh"),
       ),
     ).toContain("42,43,44");
     expect(calls.specContent).toEqual(["43", "44"]);
@@ -439,13 +439,13 @@ describe("generated issue workflows", () => {
         })),
     ).toEqual([
       {
-        branch: "shipyard/spec-42-issue-43",
-        baseBranch: "shipyard/spec-42",
+        branch: "shipyard-v1/spec-42-issue-43",
+        baseBranch: "shipyard-v1/spec-42",
         specContent: [],
       },
       {
-        branch: "shipyard/spec-42-issue-44",
-        baseBranch: "shipyard/spec-42",
+        branch: "shipyard-v1/spec-42-issue-44",
+        baseBranch: "shipyard-v1/spec-42",
         specContent: ["43"],
       },
     ]);
@@ -460,7 +460,7 @@ describe("generated issue workflows", () => {
   });
 
   it("resolves a child cherry-pick conflict on the spec branch before handoff", async () => {
-    process.env.SHIPYARD_STRONG_MODEL = "strong-choice";
+    process.env.SHIPYARD_V1_STRONG_MODEL = "strong-choice";
     calls.spec = true;
     calls.cherryPickSucceeds = false;
     await import("./templates/parallel-planner/main.mts" as string);
@@ -479,7 +479,7 @@ describe("generated issue workflows", () => {
     calls.spec = true;
     calls.cherryPickSucceeds = false;
     calls.conflictResolved = false;
-    calls.dirtyBranch = "shipyard/spec-42";
+    calls.dirtyBranch = "shipyard-v1/spec-42";
     calls.dirtyAfterConflict = true;
     await import("./templates/parallel-planner/main.mts" as string);
     expect(calls.blocked[0]).toMatchObject({ root: "42", failed: "43" });
@@ -519,7 +519,7 @@ describe("generated issue workflows", () => {
       calls.invocations
         .filter((call) => call.name === "implementer")
         .map((call) => call.branch),
-    ).toEqual(["shipyard/issue-42", "shipyard/issue-45"]);
+    ).toEqual(["shipyard-v1/issue-42", "shipyard-v1/issue-45"]);
   });
 
   it("review template reviews child work and integrated spec before one handoff", async () => {
@@ -552,7 +552,7 @@ describe("generated issue workflows", () => {
     ]);
     expect(
       calls.commands.filter((command) =>
-        command.startsWith("bash .shipyard/handoff.sh"),
+        command.startsWith("bash .shipyard-v1/handoff.sh"),
       ),
     ).toHaveLength(1);
   });

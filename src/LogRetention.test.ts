@@ -16,7 +16,7 @@ import { purgeRunLogs } from "./LogRetention.js";
 const temporaryDirectories: string[] = [];
 
 const makeRepository = async (): Promise<string> => {
-  const repoDir = await mkdtemp(join(tmpdir(), "shipyard-log-retention-"));
+  const repoDir = await mkdtemp(join(tmpdir(), "shipyard-v1-log-retention-"));
   temporaryDirectories.push(repoDir);
   return repoDir;
 };
@@ -25,7 +25,7 @@ const makeLogDirectory = async (
   repoDir: string,
   name: string,
 ): Promise<string> => {
-  const directory = join(repoDir, ".shipyard", "logs", name);
+  const directory = join(repoDir, ".shipyard-v1", "logs", name);
   await mkdir(directory, { recursive: true });
   await writeFile(join(directory, "run.log"), name);
   return directory;
@@ -46,7 +46,7 @@ describe("purgeRunLogs", () => {
     await makeLogDirectory(repoDir, "2026-09-14");
     await makeLogDirectory(repoDir, "2026-09-22");
 
-    const logsDir = join(repoDir, ".shipyard", "logs");
+    const logsDir = join(repoDir, ".shipyard-v1", "logs");
     await mkdir(join(logsDir, "2026-09-31"));
     await mkdir(join(logsDir, "not-a-date"));
     const oldRootLog = join(logsDir, "old.log");
@@ -94,7 +94,7 @@ describe("purgeRunLogs", () => {
     const repoDir = await makeRepository();
     await makeLogDirectory(repoDir, "2026-09-14");
     await makeLogDirectory(repoDir, "2026-09-22");
-    const logsDir = join(repoDir, ".shipyard", "logs");
+    const logsDir = join(repoDir, ".shipyard-v1", "logs");
     await writeFile(join(logsDir, "audit.log"), "root-level run log");
     await writeFile(join(logsDir, "notes.txt"), "operator notes");
 
@@ -137,7 +137,7 @@ describe("purgeRunLogs", () => {
     "does not follow symlinked log entries",
     async () => {
       const repoDir = await makeRepository();
-      const logsDir = join(repoDir, ".shipyard", "logs");
+      const logsDir = join(repoDir, ".shipyard-v1", "logs");
       const targetDir = join(repoDir, "preserved-log-target");
       await mkdir(targetDir, { recursive: true });
       await writeFile(join(targetDir, "run.log"), "keep");

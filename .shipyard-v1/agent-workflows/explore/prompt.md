@@ -14,7 +14,7 @@ Read the project's domain and architecture docs to ground your assessment:
 
 - `CONTEXT.md`
 - `docs/adr/` if relevant
-- `.shipyard/CODING_STANDARDS.md`
+- `.shipyard-v1/CODING_STANDARDS.md`
 
 # EXPLORATION
 

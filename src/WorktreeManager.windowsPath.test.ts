@@ -11,16 +11,16 @@ import {
 // a real Windows host would — something Linux/macOS CI cannot otherwise
 // reproduce, since both git and `join` emit forward slashes there.
 
-const worktreesDir = "C:\\repo\\.shipyard\\worktrees";
-const gitWorktreePath = "C:/repo/.shipyard/worktrees/feature-x";
-const joinWorktreePath = "C:\\repo\\.shipyard\\worktrees\\feature-x";
+const worktreesDir = "C:\\repo\\.shipyard-v1\\worktrees";
+const gitWorktreePath = "C:/repo/.shipyard-v1/worktrees/feature-x";
+const joinWorktreePath = "C:\\repo\\.shipyard-v1\\worktrees\\feature-x";
 const itMac = process.platform === "darwin" ? it : it.skip;
 
 describe("findCollidingWorktree", () => {
   it("matches by branch name", () => {
     const existing = [
       { path: gitWorktreePath, branch: "feature-x" },
-      { path: "C:/repo/.shipyard/worktrees/other", branch: "other" },
+      { path: "C:/repo/.shipyard-v1/worktrees/other", branch: "other" },
     ];
     const collision = findCollidingWorktree(
       existing,
@@ -45,7 +45,7 @@ describe("findCollidingWorktree", () => {
 
   it("returns undefined when nothing collides", () => {
     const existing = [
-      { path: "C:/repo/.shipyard/worktrees/other", branch: "other" },
+      { path: "C:/repo/.shipyard-v1/worktrees/other", branch: "other" },
     ];
     expect(
       findCollidingWorktree(existing, "feature-x", joinWorktreePath),
@@ -76,7 +76,7 @@ describe("isManagedWorktreePath", () => {
   it("does not treat a sibling with the same prefix as managed", () => {
     expect(
       isManagedWorktreePath(
-        "C:/repo/.shipyard/worktrees-evil/feature-x",
+        "C:/repo/.shipyard-v1/worktrees-evil/feature-x",
         worktreesDir,
       ),
     ).toBe(false);

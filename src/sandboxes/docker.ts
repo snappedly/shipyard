@@ -3,7 +3,7 @@ import { copyIntoContainer } from "./copyIntoContainer.js";
  * Docker sandbox provider — wraps DockerLifecycle into a SandboxProvider.
  *
  * Usage:
- *   import { docker } from "@snappedly-tools/shipyard/sandboxes/docker";
+ *   import { docker } from "@snappedly-tools/shipyard-v1/sandboxes/docker";
  *   await run({ agent: codex(CODEX_MODELS.routine), sandbox: docker() });
  */
 
@@ -157,7 +157,7 @@ export const docker = (options?: DockerOptions): IsolatedSandboxProvider => {
     create: async (
       createOptions: IsolatedCreateOptions,
     ): Promise<IsolatedSandboxHandle> => {
-      const containerName = `shipyard-${randomUUID()}`;
+      const containerName = `shipyard-v1-${randomUUID()}`;
 
       const worktreePath = "/home/agent/workspace";
 
@@ -315,8 +315,8 @@ export const docker = (options?: DockerOptions): IsolatedSandboxProvider => {
           return new Promise((resolve, reject) => {
             opts.signal?.throwIfAborted();
             const executionId = randomUUID();
-            const pidFile = `/tmp/shipyard-interactive-${executionId}.pid`;
-            const cancelFile = `/tmp/shipyard-interactive-${executionId}.cancel`;
+            const pidFile = `/tmp/shipyard-v1-interactive-${executionId}.pid`;
+            const cancelFile = `/tmp/shipyard-v1-interactive-${executionId}.cancel`;
             const dockerArgs = ["exec"];
             // Allocate a pseudo-terminal when stdin looks like a TTY
             if (
@@ -333,7 +333,7 @@ export const docker = (options?: DockerOptions): IsolatedSandboxProvider => {
               "sh",
               "-c",
               'pid_file=$1; cancel_file=$2; shift 2; command -v setsid >/dev/null 2>&1 && command -v ps >/dev/null 2>&1 && command -v awk >/dev/null 2>&1 || { printf "%s\\n" "setsid, ps, and awk are required for cancellable interactive execution" >&2; exit 127; }; if [ -e "$cancel_file" ]; then rm -f "$pid_file" "$cancel_file"; exit 130; fi; setsid "$@" & child=$!; printf "%s\\n" "$child" > "$pid_file"; wait "$child"; status=$?; rm -f "$pid_file" "$cancel_file"; exit "$status"',
-              "shipyard-interactive",
+              "shipyard-v1-interactive",
               pidFile,
               cancelFile,
               ...args,
@@ -370,7 +370,7 @@ export const docker = (options?: DockerOptions): IsolatedSandboxProvider => {
                   "sh",
                   "-c",
                   cancellationScript,
-                  "shipyard-cancel",
+                  "shipyard-v1-cancel",
                   cancelFile,
                   pidFile,
                 ],
@@ -464,7 +464,7 @@ const checkImageUid = (imageName: string, expectedUid: number): Promise<void> =>
         if (error) {
           reject(
             new Error(
-              `Image '${imageName}' not found locally. Build it first with 'shipyard docker build-image'.`,
+              `Image '${imageName}' not found locally. Build it first with 'shipyard-v1 docker build-image'.`,
             ),
           );
           return;
@@ -487,7 +487,7 @@ const checkImageUid = (imageName: string, expectedUid: number): Promise<void> =>
             new Error(
               `UID mismatch: image '${imageName}' was built with UID ${imageUid}, ` +
                 `but the expected UID is ${expectedUid}. ` +
-                `Rebuild the image with 'shipyard docker build-image', ` +
+                `Rebuild the image with 'shipyard-v1 docker build-image', ` +
                 `or pass containerUid: ${imageUid} to docker() to match the image.`,
             ),
           );

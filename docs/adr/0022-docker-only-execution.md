@@ -2,7 +2,7 @@
 
 ## Context
 
-Shipyard runs agents in Docker with a sandbox-owned Git repository. The older bind-mount and host-execution paths still shaped provider contracts, runner setup, tests, and package exports. They included a runner sandbox mask that hid runner files from bind-mounted workspaces. Docker's Git bundle sync already excludes those files.
+Shipyard V1 runs agents in Docker with a sandbox-owned Git repository. The older bind-mount and host-execution paths still shaped provider contracts, runner setup, tests, and package exports. They included a runner sandbox mask that hid runner files from bind-mounted workspaces. Docker's Git bundle sync already excludes those files.
 
 ## Decision
 

@@ -1,5 +1,5 @@
 {
-  "name": "@snappedly-tools/shipyard",
+  "name": "@snappedly-tools/shipyard-v1",
   "version": "0.11.0",
   "description": "Run AI coding agents in isolated sandboxes",
   "type": "module",
@@ -28,7 +28,7 @@
     }
   },
   "bin": {
-    "shipyard": "dist/main.js"
+    "shipyard-v1": "dist/main.js"
   },
   "scripts": {
     "build": "tsup",
@@ -43,7 +43,7 @@
     "format:check": "prettier --check .",
     "check": "npm run format:check && npm run typecheck && npm run build && npm run check:package && npm test",
     "prepare": "husky",
-    "shipyard": "npm run build && tsx .shipyard/run.ts"
+    "shipyard-v1": "npm run build && tsx .shipyard-v1/run.ts"
   },
   "keywords": [
     "cli",
@@ -58,11 +58,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/snappedly/shipyard.git"
+    "url": "git+https://github.com/snappedly/shipyard-v1.git"
   },
-  "homepage": "https://github.com/snappedly/shipyard#readme",
+  "homepage": "https://github.com/snappedly/shipyard-v1#readme",
   "bugs": {
-    "url": "https://github.com/snappedly/shipyard/issues"
+    "url": "https://github.com/snappedly/shipyard-v1/issues"
   },
   "author": "Snappedly",
   "license": "SEE LICENSE IN LICENSE",

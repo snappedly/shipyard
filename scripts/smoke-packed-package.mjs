@@ -12,7 +12,7 @@ if (!tarballArgument) {
 
 const tarball = resolve(tarballArgument);
 const temporaryDirectory = await mkdtemp(
-  resolve(tmpdir(), "shipyard-package-smoke-"),
+  resolve(tmpdir(), "shipyard-v1-package-smoke-"),
 );
 
 try {
@@ -34,8 +34,8 @@ try {
       "--input-type=module",
       "--eval",
       [
-        'await import("@snappedly-tools/shipyard")',
-        'await import("@snappedly-tools/shipyard/sandboxes/docker")',
+        'await import("@snappedly-tools/shipyard-v1")',
+        'await import("@snappedly-tools/shipyard-v1/sandboxes/docker")',
       ].join(";"),
     ],
     { cwd: temporaryDirectory, stdio: "inherit" },
@@ -43,9 +43,9 @@ try {
   await writeFile(
     resolve(temporaryDirectory, "consumer.ts"),
     [
-      'import * as shipyard from "@snappedly-tools/shipyard";',
-      'import { docker } from "@snappedly-tools/shipyard/sandboxes/docker";',
-      "void [shipyard, docker];",
+      'import * as shipyard from "@snappedly-tools/shipyard-v1";',
+      'import { docker } from "@snappedly-tools/shipyard-v1/sandboxes/docker";',
+      "void [shipyard-v1, docker];",
     ].join("\n"),
   );
   await writeFile(
@@ -70,7 +70,7 @@ try {
     [
       resolve(
         temporaryDirectory,
-        "node_modules/@snappedly-tools/shipyard/dist/main.js",
+        "node_modules/@snappedly-tools/shipyard-v1/dist/main.js",
       ),
       "--help",
     ],
@@ -81,7 +81,7 @@ try {
     await readFile(
       resolve(
         temporaryDirectory,
-        "node_modules/@snappedly-tools/shipyard/package.json",
+        "node_modules/@snappedly-tools/shipyard-v1/package.json",
       ),
       "utf8",
     ),

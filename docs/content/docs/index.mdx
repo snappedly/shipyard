@@ -1,13 +1,13 @@
 ---
 title: Getting Started
-description: Run an AI coding agent in a sandbox with Shipyard.
+description: Run an AI coding agent in a sandbox with Shipyard V1.
 ---
 
-## What is Shipyard?
+## What is Shipyard V1?
 
-Shipyard is a TypeScript library and CLI for running AI coding agents in
+Shipyard V1 is a TypeScript library and CLI for running AI coding agents in
 sandboxes. Your script chooses an agent, a sandbox provider, a prompt, and a
-branch strategy. Shipyard manages the sandbox lifecycle and collects the
+branch strategy. Shipyard V1 manages the sandbox lifecycle and collects the
 agent's commits. The bundled templates provide issue workflows you can adapt.
 
 ## Quick start
@@ -19,86 +19,93 @@ For Codex, you can use either an OpenAI API key or a ChatGPT login.
 ### 1. Install
 
 ```sh
-npm install --save-dev @snappedly-tools/shipyard
+npm install --save-dev @snappedly-tools/shipyard-v1
 ```
 
 ### 2. Initialize the target repository
 
 ```sh
-npx shipyard init --template simple-loop --agent codex --codex-auth chatgpt
+npx shipyard-v1 init --template simple-loop --agent codex --codex-auth chatgpt
 ```
 
 In an interactive terminal, `init` starts `codex login` if needed and asks that
 login to use a one-time file-based credential store. Complete the browser login
 and ensure `~/.codex/auth.json` exists; the generated entry point mounts it
-read-only. Init creates `.shipyard/.env` from the generated example; fill in
+read-only. Init creates `.shipyard-v1/.env` from the generated example; fill in
 any required credentials there. In a non-interactive environment, run
 `codex login` before this command.
-Leave `OPENAI_API_KEY` out of `.shipyard/.env` in this mode. To use API-key
+Leave `OPENAI_API_KEY` out of `.shipyard-v1/.env` in this mode. To use API-key
 authentication instead, use `--codex-auth api-key` and set the key in `.env`.
 Init uses GitHub Issues, builds the Docker image, and automatically installs a
 repository runner on supported Apple Silicon Macs. Runner installation is
 required for init to complete, so init exits if the host is unsupported or
 installation fails. Set the scaffold's `GH_TOKEN` entry for GitHub Issues
 access. Review
-`.shipyard/prompt.md` and adapt the issue workflow to your repository. Init
+`.shipyard-v1/prompt.md` and adapt the issue workflow to your repository. Init
 always attempts to create or update the lowercase
-`shipyard` label; built-in issue workflows select only open issues carrying
+`shipyard-v1` label; built-in issue workflows select only open issues carrying
 that label.
 
 ### 3. Configure and run
 
-Init generates `.shipyard/main.ts` for ESM projects (`"type": "module"`),
-otherwise `.shipyard/main.mts`. That file configures the workflow; there is no
+Init generates `.shipyard-v1/main.ts` for ESM projects (`"type": "module"`),
+otherwise `.shipyard-v1/main.mts`. That file configures the workflow; there is no
 `config.json`.
 
 Init completes only after the repository runner installs. If installation
 fails, init exits without showing completion. Fix the reported issue and run
-`npx shipyard runner install` to retry against the generated setup.
+`npx shipyard-v1 runner install` to retry against the generated setup.
 
 After runner installation, init offers to commit and push the generated setup
-to the current branch. It stages `.shipyard/`, the wake workflow, and any
-existing `package.json` and `package-lock.json`. It leaves `.shipyard/.env`
+to the current branch. It stages `.shipyard-v1/`, the wake workflow, and any
+existing `package.json` and `package-lock.json`. It leaves `.shipyard-v1/.env`
 untracked. If you decline, commit the setup and package files before you run the
 workflow because Docker sandboxes use committed Git history.
 Non-interactive init skips the offer; pass `--commit-setup true` to commit and
 push the generated files.
 
-Add `shipyard` to an issue that needs triage. Shipyard implements it if triage
+Add `shipyard-v1` to an issue that needs triage. Shipyard V1 implements it if triage
 sets `ready-for-agent`. For an issue already triaged and approved for agent
-implementation, add `ready-for-agent` first, then `shipyard` to activate it.
-The runner wakes when `shipyard` is added. Shipyard skips agent triage for an
+implementation, add `ready-for-agent` first, then `shipyard-v1` to activate it.
+The runner wakes when `shipyard-v1` is added. Shipyard V1 skips agent triage for an
 already ready issue but still verifies its live state before implementation.
 
 To start the selected workflow manually, run:
 
 ```sh
-npx shipyard run
+npx shipyard-v1 run
 ```
 
 The command detects `main.ts` or `main.mts`, finds the generated `Dockerfile`,
 builds the cached image, and starts the workflow. The `simple-loop` template
 implements eligible issues on separate branches and opens pull requests for
-review. Use `npx shipyard run --skip-build` when the image definition has not
+review. Use `npx shipyard-v1 run --skip-build` when the image definition has not
 changed.
 
-You can add `"shipyard": "shipyard run"` to the target project's scripts if
-you prefer `npm run shipyard`. Shipyard's own repository script runs its
+You can add `"shipyard-v1": "shipyard-v1 run"` to the target project's scripts if
+you prefer `npm run shipyard-v1`. Shipyard V1's own repository script runs its
 advanced multi-agent workflow instead.
 
 ## Next steps
 
 - [Configuration](/docs/configuration): prompts, branches, hooks, and environment variables.
 - [Agent providers](/docs/agents): choose an agent and configure authentication.
-- [Repository runner](/docs/repository-runner): wake a foreground Shipyard
+- [Repository runner](/docs/repository-runner): wake a foreground Shipyard V1
   controller from labelled GitHub Issues.
 - Review the `simple-loop`, `sequential-reviewer`, `parallel-planner`, and
   `parallel-planner-with-review` templates before running them.
 
 For hosted automation, import coordinator and phase APIs from
-`@snappedly-tools/shipyard/workflow`; GitHub and release integrations have their
+`@snappedly-tools/shipyard-v1/workflow`; GitHub and release integrations have their
 own package subpaths. The coordinator and durable triage/repair stores use
 PostgreSQL. Apply the SQL migrations in the installed package's
 `dist/workflow/coordinator/migrations` directory before using those stores.
+On a new database, apply migrations `001` through `004` in filename order. On
+a database that already has `001` through `003`, apply only
+`004_shipyard_v1_namespace.sql`. Stop older Shipyard processes first. Migration
+`004` moves the existing tables and records to `shipyard_v1_*` names. Do not
+reapply `001` through `003` after `004`; they would recreate the old tables.
+Use a separate database or schema if the old deployment must keep running
+during the upgrade.
 These APIs are optional; the bundled CLI and templates need no database,
 webhook service, or release-policy configuration.

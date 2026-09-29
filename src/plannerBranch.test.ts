@@ -8,13 +8,13 @@ import {
   resolvePlannerBranch,
 } from "./templates/parallel-planner/planner-branch.mjs";
 
-const existingPlannerBranch = "shipyard/planner/20260920-210724-7707b7";
+const existingPlannerBranch = "shipyard-v1/planner/20260920-210724-7707b7";
 
 describe("resolvePlannerBranch", () => {
   it("keeps the standard branch when no local ref conflicts", async () => {
     await expect(
-      resolvePlannerBranch(["main", "shipyard/issue-42"]),
-    ).resolves.toBe("shipyard/planner");
+      resolvePlannerBranch(["main", "shipyard-v1/issue-42"]),
+    ).resolves.toBe("shipyard-v1/planner");
   });
 
   it("offers and selects a stable sibling branch when a nested ref conflicts", async () => {
@@ -27,9 +27,9 @@ describe("resolvePlannerBranch", () => {
         checkedOutBranches: [],
         mergedBranches: [],
       }),
-    ).resolves.toBe("shipyard/planner-2");
+    ).resolves.toBe("shipyard-v1/planner-2");
     expect(ask).toHaveBeenCalledWith(
-      expect.stringContaining("shipyard/planner-2"),
+      expect.stringContaining("shipyard-v1/planner-2"),
     );
   });
 
@@ -49,18 +49,18 @@ describe("resolvePlannerBranch", () => {
   it("suggests the stable alternate when prompting is unavailable", async () => {
     await expect(
       resolvePlannerBranch([existingPlannerBranch], { isInteractive: false }),
-    ).rejects.toThrow(/shipyard\/planner-2/);
+    ).rejects.toThrow(/shipyard-v1\/planner-2/);
   });
 
   it("reuses the previously selected alternate without asking again", async () => {
     const ask = vi.fn(async () => "n");
 
     await expect(
-      resolvePlannerBranch([existingPlannerBranch, "shipyard/planner-2"], {
+      resolvePlannerBranch([existingPlannerBranch, "shipyard-v1/planner-2"], {
         isInteractive: true,
         ask,
       }),
-    ).resolves.toBe("shipyard/planner-2");
+    ).resolves.toBe("shipyard-v1/planner-2");
     expect(ask).not.toHaveBeenCalled();
   });
 
@@ -71,12 +71,12 @@ describe("resolvePlannerBranch", () => {
       resolvePlannerBranch(
         [
           existingPlannerBranch,
-          "shipyard/planner-2/old-run",
-          "shipyard/planner-3",
+          "shipyard-v1/planner-2/old-run",
+          "shipyard-v1/planner-3",
         ],
         { isInteractive: true, ask },
       ),
-    ).resolves.toBe("shipyard/planner-3");
+    ).resolves.toBe("shipyard-v1/planner-3");
     expect(ask).not.toHaveBeenCalled();
   });
 
@@ -87,8 +87,8 @@ describe("resolvePlannerBranch", () => {
       resolvePlannerBranch(
         [
           existingPlannerBranch,
-          "shipyard/planner-2/old-run",
-          "shipyard-planner-2/old-run",
+          "shipyard-v1/planner-2/old-run",
+          "shipyard-v1-planner-2/old-run",
         ],
         {
           isInteractive: true,
@@ -97,20 +97,20 @@ describe("resolvePlannerBranch", () => {
           mergedBranches: [],
         },
       ),
-    ).resolves.toBe("shipyard/planner-3");
+    ).resolves.toBe("shipyard-v1/planner-3");
   });
 
   it("uses a top-level alternate when the shipyard namespace itself is taken", async () => {
     const ask = vi.fn(async () => "y");
 
     await expect(
-      resolvePlannerBranch(["shipyard"], {
+      resolvePlannerBranch(["shipyard-v1"], {
         isInteractive: true,
         ask,
         checkedOutBranches: [],
         mergedBranches: [],
       }),
-    ).resolves.toBe("shipyard-planner-2");
+    ).resolves.toBe("shipyard-v1-planner-2");
   });
 
   it("deletes conflicting refs only when requested and safe", async () => {
@@ -125,7 +125,7 @@ describe("resolvePlannerBranch", () => {
         mergedBranches: [existingPlannerBranch],
         deleteBranches,
       }),
-    ).resolves.toBe("shipyard/planner");
+    ).resolves.toBe("shipyard-v1/planner");
     expect(deleteBranches).toHaveBeenCalledWith([existingPlannerBranch]);
   });
 
@@ -163,7 +163,7 @@ describe("resolvePlannerBranch", () => {
 });
 
 it("fast-forwards a stale planner branch to include current setup", () => {
-  const repo = mkdtempSync(join(tmpdir(), "shipyard-planner-"));
+  const repo = mkdtempSync(join(tmpdir(), "shipyard-v1-planner-"));
   const git = (...args: string[]) =>
     execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
   try {
@@ -178,7 +178,7 @@ it("fast-forwards a stale planner branch to include current setup", () => {
       "-qm",
       "initial",
     );
-    git("branch", "shipyard/planner");
+    git("branch", "shipyard-v1/planner");
     git(
       "-c",
       "user.name=Test",
@@ -190,9 +190,9 @@ it("fast-forwards a stale planner branch to include current setup", () => {
       "add setup",
     );
 
-    fastForwardPlannerBranch("shipyard/planner", "staging", repo);
+    fastForwardPlannerBranch("shipyard-v1/planner", "staging", repo);
 
-    expect(git("rev-parse", "shipyard/planner")).toBe(
+    expect(git("rev-parse", "shipyard-v1/planner")).toBe(
       git("rev-parse", "staging"),
     );
 
@@ -201,14 +201,14 @@ it("fast-forwards a stale planner branch to include current setup", () => {
       "add",
       "-q",
       join(repo, "planner-worktree"),
-      "shipyard/planner",
+      "shipyard-v1/planner",
     );
     expect(() =>
-      fastForwardPlannerBranch("shipyard/planner", "staging", repo),
+      fastForwardPlannerBranch("shipyard-v1/planner", "staging", repo),
     ).not.toThrow();
     git("worktree", "remove", join(repo, "planner-worktree"));
 
-    git("checkout", "-q", "shipyard/planner");
+    git("checkout", "-q", "shipyard-v1/planner");
     git(
       "-c",
       "user.name=Test",
@@ -220,11 +220,11 @@ it("fast-forwards a stale planner branch to include current setup", () => {
       "planner work",
     );
     git("checkout", "-q", "staging");
-    const plannerHead = git("rev-parse", "shipyard/planner");
+    const plannerHead = git("rev-parse", "shipyard-v1/planner");
     expect(() =>
-      fastForwardPlannerBranch("shipyard/planner", "staging", repo),
+      fastForwardPlannerBranch("shipyard-v1/planner", "staging", repo),
     ).toThrow(/commits outside 'staging'/);
-    expect(git("rev-parse", "shipyard/planner")).toBe(plannerHead);
+    expect(git("rev-parse", "shipyard-v1/planner")).toBe(plannerHead);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }

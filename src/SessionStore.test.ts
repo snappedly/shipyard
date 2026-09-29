@@ -192,12 +192,12 @@ describe("transferCodexSession", () => {
 
 describe("findClaudeSessionOnHost", () => {
   it("finds a session by id regardless of which encoded project dir holds it", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "shipyard-find-claude-"));
+    const dir = await mkdtemp(join(tmpdir(), "shipyard-v1-find-claude-"));
     try {
       const id = "session-xyz";
       const projectDir = join(
         dir,
-        "-private-tmp-myrepo--shipyard-worktrees-feature",
+        "-private-tmp-myrepo--shipyard-v1-worktrees-feature",
       );
       await mkdir(projectDir, { recursive: true });
       await writeFile(join(projectDir, `${id}.jsonl`), "{}");
@@ -212,7 +212,7 @@ describe("findClaudeSessionOnHost", () => {
   });
 
   it("returns undefined path and names the searched root when absent", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "shipyard-find-claude-"));
+    const dir = await mkdtemp(join(tmpdir(), "shipyard-v1-find-claude-"));
     try {
       const result = await findClaudeSessionOnHost("nope", dir);
       expect(result.path).toBeUndefined();
@@ -225,7 +225,7 @@ describe("findClaudeSessionOnHost", () => {
   it("returns undefined path when the projects dir does not exist", async () => {
     const result = await findClaudeSessionOnHost(
       "nope",
-      join(tmpdir(), "shipyard-does-not-exist-xyz"),
+      join(tmpdir(), "shipyard-v1-does-not-exist-xyz"),
     );
     expect(result.path).toBeUndefined();
   });
@@ -237,7 +237,7 @@ describe("findClaudeSessionOnHost", () => {
 
 describe("findCodexSessionOnHost", () => {
   it("finds a date-nested rollout file by id", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "shipyard-find-codex-"));
+    const dir = await mkdtemp(join(tmpdir(), "shipyard-v1-find-codex-"));
     try {
       const id = "9ba1c695-2222-4444-8888-e7e847bf34dd";
       const sessionPath = join(
@@ -260,7 +260,7 @@ describe("findCodexSessionOnHost", () => {
   });
 
   it("returns undefined path and names the searched root when absent", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "shipyard-find-codex-"));
+    const dir = await mkdtemp(join(tmpdir(), "shipyard-v1-find-codex-"));
     try {
       const result = await findCodexSessionOnHost("missing", dir);
       expect(result.path).toBeUndefined();
@@ -273,7 +273,7 @@ describe("findCodexSessionOnHost", () => {
 
 describe("locateCodexHostSession", () => {
   it("returns absolute path and relative date-nested path", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "shipyard-locate-codex-"));
+    const dir = await mkdtemp(join(tmpdir(), "shipyard-v1-locate-codex-"));
     try {
       const id = "9ba1c695-2222-4444-8888-e7e847bf34dd";
       const relativePath = join(
@@ -337,7 +337,7 @@ describe("listClaudeSubagentSessionsInSandbox", () => {
   });
 
   it("returns absolute paths of agent-*.jsonl files in the subagents dir", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "shipyard-sub-list-"));
+    const dir = await mkdtemp(join(tmpdir(), "shipyard-v1-sub-list-"));
     try {
       const sessionId = "abc-123";
       const subagentsDir = join(dir, "-sandbox-repo", sessionId, "subagents");
@@ -364,7 +364,7 @@ describe("listClaudeSubagentSessionsInSandbox", () => {
   });
 
   it("returns [] when the subagents dir does not exist (the normal case)", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "shipyard-sub-nodir-"));
+    const dir = await mkdtemp(join(tmpdir(), "shipyard-v1-sub-nodir-"));
     try {
       const result = await listClaudeSubagentSessionsInSandbox(
         "/sandbox/repo",
@@ -379,7 +379,7 @@ describe("listClaudeSubagentSessionsInSandbox", () => {
   });
 
   it("returns [] when the subagents dir is empty", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "shipyard-sub-empty-"));
+    const dir = await mkdtemp(join(tmpdir(), "shipyard-v1-sub-empty-"));
     try {
       const subagentsDir = join(dir, "-sandbox-repo", "abc-123", "subagents");
       await mkdir(subagentsDir, { recursive: true });

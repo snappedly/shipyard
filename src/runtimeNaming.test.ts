@@ -8,7 +8,7 @@ import { scaffold, getAgent, type ScaffoldOptions } from "./InitService.js";
 import { generateTempBranchName } from "./WorktreeManager.js";
 import { defaultImageName } from "./sandboxes/docker.js";
 
-const makeDir = () => mkdtemp(join(tmpdir(), "shipyard-runtime-naming-"));
+const makeDir = () => mkdtemp(join(tmpdir(), "shipyard-v1-runtime-naming-"));
 
 const defaultOptions: ScaffoldOptions = {
   agent: getAgent("claude-code")!,
@@ -22,23 +22,23 @@ const runScaffold = (repoDir: string, options?: Partial<ScaffoldOptions>) =>
     ),
   );
 
-describe("Shipyard runtime naming", () => {
-  it("uses Shipyard names for generated branches and images", () => {
+describe("Shipyard V1 runtime naming", () => {
+  it("uses Shipyard V1 names for generated branches and images", () => {
     expect(generateTempBranchName()).toMatch(
-      /^shipyard\/\d{8}-\d{6}-[0-9a-f]{6}$/,
+      /^shipyard-v1\/\d{8}-\d{6}-[0-9a-f]{6}$/,
     );
-    expect(defaultImageName("/home/user/my-repo")).toBe("shipyard:my-repo");
+    expect(defaultImageName("/home/user/my-repo")).toBe("shipyard-v1:my-repo");
   });
 
-  it("scaffolds a fresh repository under .shipyard", async () => {
+  it("scaffolds a fresh repository under .shipyard-v1", async () => {
     const dir = await makeDir();
 
     await runScaffold(dir);
 
     const selector = await readFile(
-      join(dir, ".shipyard", "select-issues.mjs"),
+      join(dir, ".shipyard-v1", "select-issues.mjs"),
       "utf8",
     );
-    expect(selector).toContain('labels.includes("shipyard")');
+    expect(selector).toContain('labels.includes("shipyard-v1")');
   });
 });

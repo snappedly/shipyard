@@ -2,9 +2,9 @@
 
 ## Context
 
-A self-hosted deployment must react quickly when the lowercase `shipyard`
+A self-hosted deployment must react quickly when the lowercase `shipyard-v1`
 activation label is added, recover labelled tasks after the host was offline,
-and preserve each repository's existing `npx shipyard run` behavior. The first
+and preserve each repository's existing `npx shipyard-v1 run` behavior. The first
 supported host is Apple Silicon macOS. The deployment must not require a public
 inbound endpoint, third-party coordinator, always-on login service, or an
 Actions job that remains alive for the complete agent lifecycle.
@@ -17,11 +17,11 @@ accepts only an exact lowercase label event or manual dispatch and signals the
 foreground controller. It performs no checkout and starts no agent.
 
 The controller performs a GitHub backlog preflight at startup and after every
-wake-up. When work exists it invokes the repository's unchanged `npx shipyard
+wake-up. When work exists it invokes the repository's unchanged `npx shipyard-v1
 run` entrypoint outside the Actions job. After a successful invocation it
 compares eligible issue-number sets: empty means idle, changed means another
 finite invocation, and unchanged means no progress and idle. The Actions run
-therefore proves wake delivery, not completion of Shipyard work.
+therefore proves wake delivery, not completion of Shipyard V1 work.
 
 The controller is deliberately foreground-only. Its terminal is the ownership
 and observation boundary; Ctrl-C, terminal closure, and explicit stop share the
@@ -42,11 +42,11 @@ invariant.
   preflight still provides missed-event recovery without making polling the
   wake mechanism.
 - **Login service or launch daemon:** rejected because the operator wants manual
-  foreground ownership. Shipyard must stop when its terminal closes and must not
+  foreground ownership. Shipyard V1 must stop when its terminal closes and must not
   start automatically at login.
 - **Actions-owned agent lifecycle:** rejected because an Actions job would own
   the long-running agent process and its timeout. It would also conflate wake
-  delivery with the repository-defined Shipyard outcome. Actions remains a
+  delivery with the repository-defined Shipyard V1 outcome. Actions remains a
   short-lived transport instead.
 
 ## Consequences
@@ -60,7 +60,7 @@ administrative authority.
 
 The official runner retains its update behavior. GitHub does not charge Actions
 minutes for the self-hosted wake job, but the brief `ubuntu-latest` exact-case
-gate may consume hosted minutes for private repositories. Shipyard owns
+gate may consume hosted minutes for private repositories. Shipyard V1 owns
 controller state, no-progress safety, diagnostics, and cleanup. Public
 repositories inherit GitHub's elevated self-hosted runner risk.
 The design is intentionally repository-scoped and does not preclude a future

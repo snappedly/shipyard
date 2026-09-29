@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync, execSync } from "node:child_process";
 import type { StandardSchemaV1 } from "@standard-schema/spec";
-import * as shipyard from "@snappedly-tools/shipyard";
+import * as shipyard from "@snappedly-tools/shipyard-v1";
 
 export const outputDir = (): string => process.env.OUTPUT_DIR ?? "/tmp";
 
@@ -71,7 +71,7 @@ export const standardSchema = <T>(
 ): StandardSchemaV1<unknown, T> => ({
   "~standard": {
     version: 1,
-    vendor: "shipyard-agent-workflows",
+    vendor: "shipyard-v1-agent-workflows",
     validate: (value: unknown) => {
       try {
         return { value: validate(value) };

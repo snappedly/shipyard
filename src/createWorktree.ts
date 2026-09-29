@@ -49,7 +49,7 @@ export interface CreateWorktreeOptions {
   readonly branchStrategy: WorktreeBranchStrategy;
   /**
    * Host repo directory. Replaces `process.cwd()` as the anchor for
-   * `.shipyard/worktrees/`, `.shipyard/.env`, and git operations.
+   * `.shipyard-v1/worktrees/`, `.shipyard-v1/.env`, and git operations.
    *
    * - Relative paths are resolved against `process.cwd()`.
    * - Absolute paths are used as-is.
@@ -91,7 +91,7 @@ export interface WorktreeInteractiveOptions {
    * - The worktree is preserved on disk after abort.
    * - The `Worktree` handle remains usable for subsequent operations.
    * - The rejected promise surfaces `signal.reason` via
-   *   `signal.throwIfAborted()` — no Shipyard-specific wrapping.
+   *   `signal.throwIfAborted()` — no Shipyard V1-specific wrapping.
    */
   readonly signal?: AbortSignal;
 }
@@ -153,7 +153,7 @@ export interface WorktreeRunResult {
 }
 
 export interface WorktreeCreateSandboxOptions {
-  /** Sandbox provider (e.g. docker({ imageName: "shipyard:myrepo" })). */
+  /** Sandbox provider (e.g. docker({ imageName: "shipyard-v1:myrepo" })). */
   readonly sandbox: SandboxProvider;
   /** Lifecycle hooks grouped by execution location (host or sandbox). */
   readonly hooks?: SandboxHooks;

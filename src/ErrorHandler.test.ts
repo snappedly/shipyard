@@ -106,11 +106,11 @@ describe("formatErrorMessage", () => {
   it("ConfigDirError passes through message (includes init hint)", () => {
     const msg = formatErrorMessage(
       new ConfigDirError({
-        message: "No .shipyard/ found. Run `shipyard init` first.",
+        message: "No .shipyard-v1/ found. Run `shipyard-v1 init` first.",
       }),
     );
-    expect(msg).toContain("No .shipyard/");
-    expect(msg).toContain("shipyard init");
+    expect(msg).toContain("No .shipyard-v1/");
+    expect(msg).toContain("shipyard-v1 init");
   });
 
   it("InitError passes through message", () => {
@@ -179,12 +179,12 @@ describe("withFriendlyErrors", () => {
       withFriendlyErrors(
         Effect.fail(
           new ConfigDirError({
-            message: "No .shipyard/ found. Run `shipyard init` first.",
+            message: "No .shipyard-v1/ found. Run `shipyard-v1 init` first.",
           }),
         ),
       ),
     );
-    expect(statusOf(entries)!.message).toContain("No .shipyard/");
+    expect(statusOf(entries)!.message).toContain("No .shipyard-v1/");
   });
 
   it("routes AgentIdleTimeoutError through Display with timeout seconds", async () => {

@@ -13,7 +13,7 @@ import {
   type TriageStore,
 } from "./index.js";
 
-const repository = "snappedly/shipyard";
+const repository = "snappedly/shipyard-v1";
 const base: RevisionReference = { branch: "main", sha: "a".repeat(40) };
 const policy: RepositoryPolicy = createRepositoryPolicy({
   repository,

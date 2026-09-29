@@ -6,7 +6,7 @@ import { CwdError as CwdErrorImpl } from "./resolveCwd.js";
  * Public-facing type for `CwdError`. The runtime class is the same
  * `Data.TaggedError` from `resolveCwd.ts`, but we re-declare its public
  * shape here as a plain `Error` subclass so that Effect's type machinery
- * does not leak into Shipyard's published `.d.ts` files.
+ * does not leak into Shipyard V1's published `.d.ts` files.
  */
 export interface CwdError extends Error {
   readonly _tag: "CwdError";

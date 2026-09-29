@@ -12,8 +12,8 @@ gh issue view "$issue" --repo "$repo" --json state,labels |
     const labels = new Set(issue.labels.map((label) => label.name));
     const states = ["needs-triage", "needs-info", "ready-for-agent", "ready-for-human", "wontfix"];
     if (issue.state !== "OPEN" ||
-        !(labels.has("shipyard") || labels.has("shipyard:pending"))) {
-      console.error("Issue cannot be implemented: requires an open issue with shipyard or shipyard:pending");
+        !(labels.has("shipyard-v1") || labels.has("shipyard-v1:pending"))) {
+      console.error("Issue cannot be implemented: requires an open issue with shipyard-v1 or shipyard-v1:pending");
       process.exit(1);
     }
     const triageStates = states.filter((state) => labels.has(state));

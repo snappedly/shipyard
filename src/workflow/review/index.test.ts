@@ -11,10 +11,10 @@ import {
   type ReviewResponse,
 } from "./index.js";
 
-const repository = "snappedly/shipyard";
+const repository = "snappedly/shipyard-v1";
 const base: RevisionReference = { branch: "main", sha: "a".repeat(40) };
 const head: RevisionReference = {
-  branch: "shipyard/issue-13",
+  branch: "shipyard-v1/issue-13",
   sha: "b".repeat(40),
 };
 const policy = createRepositoryPolicy({

@@ -38,7 +38,7 @@ const validateRetentionDays = (retentionDays: number): void => {
 };
 
 export interface PurgeRunLogsOptions {
-  /** Host repository containing `.shipyard/logs/`. */
+  /** Host repository containing `.shipyard-v1/logs/`. */
   readonly repoDir: string;
   /** Remove run logs strictly older than this many calendar days. Omit to remove every default run log. */
   readonly retentionDays?: number;

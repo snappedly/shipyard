@@ -1,4 +1,4 @@
--- Shipyard coordinator storage schema. Apply with a transaction-capable
+-- Shipyard V1 coordinator storage schema. Apply with a transaction-capable
 -- PostgreSQL client selected by the host; the package does not provision a
 -- database or embed credentials.
 

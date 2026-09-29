@@ -51,11 +51,11 @@ export interface CreateSandboxOptions {
    * already exists. Defaults to `HEAD`.
    */
   readonly baseBranch?: string;
-  /** Sandbox provider (e.g. docker({ imageName: "shipyard:myrepo" })). */
+  /** Sandbox provider (e.g. docker({ imageName: "shipyard-v1:myrepo" })). */
   readonly sandbox: SandboxProvider;
   /**
    * Host repo directory. Replaces `process.cwd()` as the anchor for
-   * `.shipyard/worktrees/`, `.shipyard/.env`, and git operations.
+   * `.shipyard-v1/worktrees/`, `.shipyard-v1/.env`, and git operations.
    *
    * - Relative paths are resolved against `process.cwd()`.
    * - Absolute paths are used as-is.

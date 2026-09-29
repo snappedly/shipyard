@@ -38,8 +38,8 @@ const makeAdapters = (
   const removes: string[] = [];
   const files = new Set([
     repoDir,
-    join(repoDir, ".shipyard"),
-    join(repoDir, ".shipyard", ".gitignore"),
+    join(repoDir, ".shipyard-v1"),
+    join(repoDir, ".shipyard-v1", ".gitignore"),
   ]);
 
   const adapters: RunnerInstallAdapters = {
@@ -54,7 +54,7 @@ const makeAdapters = (
     }),
     exists: async (path) => files.has(path),
     readText: async (path) =>
-      path === join(repoDir, ".shipyard", ".gitignore") ? ".env\n" : "",
+      path === join(repoDir, ".shipyard-v1", ".gitignore") ? ".env\n" : "",
     writeText: async (path, content) => {
       writes.set(path, content);
       files.add(path);
@@ -89,7 +89,7 @@ const makeAdapters = (
       calls.push({ command, args, ...options });
       if (command === "git") {
         return {
-          stdout: "git@github.com:snappedly/shipyard.git\n",
+          stdout: "git@github.com:snappedly/shipyard-v1.git\n",
           stderr: "",
         };
       }
@@ -118,34 +118,34 @@ describe("installRepositoryRunner", () => {
     );
 
     expect(result).toEqual({
-      name: "shipyard-shipyard-jon-s-macbook-local",
-      repository: "snappedly/shipyard",
+      name: "shipyard-v1-shipyard-v1-jon-s-macbook-local",
+      repository: "snappedly/shipyard-v1",
       version: "2.331.0",
-      runnerDir: join(repoDir, ".shipyard", "runner"),
+      runnerDir: join(repoDir, ".shipyard-v1", "runner"),
     });
-    expect(writes.get(join(repoDir, ".shipyard", ".gitignore"))).toBe(
+    expect(writes.get(join(repoDir, ".shipyard-v1", ".gitignore"))).toBe(
       ".env\nrunner/\n",
     );
-    expect(writes.has(join(repoDir, ".shipyard", "runner", "runner.tgz"))).toBe(
-      false,
-    );
     expect(
-      writes.get(join(repoDir, ".github", "workflows", "shipyard-wake.yml")),
+      writes.has(join(repoDir, ".shipyard-v1", "runner", "runner.tgz")),
+    ).toBe(false);
+    expect(
+      writes.get(join(repoDir, ".github", "workflows", "shipyard-v1-wake.yml")),
     ).toBe(REPOSITORY_RUNNER_WORKFLOW);
     expect(
-      writes.get(join(repoDir, ".shipyard", "runner", "shipyard-wake")),
+      writes.get(join(repoDir, ".shipyard-v1", "runner", "shipyard-v1-wake")),
     ).toBe(REPOSITORY_RUNNER_WAKE_SCRIPT);
 
     const configCall = calls.find((call) => call.command === "./config.sh");
     expect(configCall?.args).toEqual([
       "--url",
-      "https://github.com/snappedly/shipyard",
+      "https://github.com/snappedly/shipyard-v1",
       "--token",
       "one-time-token",
       "--name",
-      "shipyard-shipyard-jon-s-macbook-local",
+      "shipyard-v1-shipyard-v1-jon-s-macbook-local",
       "--labels",
-      "shipyard",
+      "shipyard-v1",
       "--work",
       "_work",
       "--unattended",
@@ -160,12 +160,12 @@ describe("installRepositoryRunner", () => {
 
     const metadata = JSON.parse(
       writes.get(
-        join(repoDir, ".shipyard", "runner", ".shipyard-install.json"),
+        join(repoDir, ".shipyard-v1", "runner", ".shipyard-v1-install.json"),
       ) as string,
     ) as Record<string, unknown>;
     expect(metadata).toMatchObject({
-      repository: "snappedly/shipyard",
-      name: "shipyard-shipyard-jon-s-macbook-local",
+      repository: "snappedly/shipyard-v1",
+      name: "shipyard-v1-shipyard-v1-jon-s-macbook-local",
       version: "2.331.0",
     });
     expect(JSON.stringify(metadata)).not.toContain("one-time-token");
@@ -205,7 +205,7 @@ describe("installRepositoryRunner", () => {
 
     await expect(
       installRepositoryRunner({ repoDir }, adapters),
-    ).rejects.toThrow("shipyard init");
+    ).rejects.toThrow("shipyard-v1 init");
     expect(calls).toHaveLength(0);
   });
 
@@ -241,7 +241,7 @@ describe("installRepositoryRunner", () => {
 
   it("refuses a local runner collision", async () => {
     const base = makeAdapters();
-    const runnerDir = join(repoDir, ".shipyard", "runner");
+    const runnerDir = join(repoDir, ".shipyard-v1", "runner");
     const adapters: RunnerInstallAdapters = {
       ...base.adapters,
       exists: async (path) => path === runnerDir || base.adapters.exists(path),
@@ -249,7 +249,7 @@ describe("installRepositoryRunner", () => {
 
     await expect(
       installRepositoryRunner({ repoDir }, adapters),
-    ).rejects.toThrow("not a valid Shipyard repository runner installation");
+    ).rejects.toThrow("not a valid Shipyard V1 repository runner installation");
     expect(base.calls.some(({ command }) => command === "./config.sh")).toBe(
       false,
     );
@@ -258,14 +258,14 @@ describe("installRepositoryRunner", () => {
   it("validates a healthy matching installation without duplicating it", async () => {
     const base = makeAdapters();
     const progress: RunnerInstallProgress[] = [];
-    const runnerDir = join(repoDir, ".shipyard", "runner");
-    const metadataPath = join(runnerDir, ".shipyard-install.json");
+    const runnerDir = join(repoDir, ".shipyard-v1", "runner");
+    const metadataPath = join(runnerDir, ".shipyard-v1-install.json");
     const existingMetadata = {
       schemaVersion: 1,
-      repository: "snappedly/shipyard",
-      repositoryUrl: "https://github.com/snappedly/shipyard",
-      name: "shipyard-shipyard-jon-s-macbook-local",
-      label: "shipyard",
+      repository: "snappedly/shipyard-v1",
+      repositoryUrl: "https://github.com/snappedly/shipyard-v1",
+      name: "shipyard-v1-shipyard-v1-jon-s-macbook-local",
+      label: "shipyard-v1",
       version: "2.331.0",
     };
     const adapters: RunnerInstallAdapters = {
@@ -285,7 +285,7 @@ describe("installRepositoryRunner", () => {
         base.calls.push({ command, args, ...options });
         if (command === "git") {
           return {
-            stdout: "git@github.com:snappedly/shipyard.git\n",
+            stdout: "git@github.com:snappedly/shipyard-v1.git\n",
             stderr: "",
           };
         }
@@ -295,7 +295,7 @@ describe("installRepositoryRunner", () => {
         ) {
           return {
             stdout:
-              "shipyard-shipyard-jon-s-macbook-local\tonline\tself-hosted,macOS,shipyard\n",
+              "shipyard-v1-shipyard-v1-jon-s-macbook-local\tonline\tself-hosted,macOS,shipyard-v1\n",
             stderr: "",
           };
         }
@@ -323,10 +323,10 @@ describe("installRepositoryRunner", () => {
     ).toBe(false);
     expect(
       base.writes.get(
-        join(repoDir, ".github", "workflows", "shipyard-wake.yml"),
+        join(repoDir, ".github", "workflows", "shipyard-v1-wake.yml"),
       ),
     ).toBe(REPOSITORY_RUNNER_WORKFLOW);
-    expect(base.writes.get(join(runnerDir, "shipyard-wake"))).toBe(
+    expect(base.writes.get(join(runnerDir, "shipyard-v1-wake"))).toBe(
       REPOSITORY_RUNNER_WAKE_SCRIPT,
     );
     expect(progress.map(({ current, total }) => [current, total])).toEqual([
@@ -342,7 +342,7 @@ describe("installRepositoryRunner", () => {
       repoDir,
       ".github",
       "workflows",
-      "shipyard-wake.yml",
+      "shipyard-v1-wake.yml",
     );
     const adapters: RunnerInstallAdapters = {
       ...base.adapters,
@@ -373,7 +373,7 @@ describe("installRepositoryRunner", () => {
           command === "gh" &&
           args.some((arg) => arg.endsWith("/actions/runners"))
         ) {
-          return { stdout: "shipyard-other-mac\n", stderr: "" };
+          return { stdout: "shipyard-v1-other-mac\n", stderr: "" };
         }
         return base.adapters.run(command, args, options);
       },
@@ -418,7 +418,7 @@ describe("installRepositoryRunner", () => {
           command === "gh" &&
           args.some((arg) => arg.endsWith("/actions/runners"))
         ) {
-          return { stdout: "shipyard-existing-mac\n", stderr: "" };
+          return { stdout: "shipyard-v1-existing-mac\n", stderr: "" };
         }
         return base.adapters.run(command, args, options);
       },
@@ -460,7 +460,7 @@ describe("installRepositoryRunner", () => {
     await expect(
       installRepositoryRunner({ repoDir }, adapters),
     ).rejects.toThrow("Extracting the verified runner archive");
-    expect(base.removes).toContain(join(repoDir, ".shipyard", "runner"));
+    expect(base.removes).toContain(join(repoDir, ".shipyard-v1", "runner"));
     expect(base.calls.some((call) => call.command === "./config.sh")).toBe(
       false,
     );
@@ -486,6 +486,6 @@ describe("installRepositoryRunner", () => {
     expect((error as Error).message).not.toContain("supplied-secret");
     expect((error as Error).message).toContain("removed");
     expect((error as Error).message).toContain("orphan registration");
-    expect(base.removes).toContain(join(repoDir, ".shipyard", "runner"));
+    expect(base.removes).toContain(join(repoDir, ".shipyard-v1", "runner"));
   });
 });

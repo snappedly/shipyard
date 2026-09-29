@@ -30,7 +30,7 @@ describe("interactive arg collection", () => {
 
   beforeEach(() => {
     originalCwd = process.cwd();
-    hostDir = mkdtempSync(join(tmpdir(), "shipyard-interactive-argcol-"));
+    hostDir = mkdtempSync(join(tmpdir(), "shipyard-v1-interactive-argcol-"));
     execSync("git init", { cwd: hostDir, stdio: "ignore" });
     execSync('git config user.email "test@test.com"', {
       cwd: hostDir,

@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import "./global.css";
 
 export const metadata = {
-  title: "Shipyard",
+  title: "Shipyard V1",
   description: "Documentation for Snappedly's agent orchestration tool.",
 };
 

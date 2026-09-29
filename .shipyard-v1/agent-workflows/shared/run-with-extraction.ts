@@ -3,7 +3,7 @@ import {
   type OutputObjectDefinition,
   type RunOptions,
   type RunResult,
-} from "@snappedly-tools/shipyard";
+} from "@snappedly-tools/shipyard-v1";
 
 export interface RunWithExtractionOptions<T> extends Omit<
   RunOptions,

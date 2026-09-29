@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 
 export default function Layout({ children }: { children: ReactNode }) {
   return (
-    <DocsLayout tree={source.getPageTree()} nav={{ title: "Shipyard" }}>
+    <DocsLayout tree={source.getPageTree()} nav={{ title: "Shipyard V1" }}>
       {children}
     </DocsLayout>
   );

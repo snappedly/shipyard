@@ -65,8 +65,8 @@ const execGit = (
 
 /**
  * Generates a temporary branch name.
- * When name is provided: `shipyard/<sanitized-name>/<YYYYMMDD-HHMMSS>-<random>`.
- * Otherwise: `shipyard/<YYYYMMDD-HHMMSS>-<random>`.
+ * When name is provided: `shipyard-v1/<sanitized-name>/<YYYYMMDD-HHMMSS>-<random>`.
+ * Otherwise: `shipyard-v1/<YYYYMMDD-HHMMSS>-<random>`.
  *
  * The random suffix prevents collisions between concurrent calls within the
  * same wall-clock second — relevant for fan-out via `RunResult.fork()` and
@@ -135,7 +135,7 @@ export const findCollidingWorktree = (
 
 /**
  * Whether `worktreePath` lives under `worktreesDir` (i.e. is a worktree managed
- * by Shipyard rather than the main working tree or an external worktree).
+ * by Shipyard V1 rather than the main working tree or an external worktree).
  * Separators are normalized so the check holds on Windows.
  */
 export const isManagedWorktreePath = (
@@ -148,7 +148,7 @@ export const isManagedWorktreePath = (
 };
 
 /**
- * Whether a directory entry under `.shipyard/worktrees/` is orphaned — not
+ * Whether a directory entry under `.shipyard-v1/worktrees/` is orphaned — not
  * present in the set of active worktree paths reported by git. Both sides are
  * normalized so paths from `join` (backslashes on Windows) match git's
  * forward-slash output.
@@ -278,10 +278,10 @@ const fastForwardFromOrigin = (
   });
 
 /**
- * Creates a git worktree at `.shipyard/worktrees/<name>/`.
+ * Creates a git worktree at `.shipyard-v1/worktrees/<name>/`.
  *
  * - If `branch` is specified, checks out that branch.
- * - If not, creates a temporary `shipyard/<timestamp>` branch.
+ * - If not, creates a temporary `shipyard-v1/<timestamp>` branch.
  *
  * When `branch` collides with an existing managed worktree:
  * - Clean → reuses the existing worktree and fast-forwards it from
@@ -312,11 +312,11 @@ export const create = (
         assertNoSymlinkComponents(
           configDir,
           worktreesDir,
-          "Shipyard worktree directory",
+          "Shipyard V1 worktree directory",
         ),
       catch: (e) =>
         new WorktreeError({
-          message: `Refusing symlinked Shipyard worktree directory: ${e instanceof Error ? e.message : String(e)}`,
+          message: `Refusing symlinked Shipyard V1 worktree directory: ${e instanceof Error ? e.message : String(e)}`,
         }),
     });
     yield* fs
@@ -327,11 +327,11 @@ export const create = (
         assertNoSymlinkComponents(
           configDir,
           worktreesDir,
-          "Shipyard worktree directory",
+          "Shipyard V1 worktree directory",
         ),
       catch: (e) =>
         new WorktreeError({
-          message: `Refusing symlinked Shipyard worktree directory: ${e instanceof Error ? e.message : String(e)}`,
+          message: `Refusing symlinked Shipyard V1 worktree directory: ${e instanceof Error ? e.message : String(e)}`,
         }),
     });
 
@@ -377,7 +377,7 @@ export const create = (
       const existing = yield* listWorktrees(repoDir);
       const collision = findCollidingWorktree(existing, branch, worktreePath);
       if (collision) {
-        // Only reuse worktrees managed by Shipyard (under .shipyard/worktrees/)
+        // Only reuse worktrees managed by Shipyard V1 (under .shipyard-v1/worktrees/)
         if (isManagedWorktreePath(collision.path, worktreesDir)) {
           const dirty = yield* hasUncommittedChanges(collision.path);
           if (dirty) {
@@ -398,7 +398,7 @@ export const create = (
           new WorktreeError({
             message:
               `Branch '${branch}' is already checked out in worktree at '${collision.path}'. ` +
-              `Shipyard's branch and merge-to-head strategies run the agent in a git worktree under .shipyard/worktrees/, ` +
+              `Shipyard V1's branch and merge-to-head strategies run the agent in a git worktree under .shipyard-v1/worktrees/, ` +
               `and git refuses to check out the same branch in two worktrees at once (HEAD would become ambiguous). ` +
               `Pick a different branch, or switch the main working tree to a different branch before re-running.`,
           }),
@@ -493,18 +493,18 @@ export const hasUncommittedChanges = (
 /**
  * Removes a worktree and its git metadata.
  *
- * The `worktreePath` must be a path inside `.shipyard/worktrees/` so that
+ * The `worktreePath` must be a path inside `.shipyard-v1/worktrees/` so that
  * the main repository directory can be derived from it.
  */
 export const remove = (
   worktreePath: string,
 ): Effect.Effect<void, WorktreeError> => {
-  // Derive the main repo dir: worktreePath = <repoDir>/.shipyard/worktrees/<name>
+  // Derive the main repo dir: worktreePath = <repoDir>/.shipyard-v1/worktrees/<name>
   // and verify the derivation before allowing git to remove anything. The old
-  // code accepted sibling prefixes such as `.shipyard/worktrees-evil`.
+  // code accepted sibling prefixes such as `.shipyard-v1/worktrees-evil`.
   const candidate = resolve(worktreePath);
   const repoDir = resolve(candidate, "..", "..", "..");
-  const worktreesDir = resolve(repoDir, ".shipyard", WORKTREES_DIR);
+  const worktreesDir = resolve(repoDir, ".shipyard-v1", WORKTREES_DIR);
   if (
     !isManagedWorktreePath(candidate, worktreesDir) ||
     candidate === worktreesDir
@@ -532,7 +532,7 @@ export const remove = (
 
 /**
  * Prunes stale git worktree metadata and removes orphaned directories under
- * `.shipyard/worktrees/`.
+ * `.shipyard-v1/worktrees/`.
  */
 export const pruneStale = (
   repoDir: string,
@@ -551,7 +551,7 @@ export const pruneStale = (
     const worktreesDir = join(configDir, WORKTREES_DIR);
 
     // Never recursively delete through a configurable symlink. A symlinked
-    // `.shipyard` is supported for active worktrees, but its target may be an
+    // `.shipyard-v1` is supported for active worktrees, but its target may be an
     // unrelated directory; skip orphan-directory cleanup in that case.
     const configDirIsSymlink = yield* fs.readLink(configDir).pipe(
       Effect.map(() => true),
@@ -577,7 +577,7 @@ export const pruneStale = (
     if (entries === null) return;
 
     // `git worktree list` canonicalizes paths via realpath. If repoDir or
-    // .shipyard is a symlink, joining the un-canonicalized prefix produces
+    // .shipyard-v1 is a symlink, joining the un-canonicalized prefix produces
     // strings that never match git's output, and every active worktree looks
     // orphaned. Resolve the prefix once so the Set lookup below works.
     const realWorktreesDir = yield* fs
@@ -596,7 +596,7 @@ export const pruneStale = (
         .map((line) => line.slice("worktree ".length).trim()),
     );
 
-    // Remove any directory under .shipyard/worktrees/ that is not an active worktree
+    // Remove any directory under .shipyard-v1/worktrees/ that is not an active worktree
     for (const entry of entries) {
       const entryPath = join(realWorktreesDir, entry);
       const entryIsSymlink = yield* fs.readLink(entryPath).pipe(

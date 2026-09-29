@@ -343,7 +343,7 @@ export class ReleaseIntegration {
       return blocked(`Invalid release candidate: ${invalid}`);
     const key = this.stateKey(candidate);
     const existing = this.store.get(key);
-    const idempotencyKey = `shipyard:${key}:staging`;
+    const idempotencyKey = `shipyard-v1:${key}:staging`;
     const intentId = `intent:${idempotencyKey}`;
     if (
       existing !== undefined &&
@@ -533,7 +533,7 @@ export class ReleaseIntegration {
     const key = this.stateKey(candidate);
     const state = this.store.get(key);
     if (state === undefined) return blocked("Candidate has no release state");
-    const idempotencyKey = `shipyard:${key}:production`;
+    const idempotencyKey = `shipyard-v1:${key}:production`;
     const intentId = `intent:${idempotencyKey}`;
     if (state.status === "production-verified") {
       return { outcome: "duplicate", state };

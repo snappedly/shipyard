@@ -11,7 +11,7 @@ This supersedes automatic Git bind mounts for the built-in Docker/Podman
 providers, including ADR 0006's Windows mount path. Custom bind-mount providers
 retain that contract. The alternative of disabling selected Git hooks was
 rejected because Git configuration supports additional execution paths.
-Shipyard still disables hooks and other configurable Git command callbacks for
+Shipyard V1 still disables hooks and other configurable Git command callbacks for
 its own host-side sync, checkout, worktree, and merge operations. This is a
 second boundary: isolated commits and attributes remain untrusted when Git
 applies them to a host worktree.

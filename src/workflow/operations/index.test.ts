@@ -11,7 +11,7 @@ import {
 } from "../coordinator/index.js";
 import { WorkflowOperator, redactOperatorText } from "./index.js";
 
-const repository = "snappedly/shipyard";
+const repository = "snappedly/shipyard-v1";
 const policy: RepositoryPolicy = createRepositoryPolicy({
   repository,
   revision: "policy-1",

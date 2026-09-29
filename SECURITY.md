@@ -5,7 +5,7 @@
 Do not report security vulnerabilities in public issues, discussions, or pull
 requests.
 
-Use [GitHub private vulnerability reporting](https://github.com/snappedly/shipyard/security/advisories/new).
+Use [GitHub private vulnerability reporting](https://github.com/snappedly/shipyard-v1/security/advisories/new).
 Include the affected version, impact, reproduction steps, and any suggested
 mitigation. If private vulnerability reporting is unavailable, contact a
 repository owner privately before sharing details.

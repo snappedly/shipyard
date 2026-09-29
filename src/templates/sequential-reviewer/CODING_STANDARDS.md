@@ -1,7 +1,7 @@
 # Coding Standards
 
 <!-- Customize this file with your project's coding standards.
-     The reviewer agent loads it during code review via @.shipyard/CODING_STANDARDS.md
+     The reviewer agent loads it during code review via @.shipyard-v1/CODING_STANDARDS.md
      so these standards are enforced during review without costing tokens during implementation. -->
 
 ## Style

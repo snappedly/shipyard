@@ -115,7 +115,7 @@ export const startSandbox = (
                 relativePath,
                 "copy path",
               );
-              // Sandbox paths are POSIX even when Shipyard is running on Windows.
+              // Sandbox paths are POSIX even when Shipyard V1 is running on Windows.
               sandboxPath = posix.join(handle.worktreePath, relativePath);
             } catch (error) {
               return yield* Effect.fail(

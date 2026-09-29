@@ -6,7 +6,7 @@ import {
   REPOSITORY_RUNNER_WORKFLOW_PATH,
 } from "./RepositoryRunnerWake.js";
 
-export const SHIPYARD_PACKAGE_NAME = "@snappedly-tools/shipyard";
+export const SHIPYARD_V1_PACKAGE_NAME = "@snappedly-tools/shipyard-v1";
 
 export interface ShipyardRepositoryUninstallResult {
   readonly workflowRemoved: boolean;
@@ -83,7 +83,7 @@ const removeWakeWorkflow = async (
 };
 
 /**
- * Remove the target repository's entire Shipyard config directory and generated
+ * Remove the target repository's entire Shipyard V1 config directory and generated
  * wake workflow. The repository runner must be unregistered before this runs.
  */
 export const removeShipyardRepositoryFiles = async (options: {
@@ -95,7 +95,7 @@ export const removeShipyardRepositoryFiles = async (options: {
     const runnerDir = join(configDir, RUNNER_DIR);
     if (await lstatIfPresent(runnerDir)) {
       throw new Error(
-        `Remove the repository runner at ${runnerDir} before removing Shipyard configuration.`,
+        `Remove the repository runner at ${runnerDir} before removing Shipyard V1 configuration.`,
       );
     }
   }

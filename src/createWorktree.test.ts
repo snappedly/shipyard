@@ -59,7 +59,7 @@ describe("createWorktree", () => {
     });
 
     try {
-      expect(ws.worktreePath).toContain(".shipyard/worktrees");
+      expect(ws.worktreePath).toContain(".shipyard-v1/worktrees");
       expect(ws.branch).toBe("test-branch");
       expect(existsSync(ws.worktreePath)).toBe(true);
     } finally {
@@ -79,8 +79,8 @@ describe("createWorktree", () => {
     });
 
     try {
-      expect(ws.worktreePath).toContain(".shipyard/worktrees");
-      expect(ws.branch).toMatch(/^shipyard\//);
+      expect(ws.worktreePath).toContain(".shipyard-v1/worktrees");
+      expect(ws.branch).toMatch(/^shipyard-v1\//);
       expect(existsSync(ws.worktreePath)).toBe(true);
     } finally {
       await ws.close();

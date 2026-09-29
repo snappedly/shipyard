@@ -24,6 +24,6 @@ export default defineConfig({
   dts: true,
   treeshake: true,
   define: {
-    __SHIPYARD_VERSION__: JSON.stringify(pkg.version),
+    __SHIPYARD_V1_VERSION__: JSON.stringify(pkg.version),
   },
 });

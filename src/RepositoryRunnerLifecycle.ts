@@ -12,12 +12,12 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-export const RUNNER_INSTALL_METADATA = ".shipyard-install.json";
-export const RUNNER_CONTROLLER_LOCK = ".shipyard-controller.lock";
+export const RUNNER_INSTALL_METADATA = ".shipyard-v1-install.json";
+export const RUNNER_CONTROLLER_LOCK = ".shipyard-v1-controller.lock";
 export const RUNNER_WORK_DIR = "_work";
 export const REPOSITORY_RUNNER_OWNER_LABEL =
-  "com.snappedly.shipyard.repository-runner-owner";
-export const REPOSITORY_RUNNER_OWNER_ENV = "SHIPYARD_RUNNER_OWNER";
+  "com.snappedly.shipyard-v1.repository-runner-owner";
+export const REPOSITORY_RUNNER_OWNER_ENV = "SHIPYARD_V1_RUNNER_OWNER";
 const REGISTRATION_FILES = [
   ".credentials",
   ".credentials_rsaparams",
@@ -204,7 +204,7 @@ const requireInstallMetadata = async (
     typeof metadata.version !== "string"
   ) {
     throw new RunnerLifecycleError(
-      `The existing directory at ${runnerDir} is not a valid Shipyard repository runner installation. Refusing to replace it.`,
+      `The existing directory at ${runnerDir} is not a valid Shipyard V1 repository runner installation. Refusing to replace it.`,
     );
   }
   return metadata;
@@ -302,7 +302,7 @@ export const validateExistingRepositoryRunner = async (
   const matching = remoteRunners.find(({ name }) => name === metadata.name);
   if (!matching) {
     throw new RunnerLifecycleError(
-      `Runner ${metadata.name} is installed locally but is no longer registered with GitHub. Run \`shipyard runner start\` to repair it, or remove it explicitly.`,
+      `Runner ${metadata.name} is installed locally but is no longer registered with GitHub. Run \`shipyard-v1 runner start\` to repair it, or remove it explicitly.`,
     );
   }
   if (!matching.labels.has(ACTIVATION_LABEL)) {
@@ -468,7 +468,7 @@ export const recoverRepositoryRunner = async (
   } catch {
     await removeRegistrationFiles(options.runnerDir, adapters);
     throw new RunnerLifecycleError(
-      `Re-registering ${options.metadata.name} failed. Partial local registration files were removed; check GitHub Settings > Actions > Runners for an orphan registration, then retry \`shipyard runner start\`. The one-time token was not stored.`,
+      `Re-registering ${options.metadata.name} failed. Partial local registration files were removed; check GitHub Settings > Actions > Runners for an orphan registration, then retry \`shipyard-v1 runner start\`. The one-time token was not stored.`,
     );
   }
   return { reRegistered: true };

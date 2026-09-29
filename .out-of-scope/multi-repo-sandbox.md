@@ -1,6 +1,6 @@
 # Multi-Repo Sandbox Support
 
-Shipyard does not support managing multiple independent git repos (worktrees, branches, commit extraction) within a single sandbox session.
+Shipyard V1 does not support managing multiple independent git repos (worktrees, branches, commit extraction) within a single sandbox session.
 
 ## Why this is out of scope
 

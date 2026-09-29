@@ -112,7 +112,7 @@ const branchPart = (value: string): string =>
     .slice(0, 80) || "work";
 
 const defaultBranch = (brief: WorkBrief): string =>
-  `shipyard/${branchPart(brief.identity.itemId)}-${branchPart(brief.identity.kind)}`;
+  `shipyard-v1/${branchPart(brief.identity.itemId)}-${branchPart(brief.identity.kind)}`;
 
 const phaseResultFor = (
   job: WorkflowJob,
@@ -192,7 +192,7 @@ const publicPrBody = (
   policy: RepositoryPolicy,
 ): string =>
   [
-    "## Shipyard implementation",
+    "## Shipyard V1 implementation",
     "",
     `Source issue: #${brief.identity.itemId}`,
     `Brief revision: ${brief.revision}`,
@@ -216,7 +216,7 @@ const publicPrBody = (
   ].join("\n");
 
 const implementationTitle = (brief: WorkBrief): string =>
-  `[Shipyard] ${brief.problem.split("\n")[0] ?? brief.identity.itemId}`;
+  `[Shipyard V1] ${brief.problem.split("\n")[0] ?? brief.identity.itemId}`;
 
 const blocked = (
   reason: string,

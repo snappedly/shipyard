@@ -40,7 +40,7 @@ export class PostgresWorkflowPhaseRecordStore implements WorkflowPhaseRecordStor
       schema_version: unknown;
     }>(
       `SELECT record, schema_version
-       FROM shipyard_workflow_phase_records
+       FROM shipyard_v1_workflow_phase_records
        WHERE namespace = $1 AND record_key = $2`,
       [kind, encodeURIComponent(key)],
     );
@@ -63,7 +63,7 @@ export class PostgresWorkflowPhaseRecordStore implements WorkflowPhaseRecordStor
     updatedAt: string,
   ): Promise<void> {
     await this.client.query(
-      `INSERT INTO shipyard_workflow_phase_records
+      `INSERT INTO shipyard_v1_workflow_phase_records
          (namespace, record_key, schema_version, record, updated_at)
        VALUES ($1, $2, 1, $3::jsonb, $4::timestamptz)
        ON CONFLICT (namespace, record_key) DO UPDATE SET
@@ -84,7 +84,7 @@ export class PostgresWorkflowPhaseRecordStore implements WorkflowPhaseRecordStor
     const result =
       expectedRevision === undefined
         ? await this.client.query<{ record_key: string }>(
-            `INSERT INTO shipyard_workflow_phase_records
+            `INSERT INTO shipyard_v1_workflow_phase_records
                (namespace, record_key, schema_version, record, updated_at)
              VALUES ('triage', $1, 1, $2::jsonb, $3::timestamptz)
              ON CONFLICT (namespace, record_key) DO NOTHING
@@ -92,7 +92,7 @@ export class PostgresWorkflowPhaseRecordStore implements WorkflowPhaseRecordStor
             [encodedKey, JSON.stringify(record), updatedAt],
           )
         : await this.client.query<{ record_key: string }>(
-            `UPDATE shipyard_workflow_phase_records
+            `UPDATE shipyard_v1_workflow_phase_records
              SET schema_version = 1, record = $3::jsonb, updated_at = $4::timestamptz
              WHERE namespace = 'triage'
                AND record_key = $1

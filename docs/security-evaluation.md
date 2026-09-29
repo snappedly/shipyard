@@ -1,7 +1,7 @@
 # Security evaluation — 2026-09-19
 
-Scope: Shipyard CLI/library and documentation package at `aa7fa54`, plus the
-patches tracked in [issue #32](https://github.com/snappedly/shipyard/issues/32).
+Scope: Shipyard V1 CLI/library and documentation package at `aa7fa54`, plus the
+patches tracked in [issue #32](https://github.com/snappedly/shipyard-v1/issues/32).
 Assessment combines source review, independent security reviews, dependency
 advisories, and regression tests at existing public boundaries. It is not a
 production penetration test or a guarantee that no vulnerabilities remain.
@@ -75,8 +75,8 @@ Standards/Spec review. The user then approved isolated Docker/Podman Git storage
 Final validation covers that additional implementation, including opt-in live
 Docker tests in `src/sandboxes/container-isolation.test.ts`.
 
-To run the real engine checks, supply `SHIPYARD_TEST_DOCKER_IMAGE` or
-`SHIPYARD_TEST_PODMAN_IMAGE` naming a local image with Git, an agent home at
+To run the real engine checks, supply `SHIPYARD_V1_TEST_DOCKER_IMAGE` or
+`SHIPYARD_V1_TEST_PODMAN_IMAGE` naming a local image with Git, an agent home at
 `/home/agent` owned by UID/GID 1000, and a long-running default command (for Docker).
 Then run `npm test -- src/sandboxes/container-isolation.test.ts`.
 

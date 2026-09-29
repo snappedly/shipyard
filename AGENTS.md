@@ -1,4 +1,4 @@
-Shipyard is an independent Snappedly project. See `docs/plans/shipyard-automation.md` for the planned workflow.
+Shipyard V1 is an independent Snappedly project. See `docs/plans/shipyard-v1-automation.md` for the planned workflow.
 
 Use `npm run check` for the repository feedback loop. It runs formatting, typechecking, and tests. Use `npm run build` when package output changes.
 
@@ -29,11 +29,11 @@ Before executing any development tasks, internalize the constraints inside `./AG
 
 ### Code host
 
-GitHub hosts branches and PRs for `snappedly/shipyard`; humans merge task and promotion PRs. See `docs/agents/code-host.md`.
+GitHub hosts branches and PRs for `snappedly/shipyard-v1`; humans merge task and promotion PRs. See `docs/agents/code-host.md`.
 
 ### Work tracker
 
-GitHub Issues in `snappedly/shipyard`, operated with `gh`; PRs are not a triage request surface. See `docs/agents/issue-tracker.md`.
+GitHub Issues in `snappedly/shipyard-v1`, operated with `gh`; PRs are not a triage request surface. See `docs/agents/issue-tracker.md`.
 
 ### Team workflow
 

@@ -28,7 +28,7 @@ export const commitAndPushInitSetup = (repoDir: string): InitGitSetupResult => {
     encoding: "utf8",
   }).trim();
   if (!branch) {
-    throw new Error("Cannot push the Shipyard setup from a detached HEAD.");
+    throw new Error("Cannot push the Shipyard V1 setup from a detached HEAD.");
   }
 
   const paths = [CONFIG_DIR];
@@ -46,7 +46,7 @@ export const commitAndPushInitSetup = (repoDir: string): InitGitSetupResult => {
   // Keep unrelated staged changes out of the generated setup commit.
   execFileSync(
     "git",
-    ["commit", "--only", "-m", "Add Shipyard setup", "--", ...paths],
+    ["commit", "--only", "-m", "Add Shipyard V1 setup", "--", ...paths],
     { cwd: repoDir, stdio: "pipe" },
   );
   const commit = execFileSync("git", ["rev-parse", "--short", "HEAD"], {

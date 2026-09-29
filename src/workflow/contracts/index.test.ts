@@ -17,7 +17,7 @@ import {
 } from "./index.js";
 
 const identity: WorkIdentity = {
-  repository: "snappedly/shipyard",
+  repository: "snappedly/shipyard-v1",
   itemId: "42",
   kind: "executable-issue",
 };
@@ -253,7 +253,7 @@ describe("workflow contracts", () => {
       brief,
       policy,
       attempt: 1,
-      head: { branch: "shipyard/issue-42", sha: "c".repeat(40) },
+      head: { branch: "shipyard-v1/issue-42", sha: "c".repeat(40) },
       createdAt: "2026-09-17T12:00:00.000Z",
     });
 
@@ -285,7 +285,7 @@ describe("workflow contracts", () => {
         },
       }),
       attempt: 1,
-      head: { branch: "shipyard/issue-42", sha: "c".repeat(40) },
+      head: { branch: "shipyard-v1/issue-42", sha: "c".repeat(40) },
       createdAt: "2026-09-17T12:00:00.000Z",
     });
 

@@ -77,8 +77,8 @@ describe("startContainer", () => {
         {},
         {
           labels: {
-            "com.snappedly.shipyard.repository-runner-owner":
-              "snappedly/shipyard",
+            "com.snappedly.shipyard-v1.repository-runner-owner":
+              "snappedly/shipyard-v1",
           },
         },
       ),
@@ -90,7 +90,7 @@ describe("startContainer", () => {
     expect(runCall?.[1]).toEqual(
       expect.arrayContaining([
         "--label",
-        "com.snappedly.shipyard.repository-runner-owner=snappedly/shipyard",
+        "com.snappedly.shipyard-v1.repository-runner-owner=snappedly/shipyard-v1",
       ]),
     );
   });

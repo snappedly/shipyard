@@ -382,7 +382,7 @@ export const orchestrate = (
     let iterationPreservedPath: string | undefined;
 
     // Helper: check abort signal and bail via defect so run() can
-    // re-throw the signal's reason verbatim (no Shipyard wrapping).
+    // re-throw the signal's reason verbatim (no Shipyard V1 wrapping).
     const checkAbort = (): Effect.Effect<void> =>
       options.signal?.aborted ? Effect.die(options.signal.reason) : Effect.void;
 

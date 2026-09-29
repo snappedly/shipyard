@@ -321,7 +321,7 @@ describe("syncOut", () => {
     }
   });
 
-  it("successful sync-out leaves no patch artifacts in .shipyard/patches", async () => {
+  it("successful sync-out leaves no patch artifacts in .shipyard-v1/patches", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "host-"));
     await initRepo(hostDir);
     await commitFile(hostDir, "initial.txt", "initial", "initial commit");
@@ -348,29 +348,29 @@ describe("syncOut", () => {
       expect(log[0]).toContain("add new file");
 
       // Verify no patch artifacts remain
-      const patchesDir = join(hostDir, ".shipyard", "patches");
+      const patchesDir = join(hostDir, ".shipyard-v1", "patches");
       expect(existsSync(patchesDir)).toBe(false);
     } finally {
       await handle.close();
     }
   });
 
-  it("successful sync-out preserves tracked .shipyard files", async () => {
+  it("successful sync-out preserves tracked .shipyard-v1 files", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "host-"));
     await initRepo(hostDir);
     await commitFile(hostDir, "initial.txt", "initial", "initial commit");
 
-    // Commit tracked files inside .shipyard, as a real repo would have
-    await mkdir(join(hostDir, ".shipyard"), { recursive: true });
+    // Commit tracked files inside .shipyard-v1, as a real repo would have
+    await mkdir(join(hostDir, ".shipyard-v1"), { recursive: true });
     await commitFile(
       hostDir,
-      join(".shipyard", "prompt.md"),
+      join(".shipyard-v1", "prompt.md"),
       "prompt",
-      "add .shipyard config",
+      "add .shipyard-v1 config",
     );
     await commitFile(
       hostDir,
-      join(".shipyard", "Dockerfile"),
+      join(".shipyard-v1", "Dockerfile"),
       "FROM node",
       "add Dockerfile",
     );
@@ -387,11 +387,13 @@ describe("syncOut", () => {
 
       await Effect.runPromise(syncOut(hostDir, handle));
 
-      // The whole .shipyard dir must not be deleted by cleanup
-      expect(existsSync(join(hostDir, ".shipyard", "prompt.md"))).toBe(true);
-      expect(existsSync(join(hostDir, ".shipyard", "Dockerfile"))).toBe(true);
+      // The whole .shipyard-v1 dir must not be deleted by cleanup
+      expect(existsSync(join(hostDir, ".shipyard-v1", "prompt.md"))).toBe(true);
+      expect(existsSync(join(hostDir, ".shipyard-v1", "Dockerfile"))).toBe(
+        true,
+      );
       // But the temporary patches dir should still be cleaned up
-      expect(existsSync(join(hostDir, ".shipyard", "patches"))).toBe(false);
+      expect(existsSync(join(hostDir, ".shipyard-v1", "patches"))).toBe(false);
     } finally {
       await handle.close();
     }
@@ -433,7 +435,7 @@ describe("syncOut", () => {
       }
 
       // Verify patch artifacts are preserved
-      const patchesDir = join(hostDir, ".shipyard", "patches");
+      const patchesDir = join(hostDir, ".shipyard-v1", "patches");
       expect(existsSync(patchesDir)).toBe(true);
 
       const timestampDirs = await readdir(patchesDir);
@@ -488,7 +490,7 @@ describe("syncOut", () => {
       }
 
       // Verify patch artifacts are preserved
-      const patchesDir = join(hostDir, ".shipyard", "patches");
+      const patchesDir = join(hostDir, ".shipyard-v1", "patches");
       expect(existsSync(patchesDir)).toBe(true);
 
       const timestampDirs = await readdir(patchesDir);
@@ -621,15 +623,15 @@ describe("syncOut", () => {
       const handle = await testIsolated().create({ env: {} });
       try {
         await Effect.runPromise(syncIn(hostDir, handle));
-        await mkdir(join(handle.worktreePath, ".shipyard", "runner"), {
+        await mkdir(join(handle.worktreePath, ".shipyard-v1", "runner"), {
           recursive: true,
         });
         await writeFile(
-          join(handle.worktreePath, ".shipyard", "runner", ".credentials"),
+          join(handle.worktreePath, ".shipyard-v1", "runner", ".credentials"),
           "sandbox data",
         );
         if (mode === "committed") {
-          await handle.exec("git add -f .shipyard/runner/.credentials", {
+          await handle.exec("git add -f .shipyard-v1/runner/.credentials", {
             cwd: handle.worktreePath,
           });
           await handle.exec('git commit -m "try runner file"', {
@@ -641,7 +643,7 @@ describe("syncOut", () => {
           Effect.runPromise(syncOut(hostDir, handle)),
         ).rejects.toThrow("repository runner");
         expect(
-          existsSync(join(hostDir, ".shipyard", "runner", ".credentials")),
+          existsSync(join(hostDir, ".shipyard-v1", "runner", ".credentials")),
         ).toBe(false);
       } finally {
         await handle.close();
@@ -766,7 +768,7 @@ describe("syncOut", () => {
       );
       expect(hostHeadAfterRun2.trim()).toBe(hostHeadAfterRun1.trim());
 
-      const patchesDir = join(hostDir, ".shipyard", "patches");
+      const patchesDir = join(hostDir, ".shipyard-v1", "patches");
       expect(existsSync(patchesDir)).toBe(false);
     } finally {
       await handle.close();

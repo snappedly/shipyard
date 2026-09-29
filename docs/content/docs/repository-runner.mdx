@@ -1,48 +1,48 @@
 ---
 title: Repository runner
-description: Wake a foreground Shipyard controller from labelled GitHub Issues.
+description: Wake a foreground Shipyard V1 controller from labelled GitHub Issues.
 ---
 
 The repository runner keeps one initialized GitHub.com repository ready for
 work on an Apple Silicon Mac. It uses GitHub's official self-hosted Actions
 runner only to deliver wake-up triggers. The foreground controller invokes the
-repository's existing `npx shipyard run`; the Actions job does not own or report
+repository's existing `npx shipyard-v1 run`; the Actions job does not own or report
 the agent outcome.
 
 ## Install
 
-You need Apple Silicon macOS, Docker Desktop, an initialized Shipyard
+You need Apple Silicon macOS, Docker Desktop, an initialized Shipyard V1
 repository, `gh` authenticated with repository-administration access, and agent
-credentials in `.shipyard/.env`.
+credentials in `.shipyard-v1/.env`.
 
-The `GH_TOKEN` in `.shipyard/.env` is the issue-agent credential. Bundled issue
+The `GH_TOKEN` in `.shipyard-v1/.env` is the issue-agent credential. Bundled issue
 workflows need Contents, Issues, and Pull requests read/write permission plus
 Metadata read permission to push a branch and publish a PR. Runner startup uses the host `gh` login for
 administrative checks, including reading the published wake workflow. When
-Shipyard runs in Docker, the runtime token is passed into that sandbox for
+Shipyard V1 runs in Docker, the runtime token is passed into that sandbox for
 its GitHub issue operations; it is not the runner's administrative login.
-Set `GH_TOKEN` to a nonempty value in `.shipyard/.env` before `runner start`;
+Set `GH_TOKEN` to a nonempty value in `.shipyard-v1/.env` before `runner start`;
 startup stops immediately if the entry is missing or blank.
 
-`npx shipyard init` automatically installs the repository runner after
+`npx shipyard-v1 init` automatically installs the repository runner after
 scaffolding on supported Apple Silicon macOS hosts. Runner installation is
 required for init to complete. Init stops with an error if the host is
 unsupported or installation fails, and does not report completion. It keeps the
 generated configuration and image; fix the reported issue, then run
-`npx shipyard runner install` to retry against that setup.
+`npx shipyard-v1 runner install` to retry against that setup.
 
 After the runner installs, interactive init offers to commit and push
-`.shipyard/` and the wake workflow to the current branch. It defaults to Yes
-and leaves `.shipyard/.env` untracked. Non-interactive init skips this unless
+`.shipyard-v1/` and the wake workflow to the current branch. It defaults to Yes
+and leaves `.shipyard-v1/.env` untracked. Non-interactive init skips this unless
 you pass `--commit-setup true`. Runner start requires the wake workflow on the
 default branch, so merge it there if init pushed another branch.
 
 ```sh
-npx shipyard runner install
-git add .shipyard .github/workflows/shipyard-wake.yml
-git commit -m "Add Shipyard wake workflow"
+npx shipyard-v1 runner install
+git add .shipyard-v1 .github/workflows/shipyard-v1-wake.yml
+git commit -m "Add Shipyard V1 wake workflow"
 git push
-npx shipyard runner start
+npx shipyard-v1 runner start
 ```
 
 Terminal installs show a progress bar for validation, download, registration,
@@ -51,16 +51,16 @@ entries.
 
 `--registration-token` can supply the one-time registration credential. It
 does not replace administrative `gh` access, which is required to verify that
-the repository has no conflicting `shipyard` runner.
+the repository has no conflicting `shipyard-v1` runner.
 
-The standalone `shipyard runner install` command never commits or pushes.
-`shipyard runner start` requires the exact generated workflow on the default
+The standalone `shipyard-v1 runner install` command never commits or pushes.
+`shipyard-v1 runner start` requires the exact generated workflow on the default
 branch. It validates the platform, repository,
-installation, local Shipyard package, Docker, GitHub access, activation label,
+installation, local Shipyard V1 package, Docker, GitHub access, activation label,
 credentials, and published workflow.
 
 If an interactive install finds one or more existing repository runners with
-the `shipyard` label, Shipyard shows their names and status and asks whether to
+the `shipyard-v1` label, Shipyard V1 shows their names and status and asks whether to
 remove those GitHub registrations. Confirming removes the listed registrations
 and retries installation; declining leaves them in place. Removal unregisters
 the runners from GitHub but does not delete files on another machine. A
@@ -69,19 +69,19 @@ registration automatically.
 
 ## Wake and drain behavior
 
-Only the exact lowercase GitHub issue label `shipyard` is eligible. Adding it
-or manually dispatching **Shipyard wake-up** signals the controller. A
+Only the exact lowercase GitHub issue label `shipyard-v1` is eligible. Adding it
+or manually dispatching **Shipyard V1 wake-up** signals the controller. A
 differently cased label, issue edit, or comment does not wake it.
 
 The bundled issue templates install Snappedly skills and repository
-dependencies inside their Docker sandbox. Shipyard runs `/triage` when an
+dependencies inside their Docker sandbox. Shipyard V1 runs `/triage` when an
 activated ticket lacks the sole `ready-for-agent` state, then rereads the issue.
-Before triage, Shipyard checks that the sandbox can read the issue through `gh`.
+Before triage, Shipyard V1 checks that the sandbox can read the issue through `gh`.
 If that check fails, the blocked issue reports the GitHub error.
 If triage runs but leaves the issue unready, the blocked reason includes the
 agent's output to help identify a failed label edit.
-For an already triaged ticket, add `ready-for-agent` before `shipyard` to skip
-agent triage. Shipyard still verifies the live issue state before implementation.
+For an already triaged ticket, add `ready-for-agent` before `shipyard-v1` to skip
+agent triage. Shipyard V1 still verifies the live issue state before implementation.
 Triage checks the integration branch, so a retry does not mistake work on its
 task branch for a completed request. Triage uses a stated visual relationship,
 such as equal spacing, as an acceptance criterion without requiring a pixel
@@ -89,13 +89,13 @@ target. An inaccessible attachment
 requires `needs-info` only when the text and code cannot establish a verifiable
 result. Decisions that require maintainer judgment receive `needs-triage`.
 Only an open ticket carrying
-`shipyard` or `shipyard:pending` and `ready-for-agent` as its sole triage state
+`shipyard-v1` or `shipyard-v1:pending` and `ready-for-agent` as its sole triage state
 can reach implementation. Any other triage outcome follows the normal blocked
-flow: `shipyard:blocked` is added, activation is removed, and the reason is
+flow: `shipyard-v1:blocked` is added, activation is removed, and the reason is
 commented on the ticket. Standalone ready issues use `/implement`.
 An activated planning spec or linked executable child becomes one
 `/implement-spec` scope containing the parent, linked children labelled
-`shipyard`, and their dependencies. Unlabelled children remain outside the work
+`shipyard-v1`, and their dependencies. Unlabelled children remain outside the work
 scope. The selected template keeps its sequential or parallel planning,
 implementation, and review stages. Parallel templates run ready child tickets
 through scoped `/implement` workers, resolve cherry-pick conflicts during
@@ -105,75 +105,75 @@ same PR. The workflow never merges into the target branch or closes issues.
 An open verified spec PR's `Source issues:` line can also link a newly labelled
 ticket to that spec when no other parent link exists. Conflicting links block
 the selected ticket for correction.
-Selected tickets get `shipyard:pending` and lose `shipyard` when work starts.
-Successful handoff replaces `shipyard:pending` with `shipyard:complete`.
+Selected tickets get `shipyard-v1:pending` and lose `shipyard-v1` when work starts.
+Successful handoff replaces `shipyard-v1:pending` with `shipyard-v1:complete`.
 It also removes `ready-for-human` from each completed issue.
 The parent spec and existing PR show
-`shipyard:blocked` if an unfinished child is blocked, `shipyard:outstanding-tasks`
-if other children remain, or `shipyard:complete` when all linked tickets are
+`shipyard-v1:blocked` if an unfinished child is blocked, `shipyard-v1:outstanding-tasks`
+if other children remain, or `shipyard-v1:complete` when all linked tickets are
 complete. Spec labels only report child state; they do not gate ticket selection.
 The non-draft PR is ready for human review;
 the issues remain open until the target repository's closure policy closes them. A
-failed attempted scope gets an issue comment describing the failure. Shipyard
-marks its selected issues `shipyard:blocked` and removes `ready-for-human`,
-`shipyard:pending`, and `shipyard`, so they do not retry automatically. The
+failed attempted scope gets an issue comment describing the failure. Shipyard V1
+marks its selected issues `shipyard-v1:blocked` and removes `ready-for-human`,
+`shipyard-v1:pending`, and `shipyard-v1`, so they do not retry automatically. The
 parent spec and existing PR reflect the block; failed work does not create a new
-PR. Resolve the problem, remove `shipyard:blocked` from the ticket, and add
-`shipyard` to retry; the spec label is recalculated.
+PR. Resolve the problem, remove `shipyard-v1:blocked` from the ticket, and add
+`shipyard-v1` to retry; the spec label is recalculated.
 Missing or conflicting relationships and invalid selected children receive
-`shipyard:blocked` with an issue comment explaining the failure. If GitHub cannot confirm PR
-readiness, Shipyard leaves activation in place so the next invocation can
+`shipyard-v1:blocked` with an issue comment explaining the failure. If GitHub cannot confirm PR
+readiness, Shipyard V1 leaves activation in place so the next invocation can
 reconcile the PR.
-If a failure comment cannot be written, Shipyard retains a local pending report
-under Git metadata. A fresh `shipyard` activation on an unblocked ticket
+If a failure comment cannot be written, Shipyard V1 retains a local pending report
+under Git metadata. A fresh `shipyard-v1` activation on an unblocked ticket
 supersedes that report. Spec and PR status label errors are logged without
 stopping ticket work; a later activation recalculates their labels.
 
 Start always preflights the current backlog, recovering labels added while the
-Mac was off. If work exists, it invokes exactly `npx shipyard run`. After a
+Mac was off. If work exists, it invokes exactly `npx shipyard-v1 run`. After a
 successful invocation, an empty eligible issue set returns to idle, a changed
 nonempty set starts another finite invocation, and an unchanged set records no
 progress and returns to idle. A new label event, manual dispatch, or restart
 retries no-progress work. Concurrent wake-ups are coalesced.
 
 The workflow's result reports wake delivery only. Inspect the foreground
-terminal, `npx shipyard runner status`, repository state, and
-`.shipyard/runner/.shipyard-last-failure.json` for the Shipyard outcome. A
-nonzero Shipyard exit or failed prerequisite records an actionable error and
+terminal, `npx shipyard-v1 runner status`, repository state, and
+`.shipyard-v1/runner/.shipyard-v1-last-failure.json` for the Shipyard V1 outcome. A
+nonzero Shipyard V1 exit or failed prerequisite records an actionable error and
 takes the controller offline.
 
 ## Lifecycle
 
 The controller runs only while its `runner start` terminal remains open. It
 does not start at login. Ctrl-C, closing the terminal, and `runner stop` use the
-bounded shutdown path and cancel active work while preserving Shipyard logs and
+bounded shutdown path and cancel active work while preserving Shipyard V1 logs and
 worktrees. `runner stop` can be run from another terminal: it signals the live
 PID recorded by the repository even when the stored process identity is stale.
 
 ```sh
-npx shipyard runner status
-npx shipyard runner stop
-npx shipyard runner remove
-npx shipyard runner purge
+npx shipyard-v1 runner status
+npx shipyard-v1 runner stop
+npx shipyard-v1 runner remove
+npx shipyard-v1 runner purge
 ```
 
 Normal removal unregisters GitHub and deletes protected runner files, while
-preserving Shipyard configuration, workflow, activation label, issues, logs,
+preserving Shipyard V1 configuration, workflow, activation label, issues, logs,
 and worktrees. If unregistration fails, local state is preserved. Use
 `runner remove --force` only when necessary, then remove the named orphaned
 registration in GitHub.
 
-To remove the full Shipyard setup, including the package dependency and
+To remove the full Shipyard V1 setup, including the package dependency and
 repository configuration, run:
 
 ```sh
-npx shipyard uninstall
+npx shipyard-v1 uninstall
 ```
 
-Uninstall unregisters the repository runner, removes the entire `.shipyard/`
+Uninstall unregisters the repository runner, removes the entire `.shipyard-v1/`
 directory (including `.env` and runtime data), removes the generated wake
-workflow when it still matches Shipyard's version, and removes
-`@snappedly-tools/shipyard` with the repository's detected package manager. It
+workflow when it still matches Shipyard V1's version, and removes
+`@snappedly-tools/shipyard-v1` with the repository's detected package manager. It
 leaves GitHub issues and labels unchanged. Commit and push the workflow deletion
 to disable it on GitHub. If the workflow was customized, uninstall preserves it
 for manual review. In a non-interactive shell, pass `--yes`; if GitHub
@@ -181,7 +181,7 @@ unregistration fails, local runner files stay in place unless `--force` is
 passed.
 
 `runner purge` removes all dated default run-log folders and regular root-level
-`.log` files regardless of age. Root-level `.log` files in `.shipyard/logs/`
+`.log` files regardless of age. Root-level `.log` files in `.shipyard-v1/logs/`
 are managed by this retention policy, including explicit logging paths. The
 foreground controller separately removes dated folders older than eight
 calendar days and root-level `.log` files last modified before the same cutoff.
@@ -199,15 +199,15 @@ remove and reinstall.
 GitHub does not charge Actions minutes for the self-hosted wake job. The brief
 exact-case gate runs on `ubuntu-latest` and may consume hosted Actions minutes
 for private repositories. Model cost is incurred only when eligible work starts
-Shipyard; the host owner still supplies the Mac, Docker, network, storage,
+Shipyard V1; the host owner still supplies the Mac, Docker, network, storage,
 electricity, and model access.
 
 Self-hosted runners on public repositories can expose the host to untrusted
 repository activity. Use least-privilege credentials and tightly control label,
 workflow, and collaborator authority. Runner binaries and credentials are
-gitignored and protected under `.shipyard/runner/`, and isolated sandboxes
+gitignored and protected under `.shipyard-v1/runner/`, and isolated sandboxes
 cannot mount or copy them. No-sandbox mode remains host-trusted by definition.
 
 Use the
-[Apple Silicon validation runbook](https://github.com/snappedly/shipyard/blob/main/docs/runbooks/repository-runner-macos-validation.md)
+[Apple Silicon validation runbook](https://github.com/snappedly/shipyard-v1/blob/main/docs/runbooks/repository-runner-macos-validation.md)
 for the full operator trial.

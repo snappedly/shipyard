@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 
-declare const __SHIPYARD_VERSION__: string | undefined;
+declare const __SHIPYARD_V1_VERSION__: string | undefined;
 
 const fallbackVersion = (): string => {
   const require = createRequire(import.meta.url);
@@ -14,6 +14,6 @@ const fallbackVersion = (): string => {
  * is undefined, so we fall back to reading `package.json` at runtime.
  */
 export const VERSION: string =
-  typeof __SHIPYARD_VERSION__ !== "undefined"
-    ? __SHIPYARD_VERSION__
+  typeof __SHIPYARD_V1_VERSION__ !== "undefined"
+    ? __SHIPYARD_V1_VERSION__
     : fallbackVersion();

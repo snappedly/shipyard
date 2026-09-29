@@ -45,8 +45,8 @@ import {
 } from "./LogRetention.js";
 
 const execFileAsync = promisify(execFile);
-const CONTROLLER_STATE = ".shipyard-state.json";
-const LAST_FAILURE = ".shipyard-last-failure.json";
+const CONTROLLER_STATE = ".shipyard-v1-state.json";
+const LAST_FAILURE = ".shipyard-v1-last-failure.json";
 const LOG_PURGE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 interface CommandResult {
@@ -391,12 +391,12 @@ const requireRunnerContext = async (
   const runnerDir = join(configDir, RUNNER_DIR);
   if (!(await adapters.exists(configDir))) {
     throw new RunnerControlError(
-      `No ${CONFIG_DIR}/ found. Run \`shipyard init\` in this repository first.`,
+      `No ${CONFIG_DIR}/ found. Run \`shipyard-v1 init\` in this repository first.`,
     );
   }
   if (!(await adapters.exists(runnerDir))) {
     throw new RunnerControlError(
-      `No repository runner is installed at ${runnerDir}. Run \`shipyard runner install\` first.`,
+      `No repository runner is installed at ${runnerDir}. Run \`shipyard-v1 runner install\` first.`,
     );
   }
   if (adapters.inspectDirectory) {
@@ -442,13 +442,13 @@ const requireRunnerContext = async (
     });
   if (!configuredEnvironment.GH_TOKEN?.trim()) {
     throw new RunnerControlError(
-      "Set GH_TOKEN in .shipyard/.env before starting the repository runner.",
+      "Set GH_TOKEN in .shipyard-v1/.env before starting the repository runner.",
     );
   }
 
   for (const [command, purpose] of [
     ["git", "reading the repository remote"],
-    ["npx", "running the local Shipyard package"],
+    ["npx", "running the local Shipyard V1 package"],
     ["docker", "checking the Docker runtime"],
     ["gh", "checking GitHub access"],
   ] as const) {
@@ -490,9 +490,9 @@ const requireRunnerContext = async (
 
   await runCommand(
     adapters,
-    "Checking the local Shipyard package",
+    "Checking the local Shipyard V1 package",
     "npx",
-    ["--no-install", "shipyard", "--version"],
+    ["--no-install", "shipyard-v1", "--version"],
     { cwd: repoDir, env: runtimeEnvironment },
   );
   await runCommand(
@@ -540,7 +540,7 @@ const requireRunnerContext = async (
         "--color",
         "1D76DB",
         "--description",
-        "Tasks available to the Shipyard repository runner",
+        "Tasks available to the Shipyard V1 repository runner",
         "--force",
       ],
       { cwd: repoDir, env: hostEnvironment },
@@ -553,7 +553,7 @@ const requireRunnerContext = async (
       repository,
       // The published workflow is an administrative runner preflight. Keep
       // it on the host's gh login instead of the runtime token from
-      // .shipyard/.env, which has no runner administration permission.
+      // .shipyard-v1/.env, which has no runner administration permission.
       environment: hostEnvironment,
     },
     adapters,
@@ -865,8 +865,11 @@ const startRepositoryRunnerManaged = async (
       const workFound = issueNumbers.length > 0;
 
       while (!stopping && issueNumbers.length > 0) {
-        await saveState("processing", "Shipyard is processing eligible issues");
-        shipyardChild = adapters.spawn("npx", ["shipyard", "run"], {
+        await saveState(
+          "processing",
+          "Shipyard V1 is processing eligible issues",
+        );
+        shipyardChild = adapters.spawn("npx", ["shipyard-v1", "run"], {
           cwd: options.repoDir,
           env: context.runtimeEnvironment,
         });
@@ -877,7 +880,7 @@ const startRepositoryRunnerManaged = async (
           return workFound;
         }
         if (runResult.code !== 0) {
-          const failure = childFailure("npx shipyard run", runResult);
+          const failure = childFailure("npx shipyard-v1 run", runResult);
           await writeJson(
             failurePath,
             {
@@ -894,13 +897,13 @@ const startRepositoryRunnerManaged = async (
 
         const nextIssueNumbers = await listEligibleIssueNumbers();
         if (nextIssueNumbers.length === 0) {
-          await saveState("idle", "Shipyard completed; no eligible issues");
+          await saveState("idle", "Shipyard V1 completed; no eligible issues");
           break;
         }
         if (sameIssueNumbers(issueNumbers, nextIssueNumbers)) {
           await saveState(
             "stalled",
-            "Shipyard made no progress; eligible issues are unchanged",
+            "Shipyard V1 made no progress; eligible issues are unchanged",
           );
           break;
         }
@@ -1146,7 +1149,7 @@ export const getRepositoryRunnerStatus = async (
       {
         cwd: options.repoDir,
         // Runner connectivity is an administrative check. Do not let the
-        // issue-agent token from .shipyard/.env shadow the host gh login.
+        // issue-agent token from .shipyard-v1/.env shadow the host gh login.
         env: adapters.environment(),
       },
     );

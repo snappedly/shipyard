@@ -467,7 +467,7 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
 
   async insertEventIfAbsent(event: StoredEvent) {
     const inserted = await this.client.query<Record<string, unknown>>(
-      `INSERT INTO shipyard_events (
+      `INSERT INTO shipyard_v1_events (
          id, delivery_id, repository, item_id, brief_revision, phase,
          relevant_revision, observed_at, source_state, brief, policy, status,
          ignore_reason, job_id, received_at, payload
@@ -498,7 +498,7 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
       return { event: eventFromRow(inserted.rows[0]!), inserted: true };
     }
     const existing = await this.one<Record<string, unknown>>(
-      "SELECT * FROM shipyard_events WHERE delivery_id = $1",
+      "SELECT * FROM shipyard_v1_events WHERE delivery_id = $1",
       [event.deliveryId],
       "event",
     );
@@ -507,7 +507,7 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
 
   async saveEvent(event: StoredEvent): Promise<void> {
     await this.client.query(
-      `INSERT INTO shipyard_events (
+      `INSERT INTO shipyard_v1_events (
          id, delivery_id, repository, item_id, brief_revision, phase,
          relevant_revision, observed_at, source_state, brief, policy, status,
          ignore_reason, job_id, received_at, payload
@@ -547,7 +547,7 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
 
   async getJob(jobId: string): Promise<WorkflowJob | undefined> {
     const result = await this.client.query<Record<string, unknown>>(
-      "SELECT * FROM shipyard_jobs WHERE id = $1 FOR UPDATE",
+      "SELECT * FROM shipyard_v1_jobs WHERE id = $1 FOR UPDATE",
       [jobId],
     );
     const value = optionalRow(result);
@@ -556,7 +556,7 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
 
   async findJobByKey(key: WorkKey, briefHash: string) {
     const result = await this.client.query<Record<string, unknown>>(
-      `SELECT * FROM shipyard_jobs
+      `SELECT * FROM shipyard_v1_jobs
        WHERE repository = $1 AND item_id = $2 AND brief_revision = $3
          AND phase = $4 AND relevant_revision = $5
          AND brief->>'hash' = $6
@@ -576,7 +576,7 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
 
   async findCurrentJob(identity: WorkIdentity) {
     const result = await this.client.query<Record<string, unknown>>(
-      `SELECT * FROM shipyard_jobs
+      `SELECT * FROM shipyard_v1_jobs
        WHERE repository = $1 AND item_id = $2 AND item_kind = $3
          AND control <> 'superseded'
        ORDER BY latest_observed_at DESC, updated_at DESC LIMIT 1 FOR UPDATE`,
@@ -588,7 +588,7 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
 
   async insertJob(job: WorkflowJob): Promise<void> {
     await this.client.query(
-      `INSERT INTO shipyard_jobs (
+      `INSERT INTO shipyard_v1_jobs (
          id, repository, item_id, item_kind, brief_revision, phase,
          relevant_revision, brief, policy, state, control, phase_attempts,
          repair_batches, follow_ups, infrastructure_retries,
@@ -603,7 +603,7 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
 
   async saveJob(job: WorkflowJob): Promise<void> {
     const result = await this.client.query(
-      `UPDATE shipyard_jobs SET
+      `UPDATE shipyard_v1_jobs SET
          repository = $2, item_id = $3, item_kind = $4, brief_revision = $5,
          phase = $6, relevant_revision = $7, brief = $8::jsonb,
          policy = $9::jsonb, state = $10, control = $11,
@@ -670,7 +670,7 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
 
   async insertDispatchIfAbsent(dispatch: DispatchIntent) {
     const result = await this.client.query<Record<string, unknown>>(
-      `INSERT INTO shipyard_dispatches (
+      `INSERT INTO shipyard_v1_dispatches (
          id, dedupe_key, job_id, repository, item_id, brief_revision, phase,
          relevant_revision, status, assignment, worker_id, claimed_at,
          claim_expires_at, error, created_at, updated_at
@@ -693,7 +693,7 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
 
   async saveDispatch(dispatch: DispatchIntent): Promise<void> {
     await this.client.query(
-      `UPDATE shipyard_dispatches SET
+      `UPDATE shipyard_v1_dispatches SET
          dedupe_key = $2, job_id = $3, repository = $4, item_id = $5,
          brief_revision = $6, phase = $7, relevant_revision = $8,
          status = $9, assignment = $10::jsonb, worker_id = $11,
@@ -706,7 +706,7 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
 
   async findEffect(jobId: string, kind: string, marker: string) {
     const result = await this.client.query<Record<string, unknown>>(
-      "SELECT * FROM shipyard_effects WHERE job_id = $1 AND kind = $2 AND marker = $3",
+      "SELECT * FROM shipyard_v1_effects WHERE job_id = $1 AND kind = $2 AND marker = $3",
       [jobId, kind, marker],
     );
     const value = optionalRow(result);
@@ -715,7 +715,7 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
 
   async insertEffectIfAbsent(effect: EffectIntent) {
     const result = await this.client.query<Record<string, unknown>>(
-      `INSERT INTO shipyard_effects (
+      `INSERT INTO shipyard_v1_effects (
          id, job_id, kind, marker, payload, status, external_ref, worker_id,
          fencing_token, claimed_at, claim_expires_at, error, created_at, updated_at
        ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7::jsonb, $8, $9, $10,
@@ -728,7 +728,7 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
       return { effect: effectFromRow(result.rows[0]!), inserted: true };
     }
     const existing = await this.one<Record<string, unknown>>(
-      "SELECT * FROM shipyard_effects WHERE job_id = $1 AND kind = $2 AND marker = $3",
+      "SELECT * FROM shipyard_v1_effects WHERE job_id = $1 AND kind = $2 AND marker = $3",
       [effect.jobId, effect.kind, effect.marker],
       "effect",
     );
@@ -737,7 +737,7 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
 
   async saveEffect(effect: EffectIntent): Promise<void> {
     await this.client.query(
-      `UPDATE shipyard_effects SET
+      `UPDATE shipyard_v1_effects SET
          job_id = $2, kind = $3, marker = $4, payload = $5::jsonb,
          status = $6, external_ref = $7::jsonb, worker_id = $8,
          fencing_token = $9, claimed_at = $10, claim_expires_at = $11,
@@ -749,7 +749,7 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
 
   async getLease(repository: string, branch: string) {
     const result = await this.client.query<Record<string, unknown>>(
-      "SELECT * FROM shipyard_branch_leases WHERE repository = $1 AND branch = $2 FOR UPDATE",
+      "SELECT * FROM shipyard_v1_branch_leases WHERE repository = $1 AND branch = $2 FOR UPDATE",
       [repository, branch],
     );
     const value = optionalRow(result);
@@ -765,7 +765,7 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
 
   async saveLease(lease: BranchLease): Promise<void> {
     await this.client.query(
-      `INSERT INTO shipyard_branch_leases (
+      `INSERT INTO shipyard_v1_branch_leases (
          resource_key, lease_id, repository, branch, job_id, worker_id,
          fencing_token, acquired_at, heartbeat_at, expires_at
        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -791,7 +791,7 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
 
   async findLeasesForJob(jobId: string) {
     const result = await this.client.query<Record<string, unknown>>(
-      "SELECT * FROM shipyard_branch_leases WHERE job_id = $1",
+      "SELECT * FROM shipyard_v1_branch_leases WHERE job_id = $1",
       [jobId],
     );
     return result.rows.map(leaseFromRow);
@@ -799,7 +799,7 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
 
   async findLeasesForRepository(repository: string) {
     const result = await this.client.query<Record<string, unknown>>(
-      "SELECT * FROM shipyard_branch_leases WHERE repository = $1",
+      "SELECT * FROM shipyard_v1_branch_leases WHERE repository = $1",
       [repository],
     );
     return result.rows.map(leaseFromRow);
@@ -807,7 +807,7 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
 
   async getRepositoryControl(repository: string) {
     const result = await this.client.query<Record<string, unknown>>(
-      "SELECT * FROM shipyard_repository_controls WHERE repository = $1",
+      "SELECT * FROM shipyard_v1_repository_controls WHERE repository = $1",
       [repository],
     );
     const value = optionalRow(result);
@@ -816,7 +816,7 @@ class PostgresTransaction implements CoordinatorStorageTransaction {
 
   async saveRepositoryControl(control: RepositoryControl): Promise<void> {
     await this.client.query(
-      `INSERT INTO shipyard_repository_controls (repository, stopped, reason, updated_at)
+      `INSERT INTO shipyard_v1_repository_controls (repository, stopped, reason, updated_at)
        VALUES ($1, $2, $3, $4)
        ON CONFLICT (repository) DO UPDATE SET
          stopped = EXCLUDED.stopped, reason = EXCLUDED.reason,
@@ -896,8 +896,8 @@ const effectValues = (effect: EffectIntent): readonly unknown[] => [
 const dispatchSelect = (predicate: string): string =>
   `SELECT d.*, j.repository, j.item_id, j.brief_revision, j.phase,
           j.relevant_revision
-     FROM shipyard_dispatches d
-     JOIN shipyard_jobs j ON j.id = d.job_id
+     FROM shipyard_v1_dispatches d
+     JOIN shipyard_v1_jobs j ON j.id = d.job_id
     WHERE ${predicate}`;
 
 /** PostgreSQL-backed implementation; schema installation remains an operator concern. */

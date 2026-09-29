@@ -244,7 +244,7 @@ describe("createSandbox", () => {
 
     try {
       expect(sandbox.branch).toBe("test-branch");
-      expect(sandbox.worktreePath).toContain(".shipyard/worktrees");
+      expect(sandbox.worktreePath).toContain(".shipyard-v1/worktrees");
       expect(existsSync(sandbox.worktreePath)).toBe(true);
     } finally {
       await sandbox.close();
@@ -897,7 +897,7 @@ describe("createSandbox", () => {
           ...base,
           worktreePath: base.worktreePath,
           exec: async (cmd, execOpts) => {
-            // Shipyard issues a `git config --global --add safe.directory ...`
+            // Shipyard V1 issues a `git config --global --add safe.directory ...`
             // command before user code can run; only record the user-issued one.
             if (cmd === "echo hello-from-provider") {
               userExecCmd = cmd;
@@ -1278,7 +1278,7 @@ describe("createSandbox", () => {
           _test: { buildSandbox: (sandboxDir) => makeLocalSandbox(sandboxDir) },
         }),
       ).rejects.toThrow("exit 17");
-      const logDir = join(hostDir, ".shipyard", "logs");
+      const logDir = join(hostDir, ".shipyard-v1", "logs");
       const dates = readdirSync(logDir);
       expect(dates).toHaveLength(1);
       const log = await readFile(
@@ -1324,11 +1324,11 @@ describe("createSandbox", () => {
         }),
       ).rejects.toThrow("failed install");
       expect(closed).toBe(true);
-      const dates = readdirSync(join(hostDir, ".shipyard", "logs"));
+      const dates = readdirSync(join(hostDir, ".shipyard-v1", "logs"));
       expect(dates).toHaveLength(1);
       expect(
         await readFile(
-          join(hostDir, ".shipyard", "logs", dates[0]!, "main-setup.log"),
+          join(hostDir, ".shipyard-v1", "logs", dates[0]!, "main-setup.log"),
           "utf8",
         ),
       ).toContain("failed install");
@@ -1525,7 +1525,7 @@ describe("createSandbox", () => {
 
     try {
       expect(sandbox.branch).toBe("test-isolated-branch");
-      expect(sandbox.worktreePath).toContain(".shipyard/worktrees");
+      expect(sandbox.worktreePath).toContain(".shipyard-v1/worktrees");
       expect(existsSync(sandbox.worktreePath)).toBe(true);
     } finally {
       await sandbox.close();
@@ -2159,7 +2159,7 @@ describe("createSandbox", () => {
     const failingProvider = createIsolatedSandboxProvider({
       name: "failing-create",
       create: async () => {
-        throw new Error("Image 'shipyard:test' not found locally");
+        throw new Error("Image 'shipyard-v1:test' not found locally");
       },
     });
 
@@ -2173,14 +2173,14 @@ describe("createSandbox", () => {
       ).rejects.toThrow();
 
       // The worktree must not be left orphaned on disk.
-      const worktreesDir = join(hostDir, ".shipyard", "worktrees");
+      const worktreesDir = join(hostDir, ".shipyard-v1", "worktrees");
       const leftover = existsSync(worktreesDir)
         ? readdirSync(worktreesDir)
         : [];
       expect(leftover).toHaveLength(0);
 
       const { stdout } = await execAsync("git worktree list", { cwd: hostDir });
-      expect(stdout).not.toContain(".shipyard/worktrees");
+      expect(stdout).not.toContain(".shipyard-v1/worktrees");
     } finally {
       await rm(hostDir, { recursive: true, force: true });
     }
@@ -2215,10 +2215,10 @@ describe("createSandbox", () => {
     await initRepo(hostDir);
     await commitFile(hostDir, "init.txt", "init", "initial commit");
     await execAsync("git branch stale", { cwd: hostDir });
-    await mkdir(join(hostDir, ".shipyard"));
+    await mkdir(join(hostDir, ".shipyard-v1"));
     await commitFile(
       hostDir,
-      ".shipyard/setup.sh",
+      ".shipyard-v1/setup.sh",
       "#!/usr/bin/env bash\nprintf ready > setup-ran.txt\n",
       "add setup script",
     );
@@ -2226,9 +2226,11 @@ describe("createSandbox", () => {
     const sandbox = await createSandbox({
       branch: "stale",
       sandbox: testSandbox,
-      copyToWorktree: [".shipyard/setup.sh"],
+      copyToWorktree: [".shipyard-v1/setup.sh"],
       hooks: {
-        sandbox: { onSandboxReady: [{ command: "bash .shipyard/setup.sh" }] },
+        sandbox: {
+          onSandboxReady: [{ command: "bash .shipyard-v1/setup.sh" }],
+        },
       },
       cwd: hostDir,
     });

@@ -25,31 +25,35 @@ vi.mock("node:os", async (importOriginal) => {
 
 describe("defaultImageName", () => {
   it("derives image name from POSIX repo directory", () => {
-    expect(defaultImageName("/home/user/my-repo")).toBe("shipyard:my-repo");
+    expect(defaultImageName("/home/user/my-repo")).toBe("shipyard-v1:my-repo");
   });
 
   it("lowercases and sanitizes the directory name", () => {
-    expect(defaultImageName("/home/user/My Repo!")).toBe("shipyard:my-repo-");
+    expect(defaultImageName("/home/user/My Repo!")).toBe(
+      "shipyard-v1:my-repo-",
+    );
   });
 
   it("handles trailing slashes", () => {
-    expect(defaultImageName("/home/user/repo/")).toBe("shipyard:repo");
+    expect(defaultImageName("/home/user/repo/")).toBe("shipyard-v1:repo");
   });
 
   it("falls back to 'local' for empty path", () => {
-    expect(defaultImageName("")).toBe("shipyard:local");
+    expect(defaultImageName("")).toBe("shipyard-v1:local");
   });
 
   it("handles Windows paths with backslashes", () => {
-    expect(defaultImageName("C:\\Users\\project")).toBe("shipyard:project");
+    expect(defaultImageName("C:\\Users\\project")).toBe("shipyard-v1:project");
   });
 
   it("handles Windows paths with trailing backslash", () => {
-    expect(defaultImageName("C:\\Users\\project\\")).toBe("shipyard:project");
+    expect(defaultImageName("C:\\Users\\project\\")).toBe(
+      "shipyard-v1:project",
+    );
   });
 
   it("handles mixed separators", () => {
-    expect(defaultImageName("C:\\Users/project")).toBe("shipyard:project");
+    expect(defaultImageName("C:\\Users/project")).toBe("shipyard-v1:project");
   });
 });
 

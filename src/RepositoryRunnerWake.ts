@@ -1,10 +1,10 @@
 import { join } from "node:path";
 
 export const REPOSITORY_RUNNER_WORKFLOW_PATH =
-  ".github/workflows/shipyard-wake.yml";
-export const REPOSITORY_RUNNER_WAKE_EXECUTABLE = "shipyard-wake";
+  ".github/workflows/shipyard-v1-wake.yml";
+export const REPOSITORY_RUNNER_WAKE_EXECUTABLE = "shipyard-v1-wake";
 
-export const REPOSITORY_RUNNER_WORKFLOW = `name: Shipyard wake-up
+export const REPOSITORY_RUNNER_WORKFLOW = `name: Shipyard V1 wake-up
 
 on:
   issues:
@@ -27,7 +27,7 @@ jobs:
           EVENT_NAME: \${{ github.event_name }}
           LABEL_NAME: \${{ github.event.label.name }}
         run: |
-          if [[ "$EVENT_NAME" == "workflow_dispatch" ]] || [[ "$EVENT_NAME" == "issues" && "$LABEL_NAME" == "shipyard" ]]; then
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]] || [[ "$EVENT_NAME" == "issues" && "$LABEL_NAME" == "shipyard-v1" ]]; then
             echo "wake=true" >> "$GITHUB_OUTPUT"
           else
             echo "wake=false" >> "$GITHUB_OUTPUT"
@@ -37,42 +37,42 @@ jobs:
     name: Deliver wake-up
     needs: filter
     if: needs.filter.outputs.wake == 'true'
-    runs-on: [self-hosted, macOS, shipyard]
+    runs-on: [self-hosted, macOS, shipyard-v1]
     steps:
       - name: Signal the foreground repository runner
         shell: bash
-        run: '"$RUNNER_TEMP/../../shipyard-wake"'
+        run: '"$RUNNER_TEMP/../../shipyard-v1-wake"'
 `;
 
 export const REPOSITORY_RUNNER_WAKE_SCRIPT = `#!/bin/bash
 set -euo pipefail
 
 runner_dir="$(cd -- "$(dirname -- "$0")" && pwd)"
-lock_path="$runner_dir/.shipyard-controller.lock"
+lock_path="$runner_dir/.shipyard-v1-controller.lock"
 
 if [[ ! -r "$lock_path" ]]; then
-  echo "::error::The Shipyard repository runner controller is unavailable. Start it with npx shipyard runner start."
+  echo "::error::The Shipyard V1 repository runner controller is unavailable. Start it with npx shipyard-v1 runner start."
   exit 1
 fi
 
 controller_pid="$(sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p' "$lock_path" | head -n 1)"
 controller_started_at="$(sed -n 's/.*"processStartedAt"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' "$lock_path" | head -n 1)"
 if [[ -z "$controller_pid" ]] || [[ -z "$controller_started_at" ]]; then
-  echo "::error::The Shipyard repository runner controller is unavailable. Start it with npx shipyard runner start."
+  echo "::error::The Shipyard V1 repository runner controller is unavailable. Start it with npx shipyard-v1 runner start."
   exit 1
 fi
 current_started_at="$(ps -p "$controller_pid" -o lstart= 2>/dev/null | awk '{$1=$1; print}' || true)"
 if [[ "$current_started_at" != "$controller_started_at" ]] || ! kill -0 "$controller_pid" 2>/dev/null; then
-  echo "::error::The Shipyard repository runner controller is unavailable. Start it with npx shipyard runner start."
+  echo "::error::The Shipyard V1 repository runner controller is unavailable. Start it with npx shipyard-v1 runner start."
   exit 1
 fi
 
 if ! kill -USR1 "$controller_pid"; then
-  echo "::error::The Shipyard repository runner controller could not receive the wake-up."
+  echo "::error::The Shipyard V1 repository runner controller could not receive the wake-up."
   exit 1
 fi
 
-echo "Wake-up delivered to the Shipyard repository runner controller."
+echo "Wake-up delivered to the Shipyard V1 repository runner controller."
 `;
 
 export class RepositoryRunnerWakeError extends Error {
@@ -111,7 +111,7 @@ export interface RepositoryRunnerWakeSubscription {
 }
 
 const workflowCollisionMessage = (): string =>
-  `Refusing to overwrite the differing workflow at ${REPOSITORY_RUNNER_WORKFLOW_PATH}. Replace it with the required Shipyard wake-only workflow, then retry:\n\n${REPOSITORY_RUNNER_WORKFLOW}`;
+  `Refusing to overwrite the differing workflow at ${REPOSITORY_RUNNER_WORKFLOW_PATH}. Replace it with the required Shipyard V1 wake-only workflow, then retry:\n\n${REPOSITORY_RUNNER_WORKFLOW}`;
 
 const publishedWorkflowFailureMessage = (
   repository: string,
@@ -122,9 +122,9 @@ const publishedWorkflowFailureMessage = (
   if (
     /HTTP 403|Resource not accessible by personal access token/i.test(details)
   ) {
-    return `The Shipyard wake workflow could not be read for ${repository} on the default branch (${defaultBranch}). GitHub denied Contents: Read access for the host gh login. Authenticate gh with repository administration access, then start the runner again. GitHub reported: ${details}`;
+    return `The Shipyard V1 wake workflow could not be read for ${repository} on the default branch (${defaultBranch}). GitHub denied Contents: Read access for the host gh login. Authenticate gh with repository administration access, then start the runner again. GitHub reported: ${details}`;
   }
-  return `The Shipyard wake workflow is not active for ${repository}. Commit and push ${REPOSITORY_RUNNER_WORKFLOW_PATH} to the default branch (${defaultBranch}), then start the runner again. GitHub reported: ${details}`;
+  return `The Shipyard V1 wake workflow is not active for ${repository}. Commit and push ${REPOSITORY_RUNNER_WORKFLOW_PATH} to the default branch (${defaultBranch}), then start the runner again. GitHub reported: ${details}`;
 };
 
 export const assertRepositoryRunnerWorkflowCanBeInstalled = async (
@@ -213,7 +213,7 @@ export const requirePublishedRepositoryRunnerWorkflow = async (
 
   if (publishedWorkflow !== REPOSITORY_RUNNER_WORKFLOW) {
     throw new RepositoryRunnerWakeError(
-      `The Shipyard wake workflow on the default branch (${defaultBranch}) does not match the required workflow. Update and push ${REPOSITORY_RUNNER_WORKFLOW_PATH}, then start the runner again.\n\n${REPOSITORY_RUNNER_WORKFLOW}`,
+      `The Shipyard V1 wake workflow on the default branch (${defaultBranch}) does not match the required workflow. Update and push ${REPOSITORY_RUNNER_WORKFLOW_PATH}, then start the runner again.\n\n${REPOSITORY_RUNNER_WORKFLOW}`,
     );
   }
 };

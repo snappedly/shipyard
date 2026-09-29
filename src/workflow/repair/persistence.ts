@@ -217,7 +217,13 @@ const markerHash = (value: string): string =>
 const repairLinkMarker = (jobId: string, repairIssueUrl: string): string =>
   `repair-link:${encodeURIComponent(jobId)}:${markerHash(repairIssueUrl)}`;
 
-const markerComment = (marker: string): string => `<!-- shipyard:${marker} -->`;
+const markerComment = (marker: string): string =>
+  `<!-- shipyard-v1:${marker} -->`;
+
+export const hasRepairMarkerComment = (body: string, marker: string): boolean =>
+  [markerComment(marker), `<!-- shipyard:${marker} -->`].some((comment) =>
+    body.startsWith(`${comment}\n`),
+  );
 
 const parseBatch = (value: unknown): RepairBatch => {
   const batch = object(value, "repair.batch");
@@ -292,14 +298,20 @@ export const parseRepairBatchResult = (value: unknown): RepairBatchResult => {
         "Stored repair issue publication does not match its batch",
       );
     }
-    const issueTitle = `[Shipyard] Repair PR #${batch.pullRequestNumber ?? batch.brief.identity.itemId}`;
-    const expectedMarker = `repair-issue:${encodeURIComponent(batch.jobId)}:${markerHash(issueTitle)}`;
+    const issueNumber = batch.pullRequestNumber ?? batch.brief.identity.itemId;
+    const expectedMarkers = [
+      `[Shipyard V1] Repair PR #${issueNumber}`,
+      `[Shipyard] Repair PR #${issueNumber}`,
+    ].map(
+      (title) =>
+        `repair-issue:${encodeURIComponent(batch.jobId)}:${markerHash(title)}`,
+    );
     const payload = object(
       issuePublication.effect.payload,
       "issuePublication.effect.payload",
     );
     if (
-      issuePublication.marker !== expectedMarker ||
+      !expectedMarkers.includes(issuePublication.marker) ||
       string(payload.repository, "issuePublication.repository") !==
         batch.brief.identity.repository
     ) {
@@ -307,8 +319,9 @@ export const parseRepairBatchResult = (value: unknown): RepairBatchResult => {
     }
     if (
       issuePublication.remote !== undefined &&
-      !issuePublication.remote.body.startsWith(
-        `${markerComment(expectedMarker)}\n`,
+      !hasRepairMarkerComment(
+        issuePublication.remote.body,
+        issuePublication.marker,
       )
     ) {
       throw new Error("Stored repair issue has a different marker");
@@ -354,9 +367,7 @@ export const parseRepairBatchResult = (value: unknown): RepairBatchResult => {
     }
     if (
       linkPublication.remote !== undefined &&
-      !linkPublication.remote.body.startsWith(
-        `${markerComment(expectedMarker)}\n`,
-      )
+      !hasRepairMarkerComment(linkPublication.remote.body, expectedMarker)
     ) {
       throw new Error("Stored repair link comment has a different marker");
     }

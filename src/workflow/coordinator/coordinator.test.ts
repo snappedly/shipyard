@@ -14,7 +14,7 @@ import {
   type WorkflowEventInput,
 } from "./index.js";
 
-const repository = "snappedly/shipyard";
+const repository = "snappedly/shipyard-v1";
 
 const policy = (overrides: Partial<RepositoryPolicy> = {}): RepositoryPolicy =>
   createRepositoryPolicy({
@@ -320,7 +320,7 @@ describe("workflow coordinator", () => {
         jobId: received.job!.id,
         lease,
         kind: "pull-request",
-        marker: "shipyard:job-8",
+        marker: "shipyard-v1:job-8",
         payload: { title: "Durable coordinator" },
         publish,
       }),
@@ -334,7 +334,7 @@ describe("workflow coordinator", () => {
       jobId: received.job!.id,
       lease,
       kind: "pull-request",
-      marker: "shipyard:job-8",
+      marker: "shipyard-v1:job-8",
       payload: { title: "Durable coordinator" },
       reconcile: async () => remoteRef,
       publish: vi.fn(async () => "unexpected-new-pull-request"),
@@ -376,7 +376,7 @@ describe("workflow coordinator", () => {
         jobId: received.job!.id,
         lease: first,
         kind: "comment",
-        marker: "shipyard:effect-1",
+        marker: "shipyard-v1:effect-1",
         publish,
       }),
     ).rejects.toBeInstanceOf(LeaseLostError);
@@ -386,7 +386,7 @@ describe("workflow coordinator", () => {
       jobId: received.job!.id,
       lease: second,
       kind: "comment",
-      marker: "shipyard:effect-1",
+      marker: "shipyard-v1:effect-1",
       publish,
     });
     expect(published.disposition).toBe("published");
@@ -575,7 +575,7 @@ describe("workflow coordinator", () => {
         jobId: received.job!.id,
         lease,
         kind: "pull-request",
-        marker: "shipyard:cancelled",
+        marker: "shipyard-v1:cancelled",
         publish: vi.fn(async () => "should-not-publish"),
       }),
     ).rejects.toThrow();

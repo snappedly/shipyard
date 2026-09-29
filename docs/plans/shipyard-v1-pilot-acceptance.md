@@ -1,4 +1,4 @@
-# Shipyard pilot acceptance record
+# Shipyard V1 pilot acceptance record
 
 Status: **NO-GO / not activated** as of 17 September 2026.
 
@@ -25,7 +25,7 @@ activation contract:
 - Backup and recovery: backup owner, restore exercise, retention window, recovery authority, and
   migration-safe roll-forward or rollback limits.
 - Credential rotation and retention: secret scopes, rotation/revocation procedure, event/job and
-  artifact retention, deletion owner, and redaction checks. Shipyard must not receive secret
+  artifact retention, deletion owner, and redaction checks. Shipyard V1 must not receive secret
   values.
 - Model/provider failure handling: pinned provider/model and skill revision, bounded retries and
   budgets, escalation/fallback policy, and the measured telemetry fields. Unknown cost remains
@@ -52,7 +52,7 @@ branch topology, credentials, or environment. Its local provider contract is cov
   Production requests also require a human owner/maintainer approval for the exact candidate.
 - Staging and production requests use stable candidate-scoped idempotency keys and reconcile a
   pending intent before retrying a provider request. Deployment calls receive the configured
-  environment name and complete candidate rather than a Shipyard-owned default.
+  environment name and complete candidate rather than a Shipyard V1-owned default.
 - Failed production verification stops further promotion. `recordRecovery` records the configured
   `rollback`, `roll-forward`, or `owner-decision` action and authorization; it does not execute
   recovery or imply that application rollback reverses a database migration.

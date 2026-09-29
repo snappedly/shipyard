@@ -175,10 +175,10 @@ describe("syncIn", () => {
   it("refuses runner-owned files committed on any ref", async () => {
     const hostDir = await mkdtemp(join(tmpdir(), "host-runner-"));
     await initRepo(hostDir);
-    await mkdir(join(hostDir, ".shipyard", "runner"), { recursive: true });
+    await mkdir(join(hostDir, ".shipyard-v1", "runner"), { recursive: true });
     await commitFile(
       hostDir,
-      ".shipyard/runner/.credentials",
+      ".shipyard-v1/runner/.credentials",
       "secret",
       "bad runner state",
     );

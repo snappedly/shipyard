@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 
-const PLANNER_BRANCH = "shipyard/planner";
+const PLANNER_BRANCH = "shipyard-v1/planner";
 
 type BranchPrompt = (message: string) => Promise<string>;
 
@@ -24,7 +24,7 @@ const nextPlannerBranch = (localBranches: readonly string[]): string => {
   for (let suffix = 2; ; suffix++) {
     for (const candidate of [
       `${PLANNER_BRANCH}-${suffix}`,
-      `shipyard-planner-${suffix}`,
+      `shipyard-v1-planner-${suffix}`,
     ]) {
       if (!localBranches.some((branch) => refsConflict(candidate, branch)))
         return candidate;
@@ -38,7 +38,7 @@ const reusablePlannerBranch = (
   const candidates = localBranches
     .map((branch) => ({
       branch,
-      suffix: /^(?:shipyard\/planner-|shipyard-planner-)(\d+)$/.exec(
+      suffix: /^(?:shipyard-v1\/planner-|shipyard-v1-planner-)(\d+)$/.exec(
         branch,
       )?.[1],
     }))
@@ -83,7 +83,7 @@ export const fastForwardPlannerBranch = (
     );
   } catch {
     throw new Error(
-      `Planner branch '${plannerBranch}' has commits outside '${targetBranch}'. Review and integrate them before restarting Shipyard.`,
+      `Planner branch '${plannerBranch}' has commits outside '${targetBranch}'. Review and integrate them before restarting Shipyard V1.`,
     );
   }
   execFileSync("git", ["branch", "-f", plannerBranch, targetHead], {
@@ -186,6 +186,6 @@ export const resolvePlannerBranch = async (
   }
 
   throw new Error(
-    `Planner branch selection cancelled. No branches were changed. Inspect with 'git worktree list' and 'git branch --list "shipyard/planner*"', then rerun.`,
+    `Planner branch selection cancelled. No branches were changed. Inspect with 'git worktree list' and 'git branch --list "shipyard-v1/planner*"', then rerun.`,
   );
 };

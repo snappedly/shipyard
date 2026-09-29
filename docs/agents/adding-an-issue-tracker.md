@@ -1,19 +1,19 @@
 # Adding an issue tracker
 
-This document is for contributors evaluating support for an additional **issue tracker** (e.g. Jira or GitLab) in `shipyard init`. GitHub Issues is currently the only supported tracker and init configures it automatically. It covers:
+This document is for contributors evaluating support for an additional **issue tracker** (e.g. Jira or GitLab) in `shipyard-v1 init`. GitHub Issues is currently the only supported tracker and init configures it automatically. It covers:
 
 1. [Evaluating a new issue tracker](#evaluating-a-new-issue-tracker) — the questionnaire used to decide whether an issue tracker can be supported.
 2. [The `IssueTrackerEntry` shape](#the-issuetrackerentry-shape) — what you fill in.
-3. [Scaffold integration](#scaffold-integration) — how the entry plugs into `shipyard init`.
+3. [Scaffold integration](#scaffold-integration) — how the entry plugs into `shipyard-v1 init`.
 4. [Implementation checklist](#implementation-checklist) — every file to touch.
 
 For terminology (**issue tracker**, **task**, **template argument**, etc.), see [`CONTEXT.md`](../../CONTEXT.md).
 
 ## What an issue tracker integration actually is
 
-Shipyard does not embed an issue tracker. An issue-tracker entry is a **scaffold template** that supplies three CLI commands (`LIST_TASKS_COMMAND`, `VIEW_TASK_COMMAND`, and `CLOSE_TASK_COMMAND`) and a Dockerfile snippet that installs its CLI in the **sandbox**. Init uses the GitHub Issues entry automatically. Adding another entry requires an explicit product decision about multi-tracker support.
+Shipyard V1 does not embed an issue tracker. An issue-tracker entry is a **scaffold template** that supplies three CLI commands (`LIST_TASKS_COMMAND`, `VIEW_TASK_COMMAND`, and `CLOSE_TASK_COMMAND`) and a Dockerfile snippet that installs its CLI in the **sandbox**. Init uses the GitHub Issues entry automatically. Adding another entry requires an explicit product decision about multi-tracker support.
 
-The generated project then runs those commands itself — Shipyard is not in the loop at runtime.
+The generated project then runs those commands itself — Shipyard V1 is not in the loop at runtime.
 
 This means the requirements below are about what the **CLI** can do unattended inside a Debian-based container, not about what the issue tracker can do as a product.
 
@@ -43,7 +43,7 @@ Before implementing, confirm the issue tracker satisfies the must-haves below. I
 
 ### Scaffold prerequisites
 
-For a future integration to be supported by `shipyard init`:
+For a future integration to be supported by `shipyard-v1 init`:
 
 - A Dockerfile snippet that installs the CLI as root (before any `USER` switch in the agent provider's Dockerfile).
 - A token env var to surface in `.env.example`, or an empty string if no auth is required.

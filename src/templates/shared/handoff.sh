@@ -8,7 +8,7 @@ repo=${4:?GitHub repository required}
 scope=${5:-$issue}
 outstanding=${6:--}
 previously_completed=${7:--}
-[[ "$issue" =~ ^[0-9]+$ && ( "$branch" == "shipyard/issue-$issue" || "$branch" == "shipyard/spec-$issue" ) ]] || {
+[[ "$issue" =~ ^[0-9]+$ && ( "$branch" == "shipyard-v1/issue-$issue" || "$branch" == "shipyard-v1/spec-$issue" ) ]] || {
   echo "Invalid issue or branch for PR handoff" >&2; exit 1;
 }
 [[ "$base" =~ ^[A-Za-z0-9._/-]+$ ]] || {
@@ -73,7 +73,7 @@ if [[ "$outstanding" != - ]]; then
   IFS=',' read -ra outstanding_ids <<< "$outstanding"
   for outstanding_id in "${outstanding_ids[@]}"; do links+="#$outstanding_id "; done
 fi
-printf 'Source issues: %s\nImplemented tickets: %s\n\n## Verification and review\n\n%s\n\nHuman review and merge required.\n\n<!-- shipyard:verified-handoff -->\n' "$links" "$implemented" "$evidence" > "$body"
+printf 'Source issues: %s\nImplemented tickets: %s\n\n## Verification and review\n\n%s\n\nHuman review and merge required.\n\n<!-- shipyard-v1:verified-handoff -->\n' "$links" "$implemented" "$evidence" > "$body"
 
 # Keep Git credentials inside the disposable sandbox, not in the host worktree.
 git remote set-url origin "https://github.com/$repo.git"
@@ -99,27 +99,27 @@ if [[ "$current_draft" != false || "$current_state" != OPEN ]]; then
   exit 1
 fi
 for ((i=1; i<${#scope_ids[@]}; i++)); do
-  if ! gh issue edit "${scope_ids[i]}" --repo "$repo" --add-label shipyard:complete; then
+  if ! gh issue edit "${scope_ids[i]}" --repo "$repo" --add-label shipyard-v1:complete; then
     echo "Could not mark ticket #${scope_ids[i]} complete; retry issue completion when GitHub is available" >&2
     exit 75
   fi
   remove_issue_label "${scope_ids[i]}" ready-for-human
-  remove_issue_label "${scope_ids[i]}" shipyard:blocked
-  remove_issue_label "${scope_ids[i]}" shipyard:pending
+  remove_issue_label "${scope_ids[i]}" shipyard-v1:blocked
+  remove_issue_label "${scope_ids[i]}" shipyard-v1:pending
 done
-status_label=shipyard:complete
+status_label=shipyard-v1:complete
 status_color=0E8A16
-status_description='Shipyard work ready for human review'
+status_description='Shipyard V1 work ready for human review'
 if [[ "$outstanding" != - ]]; then
-  status_label=shipyard:outstanding-tasks
+  status_label=shipyard-v1:outstanding-tasks
   status_color=FBCA04
   status_description='Spec has uncompleted tickets'
   for outstanding_id in "${outstanding_ids[@]}"; do
     labels=$(gh issue view "$outstanding_id" --repo "$repo" --json labels --jq '.labels[].name') || exit 75
-    if grep -Fxq shipyard:blocked <<< "$labels" && ! grep -Fxq shipyard:complete <<< "$labels"; then
-      status_label=shipyard:blocked
+    if grep -Fxq shipyard-v1:blocked <<< "$labels" && ! grep -Fxq shipyard-v1:complete <<< "$labels"; then
+      status_label=shipyard-v1:blocked
       status_color=B60205
-      status_description='Shipyard work needs intervention'
+      status_description='Shipyard V1 work needs intervention'
       break
     fi
   done
@@ -130,32 +130,32 @@ if ! gh label create "$status_label" --repo "$repo" --color "$status_color" --de
   status_synced=false
 fi
 if gh issue edit "$issue" --repo "$repo" --add-label "$status_label"; then
-  if [[ "$status_label" == shipyard:complete ]]; then
+  if [[ "$status_label" == shipyard-v1:complete ]]; then
     remove_issue_label "$issue" ready-for-human
   fi
 else
-  if [[ "$branch" == "shipyard/issue-$issue" ]]; then
+  if [[ "$branch" == "shipyard-v1/issue-$issue" ]]; then
     echo "Could not mark ticket #$issue complete; retry issue completion when GitHub is available" >&2
     exit 75
   fi
   echo "Warning: could not update spec #$issue status" >&2
   status_synced=false
 fi
-for stale_label in shipyard:complete shipyard:outstanding-tasks shipyard:blocked; do
+for stale_label in shipyard-v1:complete shipyard-v1:outstanding-tasks shipyard-v1:blocked; do
   if [[ "$stale_label" != "$status_label" ]]; then
     if ! remove_issue_label "$issue" "$stale_label"; then
-      if [[ "$branch" == "shipyard/issue-$issue" ]]; then exit 75; fi
+      if [[ "$branch" == "shipyard-v1/issue-$issue" ]]; then exit 75; fi
       echo "Warning: could not clear $stale_label from spec #$issue" >&2
       status_synced=false
     fi
   fi
 done
-if [[ "$branch" == "shipyard/issue-$issue" ]]; then remove_issue_label "$issue" shipyard:pending; fi
+if [[ "$branch" == "shipyard-v1/issue-$issue" ]]; then remove_issue_label "$issue" shipyard-v1:pending; fi
 if ! gh pr edit "$number" --repo "$repo" --add-label "$status_label"; then
   echo "Warning: could not update PR #$number status" >&2
   status_synced=false
 fi
-for stale_label in shipyard:complete shipyard:outstanding-tasks shipyard:blocked; do
+for stale_label in shipyard-v1:complete shipyard-v1:outstanding-tasks shipyard-v1:blocked; do
   if [[ "$stale_label" != "$status_label" ]]; then
     if ! remove_pr_label "$number" "$stale_label"; then
       echo "Warning: could not clear $stale_label from PR #$number" >&2
@@ -169,12 +169,12 @@ if [[ "$status_synced" == true ]]; then
       echo "Warning: could not inspect activation on issue #$scope_id; the next invocation will retry cleanup" >&2
       continue
     fi
-    if grep -Fxq shipyard <<< "$labels"; then
-      gh issue edit "$scope_id" --repo "$repo" --remove-label shipyard ||
+    if grep -Fxq shipyard-v1 <<< "$labels"; then
+      gh issue edit "$scope_id" --repo "$repo" --remove-label shipyard-v1 ||
         echo "Warning: could not remove activation from issue #$scope_id; the next invocation will retry cleanup" >&2
     fi
   done
 else
-  echo "Warning: status labels need reconciliation; add shipyard to the ticket to retry" >&2
+  echo "Warning: status labels need reconciliation; add shipyard-v1 to the ticket to retry" >&2
 fi
 printf '%s\n' "$url"

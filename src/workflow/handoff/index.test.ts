@@ -22,9 +22,9 @@ import {
   resolveHumanReviewDecision,
 } from "./index.js";
 
-const repository = "snappedly/shipyard";
+const repository = "snappedly/shipyard-v1";
 const base = { branch: "main", sha: "a".repeat(40) };
-const head = { branch: "shipyard/42", sha: "b".repeat(40) };
+const head = { branch: "shipyard-v1/42", sha: "b".repeat(40) };
 const policy: RepositoryPolicy = createRepositoryPolicy({
   repository,
   revision: "policy-1",

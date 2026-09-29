@@ -3,7 +3,7 @@
  * Fail the build if any bundled .d.ts file under `dist/` references
  * `effect` or `@effect/*` packages.
  *
- * Effect powers Shipyard's internals but must never leak into the public
+ * Effect powers Shipyard V1's internals but must never leak into the public
  * type surface. See CODING_STANDARDS.md.
  */
 import { readdir, readFile } from "node:fs/promises";

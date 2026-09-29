@@ -16,7 +16,7 @@ import type {
   GitHubRepairLinkPublicationInput,
 } from "./types.js";
 
-const markerText = (marker: string): string => `<!-- shipyard:${marker} -->`;
+const markerText = (marker: string): string => `<!-- shipyard-v1:${marker} -->`;
 
 // Markers are embedded in HTML comments and later used for reconciliation.
 // Encode caller-controlled components so a branch/key/name containing `-->`
@@ -86,7 +86,7 @@ export class GitHubPublication {
     const marker = `brief:${markerPart(input.jobId)}:${markerPart(input.brief.revision)}`;
     const body = [
       markerText(marker),
-      "## Shipyard executable brief",
+      "## Shipyard V1 executable brief",
       `- Revision: ${input.brief.revision}`,
       `- Brief hash: \`${input.brief.hash}\``,
       `- Risk: ${input.brief.risk}`,
@@ -260,7 +260,7 @@ export class GitHubPublication {
           title: input.title,
           body: `${markerText(marker)}\n${input.body}`,
           marker: markerText(marker),
-          labels: input.labels ?? ["shipyard:pr-repair"],
+          labels: input.labels ?? ["shipyard-v1:pr-repair"],
         }),
     });
     return result(marker, execution);

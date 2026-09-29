@@ -25,7 +25,7 @@ const TEMPLATE_AGENT_FACTORY = "codex";
 
 const CODEX_CHATGPT_ENV_EXAMPLE = `# Codex ChatGPT subscription authentication
 # On the host, run \`codex login\` and make sure \`~/.codex/auth.json\` exists.
-# Shipyard mounts that file read-only into the sandbox.
+# Shipyard V1 mounts that file read-only into the sandbox.
 # Do not add OPENAI_API_KEY here: that selects API-key billing instead.`;
 
 const CODEX_CHATGPT_AUTH_OPTIONS = `{
@@ -40,24 +40,24 @@ const CODEX_CHATGPT_AUTH_OPTIONS = `{
 
 const roleModelEnvExample = (agentName: string): string =>
   agentName === "codex"
-    ? `# Optional model choices for Shipyard workflows.
+    ? `# Optional model choices for Shipyard V1 workflows.
 # Choose models available to your Codex CLI account: https://learn.chatgpt.com/docs/models
 # The provider must support each value. Aliases can change their target over time.
-SHIPYARD_ROUTINE_MODEL=gpt-6-luna
-SHIPYARD_STRONG_MODEL=gpt-6-sol
+SHIPYARD_V1_ROUTINE_MODEL=gpt-6-luna
+SHIPYARD_V1_STRONG_MODEL=gpt-6-sol
 # Optional reasoning effort per role: low, medium, high, xhigh, or max.
 # Leave unset to use the provider's default effort.
-SHIPYARD_ROUTINE_REASONING_EFFORT=medium
-SHIPYARD_STRONG_REASONING_EFFORT=high`
-    : `# Optional model choices for Shipyard workflows.
+SHIPYARD_V1_ROUTINE_REASONING_EFFORT=medium
+SHIPYARD_V1_STRONG_REASONING_EFFORT=high`
+    : `# Optional model choices for Shipyard V1 workflows.
 # Choose aliases or model IDs available to your Claude Code provider: https://code.claude.com/docs/en/model-config
 # The provider must support each value. Aliases can change their target over time.
-# SHIPYARD_ROUTINE_MODEL=sonnet
-# SHIPYARD_STRONG_MODEL=opus
+# SHIPYARD_V1_ROUTINE_MODEL=sonnet
+# SHIPYARD_V1_STRONG_MODEL=opus
 # Optional reasoning effort per role: low, medium, high, xhigh, or max.
 # Leave unset to use the provider's default effort.
-# SHIPYARD_ROUTINE_REASONING_EFFORT=high
-# SHIPYARD_STRONG_REASONING_EFFORT=high`;
+# SHIPYARD_V1_ROUTINE_REASONING_EFFORT=high
+# SHIPYARD_V1_STRONG_REASONING_EFFORT=high`;
 
 export interface TemplateMetadata {
   name: string;
@@ -112,7 +112,7 @@ export const getTemplateDependencies = (
 
 const PACKAGE_MANAGERS = ["npm", "pnpm", "yarn", "bun"] as const;
 
-/** A package manager Shipyard can detect on the host and build install commands for. */
+/** A package manager Shipyard V1 can detect on the host and build install commands for. */
 export type PackageManager = (typeof PACKAGE_MANAGERS)[number];
 
 // Lockfiles checked in priority order. bun.lock / bun.lockb are both valid bun
@@ -253,7 +253,7 @@ RUN apt-get update && apt-get install -y \\
 
 {{ISSUE_TRACKER_TOOLS}}
 
-# Build-args for UID/GID alignment: shipyard docker build-image
+# Build-args for UID/GID alignment: shipyard-v1 docker build-image
 # defaults these to the host user's UID/GID so image-built files
 # and explicit mounted files share an owner without runtime chown.
 ARG AGENT_UID=1000
@@ -271,7 +271,7 @@ ENV PATH="/home/agent/.local/bin:$PATH"
 
 WORKDIR /home/agent
 
-# Shipyard syncs Git history into a sandbox-owned repository at ${SANDBOX_REPO_DIR}
+# Shipyard V1 syncs Git history into a sandbox-owned repository at ${SANDBOX_REPO_DIR}
 # and runs agent commands from ${SANDBOX_REPO_DIR}.
 # Structure your Dockerfile so that ${SANDBOX_REPO_DIR} can serve as the project root.
 ENTRYPOINT ["sleep", "infinity"]
@@ -288,7 +288,7 @@ RUN apt-get update && apt-get install -y \\
 
 {{ISSUE_TRACKER_TOOLS}}
 
-# Build-args for UID/GID alignment: shipyard docker build-image
+# Build-args for UID/GID alignment: shipyard-v1 docker build-image
 # defaults these to the host user's UID/GID so image-built files
 # and explicit mounted files share an owner without runtime chown.
 ARG AGENT_UID=1000
@@ -304,7 +304,7 @@ USER \${AGENT_UID}:\${AGENT_GID}
 
 WORKDIR /home/agent
 
-# Shipyard syncs Git history into a sandbox-owned repository at ${SANDBOX_REPO_DIR}
+# Shipyard V1 syncs Git history into a sandbox-owned repository at ${SANDBOX_REPO_DIR}
 # and runs agent commands from ${SANDBOX_REPO_DIR}.
 # Structure your Dockerfile so that ${SANDBOX_REPO_DIR} can serve as the project root.
 ENTRYPOINT ["sleep", "infinity"]
@@ -375,7 +375,7 @@ const ISSUE_TRACKER_REGISTRY: IssueTrackerEntry[] = [
 # Runner installation/start uses the host \`gh\` login for repository administration.
 # Create a fine-grained token: https://github.com/settings/personal-access-tokens/new
 # Required repository permissions: Contents, Issues, and Pull requests (Read and write); Metadata (Read)
-# Or leave blank and run: GH_TOKEN="$(gh auth token)" npx shipyard run
+# Or leave blank and run: GH_TOKEN="$(gh auth token)" npx shipyard-v1 run
 GH_TOKEN=
 `,
   },
@@ -397,7 +397,7 @@ export const getAgent = (name: string): AgentEntry | undefined =>
 export interface SandboxProviderEntry {
   readonly name: string;
   readonly label: string;
-  /** Filename written to .shipyard/. */
+  /** Filename written to .shipyard-v1/. */
   readonly containerfileName: string;
   /** CLI namespace for build/remove commands. */
   readonly cliNamespace: string;

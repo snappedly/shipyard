@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   createRepositoryPolicy,
@@ -9,17 +10,22 @@ import {
   InMemoryCoordinatorStorage,
   WorkflowCoordinator,
 } from "../coordinator/index.js";
+import type { PostgresQueryClient } from "../coordinator/postgres-storage.js";
 import {
   GitHubPublication,
   InMemoryGitHubStore,
   type GitHubReadTransport,
   type GitHubWriteTransport,
 } from "../../integrations/github/index.js";
-import { InMemoryRepairBatchStore, scheduleBoundedRepair } from "./index.js";
+import {
+  InMemoryRepairBatchStore,
+  PostgresRepairBatchStore,
+  scheduleBoundedRepair,
+} from "./index.js";
 
-const repository = "snappedly/shipyard";
+const repository = "snappedly/shipyard-v1";
 const base = { branch: "main", sha: "a".repeat(40) };
-const head = { branch: "shipyard/42-executable-issue", sha: "b".repeat(40) };
+const head = { branch: "shipyard-v1/42-executable-issue", sha: "b".repeat(40) };
 
 const policy: RepositoryPolicy = createRepositoryPolicy({
   repository,
@@ -141,7 +147,7 @@ const createHarness = async () => {
         state: "open",
         updatedAt: "2026-09-17T12:00:00.000Z",
         labels: input.labels,
-        htmlUrl: "https://github.com/snappedly/shipyard/issues/77",
+        htmlUrl: "https://github.com/snappedly/shipyard-v1/issues/77",
       };
     },
   };
@@ -182,8 +188,103 @@ describe("bounded PR repair", () => {
     expect(second.outcome).toBe("duplicate");
     expect(harness.createdIssues).toHaveLength(1);
     expect(first.issuePublication?.remote?.labels).toContain(
-      "shipyard:pr-repair",
+      "shipyard-v1:pr-repair",
     );
+  });
+
+  it("resumes a repair batch saved with the original Shipyard markers", async () => {
+    const harness = await createHarness();
+    const input = {
+      ...harness,
+      store: harness.repairStore,
+      brief,
+      policy,
+      candidate: { base, head, briefHash: brief.hash },
+      workerId: "worker-a",
+      sourceIssueNumber: 42,
+      pullRequestNumber: 100,
+      findings: [finding("legacy-marker")],
+    };
+    const first = await scheduleBoundedRepair(input);
+    const issuePublication = first.issuePublication!;
+    const linkPublication = first.linkPublication!;
+    const oldTitle = "[Shipyard] Repair PR #100";
+    const oldMarker = `repair-issue:${encodeURIComponent(harness.jobId)}:${createHash("sha256").update(oldTitle).digest("hex").slice(0, 16)}`;
+    const oldIssue = {
+      ...issuePublication.remote!,
+      title: oldTitle,
+      body: issuePublication.remote!.body.replace(
+        /^<!-- shipyard-v1:[^>]+ -->/,
+        `<!-- shipyard:${oldMarker} -->`,
+      ),
+    };
+    const oldComment = {
+      ...linkPublication.remote!,
+      body: linkPublication.remote!.body.replace(
+        "<!-- shipyard-v1:",
+        "<!-- shipyard:",
+      ),
+    };
+    const savedRecord = {
+      ...first,
+      repairIssue: oldIssue,
+      issuePublication: {
+        ...issuePublication,
+        marker: oldMarker,
+        remote: oldIssue,
+        effect: {
+          ...issuePublication.effect,
+          marker: oldMarker,
+          externalRef: oldIssue,
+        },
+      },
+      linkPublication: {
+        ...linkPublication,
+        remote: oldComment,
+        effect: { ...linkPublication.effect, externalRef: oldComment },
+      },
+    };
+    const query: PostgresQueryClient["query"] = async <
+      Row extends Record<string, unknown>,
+    >() => ({
+      rows: [
+        {
+          schema_version: 1,
+          record: JSON.stringify(savedRecord),
+        } as unknown as Row,
+      ],
+    });
+    const store = new PostgresRepairBatchStore({ client: { query } });
+    const recovered = await store.get("legacy");
+    expect(recovered?.issuePublication?.marker).toBe(oldMarker);
+
+    const resumed = await scheduleBoundedRepair({
+      ...input,
+      store: {
+        get: () => recovered,
+        save: () => {
+          throw new Error("A completed batch must not be republished");
+        },
+      },
+      readCurrent: async () => ({
+        base,
+        head,
+        briefHash: brief.hash,
+        pullRequest: {
+          number: 100,
+          state: "open" as const,
+          branch: head.branch,
+          headSha: head.sha,
+          baseBranch: base.branch,
+          title: "Repair candidate",
+          body: "",
+          draft: false,
+          updatedAt: "2026-09-17T12:00:00.000Z",
+        },
+      }),
+    });
+    expect(resumed.outcome, resumed.reason).toBe("duplicate");
+    expect(harness.createdIssues).toHaveLength(1);
   });
 
   it("stops stale, closed, non-actionable, and budget-exhausted repairs", async () => {

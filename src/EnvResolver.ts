@@ -57,7 +57,7 @@ const parseEnvFile = (
     return vars;
   });
 
-/** Read .shipyard/.env without following a symlinked configuration path. */
+/** Read .shipyard-v1/.env without following a symlinked configuration path. */
 export const readEnvFile = (
   repoDir: string,
 ): Effect.Effect<
@@ -80,7 +80,7 @@ export const readEnvFile = (
   });
 
 /**
- * Resolve declared .shipyard/.env keys with process.env fallback for blanks.
+ * Resolve declared .shipyard-v1/.env keys with process.env fallback for blanks.
  * The repo root .env is not part of the resolution chain.
  */
 export const resolveEnv = (
@@ -97,8 +97,8 @@ export const resolveEnv = (
     for (const key of Object.keys(shipyardEnv)) {
       // A blank placeholder falls back to process.env, so callers can source
       // credentials from a host login for one invocation, e.g.
-      // `GH_TOKEN="$(gh auth token)" npx shipyard run`. Only keys declared in
-      // .shipyard/.env are eligible for this fallback.
+      // `GH_TOKEN="$(gh auth token)" npx shipyard-v1 run`. Only keys declared in
+      // .shipyard-v1/.env are eligible for this fallback.
       const value = shipyardEnv[key] || process.env[key];
       if (value) {
         result[key] = value;

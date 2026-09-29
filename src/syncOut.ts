@@ -3,7 +3,7 @@
  *
  * Two-phase approach:
  * 1. Save phase: eagerly save all artifacts (patches, diff, untracked files)
- *    to `.shipyard/patches/<timestamp>/` before attempting to apply.
+ *    to `.shipyard-v1/patches/<timestamp>/` before attempting to apply.
  * 2. Apply phase: apply from the saved directory.
  *    - On success: clean up the patch directory.
  *    - On failure: preserve the patch directory and print recovery commands.
@@ -174,7 +174,7 @@ export const countCommitsToSync = (
  * Sync changes from an isolated sandbox back to the host repo.
  *
  * Two-phase extraction with artifact persistence:
- * 1. Save all artifacts to `.shipyard/patches/<timestamp>/`
+ * 1. Save all artifacts to `.shipyard-v1/patches/<timestamp>/`
  * 2. Apply from saved directory; on failure, preserve artifacts and print recovery
  */
 export const syncOut = (

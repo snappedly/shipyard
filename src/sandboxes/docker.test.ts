@@ -361,7 +361,7 @@ describe("docker()", () => {
         env: {},
       }),
     ).rejects.toThrow(
-      "Image 'my-app:latest' not found locally. Build it first with 'shipyard docker build-image'.",
+      "Image 'my-app:latest' not found locally. Build it first with 'shipyard-v1 docker build-image'.",
     );
   });
 
@@ -442,7 +442,7 @@ describe("docker()", () => {
     const cpArgs = cpCall![1] as string[];
     expect(cpArgs[0]).toBe("cp");
     expect(cpArgs[1]).toBe("/host/file.txt");
-    expect(cpArgs[2]).toMatch(/^shipyard-.*:\/sandbox\/file\.txt$/);
+    expect(cpArgs[2]).toMatch(/^shipyard-v1-.*:\/sandbox\/file\.txt$/);
 
     await handle.close();
   });
@@ -473,7 +473,7 @@ describe("docker()", () => {
     expect(cpCall).toBeDefined();
     const cpArgs = cpCall![1] as string[];
     expect(cpArgs[0]).toBe("cp");
-    expect(cpArgs[1]).toMatch(/^shipyard-.*:\/sandbox\/output\.txt$/);
+    expect(cpArgs[1]).toMatch(/^shipyard-v1-.*:\/sandbox\/output\.txt$/);
     expect(cpArgs[2]).toBe("/host/output.txt");
 
     await handle.close();

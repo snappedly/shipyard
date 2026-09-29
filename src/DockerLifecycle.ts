@@ -31,7 +31,7 @@ const dockerExec = (args: string[]): Effect.Effect<string, DockerError> =>
  *
  * When `dockerfile` is provided, uses `docker build -f <dockerfile> <cwd>`
  * so COPY instructions resolve relative to the current working directory.
- * Otherwise, uses `docker build <dockerfileDir>` (the default .shipyard/ directory).
+ * Otherwise, uses `docker build <dockerfileDir>` (the default .shipyard-v1/ directory).
  */
 export const buildImage = (
   imageName: string,

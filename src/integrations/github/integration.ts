@@ -954,7 +954,7 @@ export class GitHubIntegration {
       },
       repository: { full_name: repository },
       sender: {
-        login: this.options.authorization.allowedSenders[0] ?? "shipyard",
+        login: this.options.authorization.allowedSenders[0] ?? "shipyard-v1",
       },
     };
   }
@@ -991,7 +991,7 @@ export class GitHubIntegration {
       },
       repository: { full_name: repository },
       sender: {
-        login: this.options.authorization.allowedSenders[0] ?? "shipyard",
+        login: this.options.authorization.allowedSenders[0] ?? "shipyard-v1",
       },
     };
   }

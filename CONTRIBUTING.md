@@ -1,6 +1,6 @@
-# Contributing to Shipyard
+# Contributing to Shipyard V1
 
-Thanks for helping improve Shipyard.
+Thanks for helping improve Shipyard V1.
 
 This is a source-available repository licensed under the
 [PolyForm Strict License 1.0.0](LICENSE). Contributions are welcome, but the
@@ -20,12 +20,12 @@ work. Keep security reports private and follow [SECURITY.md](SECURITY.md).
 
 ## Development
 
-Shipyard requires Node.js, npm, Git, and Docker for integration tests involving
+Shipyard V1 requires Node.js, npm, Git, and Docker for integration tests involving
 the Docker provider.
 
 ```sh
-git clone https://github.com/snappedly/shipyard.git
-cd shipyard
+git clone https://github.com/snappedly/shipyard-v1.git
+cd shipyard-v1
 npm ci
 npm run check
 ```
@@ -40,7 +40,7 @@ npx changeset
 ```
 
 Use a patch changeset for fixes and a minor changeset for features or breaking
-changes while Shipyard is pre-1.0.
+changes while Shipyard V1 is pre-1.0.
 
 ## Pull requests
 

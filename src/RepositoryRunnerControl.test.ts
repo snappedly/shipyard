@@ -11,17 +11,17 @@ import type { PurgeRunLogsOptions } from "./LogRetention.js";
 import { REPOSITORY_RUNNER_WORKFLOW } from "./RepositoryRunnerWake.js";
 
 const repoDir = "/repo";
-const runnerDir = join(repoDir, ".shipyard", "runner");
-const metadataPath = join(runnerDir, ".shipyard-install.json");
-const lockPath = join(runnerDir, ".shipyard-controller.lock");
-const statePath = join(runnerDir, ".shipyard-state.json");
+const runnerDir = join(repoDir, ".shipyard-v1", "runner");
+const metadataPath = join(runnerDir, ".shipyard-v1-install.json");
+const lockPath = join(runnerDir, ".shipyard-v1-controller.lock");
+const statePath = join(runnerDir, ".shipyard-v1-state.json");
 
 const installMetadata = `${JSON.stringify({
   schemaVersion: 1,
-  repository: "snappedly/shipyard",
-  repositoryUrl: "https://github.com/snappedly/shipyard",
-  name: "shipyard-shipyard-test-mac",
-  label: "shipyard",
+  repository: "snappedly/shipyard-v1",
+  repositoryUrl: "https://github.com/snappedly/shipyard-v1",
+  name: "shipyard-v1-shipyard-v1-test-mac",
+  label: "shipyard-v1",
   version: "2.331.0",
 })}\n`;
 
@@ -61,12 +61,16 @@ const makeAdapters = (
   }>;
 } => {
   const files = new Map<string, string>([
-    [join(repoDir, ".shipyard", ".env"), "GH_TOKEN=repo-token\n"],
+    [join(repoDir, ".shipyard-v1", ".env"), "GH_TOKEN=repo-token\n"],
     [metadataPath, installMetadata],
     [join(runnerDir, ".credentials"), "official-runner-secret"],
     [join(runnerDir, "run.sh"), "#!/bin/sh"],
   ]);
-  const directories = new Set([repoDir, join(repoDir, ".shipyard"), runnerDir]);
+  const directories = new Set([
+    repoDir,
+    join(repoDir, ".shipyard-v1"),
+    runnerDir,
+  ]);
   const commands: Array<{
     command: string;
     args: readonly string[];
@@ -131,12 +135,12 @@ const makeAdapters = (
       commands.push({ command, args, env: options.env });
       if (command === "git") {
         return {
-          stdout: "git@github.com:snappedly/shipyard.git\n",
+          stdout: "git@github.com:snappedly/shipyard-v1.git\n",
           stderr: "",
         };
       }
       if (command === "gh" && args[0] === "label") {
-        return { stdout: "shipyard\n", stderr: "" };
+        return { stdout: "shipyard-v1\n", stderr: "" };
       }
       if (
         command === "gh" &&
@@ -147,7 +151,7 @@ const makeAdapters = (
       }
       if (
         command === "gh" &&
-        args.some((arg) => arg.includes("shipyard-wake.yml"))
+        args.some((arg) => arg.includes("shipyard-v1-wake.yml"))
       ) {
         return { stdout: REPOSITORY_RUNNER_WORKFLOW, stderr: "" };
       }
@@ -158,7 +162,7 @@ const makeAdapters = (
         return {
           stdout: args.some((arg) => arg.endsWith("| .status"))
             ? "online\n"
-            : "shipyard-shipyard-test-mac\tonline\tself-hosted,macOS,shipyard\n",
+            : "shipyard-v1-shipyard-v1-test-mac\tonline\tself-hosted,macOS,shipyard-v1\n",
           stderr: "",
         };
       }
@@ -178,7 +182,7 @@ const makeAdapters = (
     purgeRunLogs: async (options) => {
       purges.push(options);
       return {
-        logsDir: join(options.repoDir, ".shipyard", "logs"),
+        logsDir: join(options.repoDir, ".shipyard-v1", "logs"),
         ...(options.retentionDays === undefined
           ? {}
           : { retentionDays: options.retentionDays }),
@@ -212,7 +216,7 @@ const makeAdapters = (
 
 describe("startRepositoryRunner", () => {
   it.each([undefined, "", "  "])(
-    "requires a GH_TOKEN value in .shipyard/.env before running startup checks (%j)",
+    "requires a GH_TOKEN value in .shipyard-v1/.env before running startup checks (%j)",
     async (token) => {
       const base = makeAdapters({
         resolveEnvironment: async () => ({ GH_TOKEN: "host-token" }),
@@ -222,7 +226,7 @@ describe("startRepositoryRunner", () => {
 
       await expect(
         startRepositoryRunner({ repoDir }, base.adapters),
-      ).rejects.toThrow(/Set GH_TOKEN in \.shipyard\/\.env/);
+      ).rejects.toThrow(/Set GH_TOKEN in \.shipyard-v1\/\.env/);
       expect(base.commands).toHaveLength(0);
       expect(base.spawns).toHaveLength(0);
     },
@@ -245,7 +249,7 @@ describe("startRepositoryRunner", () => {
         base.commands.push({ command, args, env: options.env });
         if (command === "git") {
           return {
-            stdout: "https://github.com/snappedly/shipyard.git\n",
+            stdout: "https://github.com/snappedly/shipyard-v1.git\n",
             stderr: "",
           };
         }
@@ -257,7 +261,7 @@ describe("startRepositoryRunner", () => {
         }
         if (
           command === "gh" &&
-          args.some((arg) => arg.includes("shipyard-wake.yml"))
+          args.some((arg) => arg.includes("shipyard-v1-wake.yml"))
         ) {
           return { stdout: REPOSITORY_RUNNER_WORKFLOW, stderr: "" };
         }
@@ -274,13 +278,13 @@ describe("startRepositoryRunner", () => {
         args: [
           "label",
           "create",
-          "shipyard",
+          "shipyard-v1",
           "--repo",
-          "snappedly/shipyard",
+          "snappedly/shipyard-v1",
           "--color",
           "1D76DB",
           "--description",
-          "Tasks available to the Shipyard repository runner",
+          "Tasks available to the Shipyard V1 repository runner",
           "--force",
         ],
       }),
@@ -359,7 +363,7 @@ describe("startRepositoryRunner", () => {
     );
   });
 
-  it("runs exactly npx shipyard run before listening when an eligible task exists", async () => {
+  it("runs exactly npx shipyard-v1 run before listening when an eligible task exists", async () => {
     const base = makeAdapters();
     const adapters: RunnerControlAdapters = {
       ...base.adapters,
@@ -367,12 +371,12 @@ describe("startRepositoryRunner", () => {
         base.commands.push({ command, args, env: options.env });
         if (command === "git") {
           return {
-            stdout: "git@github.com:snappedly/shipyard.git\n",
+            stdout: "git@github.com:snappedly/shipyard-v1.git\n",
             stderr: "",
           };
         }
         if (command === "gh" && args[0] === "label") {
-          return { stdout: "shipyard\n", stderr: "" };
+          return { stdout: "shipyard-v1\n", stderr: "" };
         }
         if (command === "gh" && args.some((arg) => arg.endsWith("/issues"))) {
           return { stdout: "42\n", stderr: "" };
@@ -382,7 +386,7 @@ describe("startRepositoryRunner", () => {
         }
         if (
           command === "gh" &&
-          args.some((arg) => arg.includes("shipyard-wake.yml"))
+          args.some((arg) => arg.includes("shipyard-v1-wake.yml"))
         ) {
           return { stdout: REPOSITORY_RUNNER_WORKFLOW, stderr: "" };
         }
@@ -394,12 +398,12 @@ describe("startRepositoryRunner", () => {
 
     expect(result.initialWorkFound).toBe(true);
     expect(base.spawns.map(({ command, args }) => [command, args])).toEqual([
-      ["npx", ["shipyard", "run"]],
+      ["npx", ["shipyard-v1", "run"]],
       ["./run.sh", []],
     ]);
     expect(base.spawns[0]!.env).toMatchObject({ GH_TOKEN: "repo-token" });
     expect(base.spawns[0]!.env).toMatchObject({
-      SHIPYARD_RUNNER_OWNER: "snappedly/shipyard",
+      SHIPYARD_V1_RUNNER_OWNER: "snappedly/shipyard-v1",
     });
     const eligibility = base.commands.find(
       ({ command, args }) =>
@@ -415,7 +419,7 @@ describe("startRepositoryRunner", () => {
     expect(eligibility?.args).not.toContain("--limit");
   });
 
-  it("recognizes a replaced issue with the same count and runs Shipyard again", async () => {
+  it("recognizes a replaced issue with the same count and runs Shipyard V1 again", async () => {
     const base = makeAdapters();
     const issueSets = ["42\n", "43\n", ""];
     const adapters: RunnerControlAdapters = {
@@ -431,13 +435,13 @@ describe("startRepositoryRunner", () => {
     await startRepositoryRunner({ repoDir }, adapters);
 
     expect(base.spawns.map(({ command, args }) => [command, args])).toEqual([
-      ["npx", ["shipyard", "run"]],
-      ["npx", ["shipyard", "run"]],
+      ["npx", ["shipyard-v1", "run"]],
+      ["npx", ["shipyard-v1", "run"]],
       ["./run.sh", []],
     ]);
   });
 
-  it("drains an issue that arrives during a successful Shipyard invocation", async () => {
+  it("drains an issue that arrives during a successful Shipyard V1 invocation", async () => {
     const base = makeAdapters();
     const issueSets = ["42\n", "42\n43\n", ""];
     const adapters: RunnerControlAdapters = {
@@ -507,17 +511,18 @@ describe("startRepositoryRunner", () => {
     ]);
     expect(JSON.parse(base.files.get(statePath)!)).toMatchObject({
       state: "stalled",
-      lastOutcome: "Shipyard made no progress; eligible issues are unchanged",
+      lastOutcome:
+        "Shipyard V1 made no progress; eligible issues are unchanged",
     });
     expect(reports).toContain(
-      "[repository runner] stalled: Shipyard made no progress; eligible issues are unchanged",
+      "[repository runner] stalled: Shipyard V1 made no progress; eligible issues are unchanged",
     );
 
     resolveListener({ code: 0, signal: null });
     await started;
   });
 
-  it("checks eligibility and invokes Shipyard after a delivered wake-up", async () => {
+  it("checks eligibility and invokes Shipyard V1 after a delivered wake-up", async () => {
     let deliverWake!: () => void;
     let resolveListener!: (result: {
       code: number | null;
@@ -578,11 +583,11 @@ describe("startRepositoryRunner", () => {
     expect(issueChecks).toBe(3);
     expect(base.spawns.map(({ command, args }) => [command, args])).toEqual([
       ["./run.sh", []],
-      ["npx", ["shipyard", "run"]],
+      ["npx", ["shipyard-v1", "run"]],
     ]);
   });
 
-  it("coalesces wake-ups delivered while Shipyard is active", async () => {
+  it("coalesces wake-ups delivered while Shipyard V1 is active", async () => {
     let deliverWake!: () => void;
     let resolveListener!: (result: {
       code: number | null;
@@ -670,7 +675,7 @@ describe("startRepositoryRunner", () => {
     );
   });
 
-  it("acknowledges an empty stale wake-up without invoking Shipyard", async () => {
+  it("acknowledges an empty stale wake-up without invoking Shipyard V1", async () => {
     let deliverWake!: () => void;
     let resolveListener!: (result: {
       code: number | null;
@@ -733,7 +738,7 @@ describe("startRepositoryRunner", () => {
       run: async (command, args, options) => {
         if (
           command === "gh" &&
-          args.some((arg) => arg.includes("shipyard-wake.yml"))
+          args.some((arg) => arg.includes("shipyard-v1-wake.yml"))
         ) {
           throw new Error("HTTP 404");
         }
@@ -742,7 +747,7 @@ describe("startRepositoryRunner", () => {
     };
 
     await expect(startRepositoryRunner({ repoDir }, adapters)).rejects.toThrow(
-      "Commit and push .github/workflows/shipyard-wake.yml",
+      "Commit and push .github/workflows/shipyard-v1-wake.yml",
     );
     expect(base.spawns).toHaveLength(0);
   });
@@ -753,7 +758,7 @@ describe("startRepositoryRunner", () => {
     await startRepositoryRunner({ repoDir }, base.adapters);
 
     const workflowCheck = base.commands.find(({ args }) =>
-      args.some((arg) => arg.includes("shipyard-wake.yml")),
+      args.some((arg) => arg.includes("shipyard-v1-wake.yml")),
     );
     expect(workflowCheck?.env).toMatchObject({ GH_TOKEN: "host-token" });
     expect(workflowCheck?.env).not.toMatchObject({ GH_TOKEN: "repo-token" });
@@ -774,7 +779,7 @@ describe("startRepositoryRunner", () => {
     }
   });
 
-  it("preserves a failure diagnostic and refuses to listen after a failed Shipyard run", async () => {
+  it("preserves a failure diagnostic and refuses to listen after a failed Shipyard V1 run", async () => {
     const base = makeAdapters();
     const adapters: RunnerControlAdapters = {
       ...base.adapters,
@@ -782,12 +787,12 @@ describe("startRepositoryRunner", () => {
         base.commands.push({ command, args, env: options.env });
         if (command === "git") {
           return {
-            stdout: "git@github.com:snappedly/shipyard.git\n",
+            stdout: "git@github.com:snappedly/shipyard-v1.git\n",
             stderr: "",
           };
         }
         if (command === "gh" && args[0] === "label") {
-          return { stdout: "shipyard\n", stderr: "" };
+          return { stdout: "shipyard-v1\n", stderr: "" };
         }
         if (command === "gh" && args.some((arg) => arg.endsWith("/issues"))) {
           return { stdout: "42\n", stderr: "" };
@@ -797,7 +802,7 @@ describe("startRepositoryRunner", () => {
         }
         if (
           command === "gh" &&
-          args.some((arg) => arg.includes("shipyard-wake.yml"))
+          args.some((arg) => arg.includes("shipyard-v1-wake.yml"))
         ) {
           return { stdout: REPOSITORY_RUNNER_WORKFLOW, stderr: "" };
         }
@@ -810,21 +815,21 @@ describe("startRepositoryRunner", () => {
     };
 
     await expect(startRepositoryRunner({ repoDir }, adapters)).rejects.toThrow(
-      "npx shipyard run exited with code 7",
+      "npx shipyard-v1 run exited with code 7",
     );
     expect(base.spawns).toHaveLength(1);
     expect(base.spawns[0]!.command).toBe("npx");
     expect(base.files.has(lockPath)).toBe(false);
     expect(
-      base.files.get(join(runnerDir, ".shipyard-last-failure.json")),
+      base.files.get(join(runnerDir, ".shipyard-v1-last-failure.json")),
     ).toContain("exited with code 7");
     expect(JSON.parse(base.files.get(statePath)!)).toMatchObject({
       state: "stopped",
-      lastOutcome: "npx shipyard run exited with code 7.",
+      lastOutcome: "npx shipyard-v1 run exited with code 7.",
     });
   });
 
-  it("takes an active listener offline when a woken Shipyard invocation fails", async () => {
+  it("takes an active listener offline when a woken Shipyard V1 invocation fails", async () => {
     let deliverWake!: () => void;
     let resolveListener!: (result: {
       code: number | null;
@@ -875,13 +880,13 @@ describe("startRepositoryRunner", () => {
     deliverWake();
 
     await expect(started).rejects.toThrow(
-      "npx shipyard run exited with code 7",
+      "npx shipyard-v1 run exited with code 7",
     );
     expect(listenerTerminations).toEqual(["SIGTERM"]);
     expect(base.files.has(lockPath)).toBe(false);
     expect(JSON.parse(base.files.get(statePath)!)).toMatchObject({
       state: "stopped",
-      lastOutcome: "npx shipyard run exited with code 7.",
+      lastOutcome: "npx shipyard-v1 run exited with code 7.",
     });
   });
 
@@ -894,7 +899,7 @@ describe("startRepositoryRunner", () => {
         if (command === "gh" && args.some((arg) => arg.endsWith("/issues"))) {
           eligibilityChecks += 1;
           if (eligibilityChecks === 1) return { stdout: "42\n", stderr: "" };
-          throw new Error("GitHub unavailable after Shipyard completed");
+          throw new Error("GitHub unavailable after Shipyard V1 completed");
         }
         return base.adapters.run(command, args, options);
       },
@@ -905,8 +910,8 @@ describe("startRepositoryRunner", () => {
     );
     expect(base.files.has(lockPath)).toBe(false);
     expect(
-      base.files.get(join(runnerDir, ".shipyard-last-failure.json")),
-    ).toContain("GitHub unavailable after Shipyard completed");
+      base.files.get(join(runnerDir, ".shipyard-v1-last-failure.json")),
+    ).toContain("GitHub unavailable after Shipyard V1 completed");
     expect(JSON.parse(base.files.get(statePath)!)).toMatchObject({
       state: "stopped",
     });
@@ -939,12 +944,12 @@ describe("startRepositoryRunner", () => {
         base.commands.push({ command, args, env: options.env });
         if (command === "git") {
           return {
-            stdout: "git@github.com:snappedly/shipyard.git\n",
+            stdout: "git@github.com:snappedly/shipyard-v1.git\n",
             stderr: "",
           };
         }
         if (command === "gh" && args[0] === "label") {
-          return { stdout: "shipyard\n", stderr: "" };
+          return { stdout: "shipyard-v1\n", stderr: "" };
         }
         if (
           command === "gh" &&
@@ -969,13 +974,13 @@ describe("startRepositoryRunner", () => {
     );
     expect(registration?.args).toEqual([
       "--url",
-      "https://github.com/snappedly/shipyard",
+      "https://github.com/snappedly/shipyard-v1",
       "--token",
       "repair-token",
       "--name",
-      "shipyard-shipyard-test-mac",
+      "shipyard-v1-shipyard-v1-test-mac",
       "--labels",
-      "shipyard",
+      "shipyard-v1",
       "--work",
       "_work",
       "--unattended",
@@ -1194,7 +1199,7 @@ describe("startRepositoryRunner", () => {
 
     expect(reports.join("\n")).toContain("work cleanup denied");
     expect(
-      base.files.get(join(runnerDir, ".shipyard-last-failure.json")),
+      base.files.get(join(runnerDir, ".shipyard-v1-last-failure.json")),
     ).toContain("work cleanup denied");
     expect(JSON.parse(base.files.get(statePath)!)).toMatchObject({
       state: "stopped",
@@ -1219,7 +1224,7 @@ describe("startRepositoryRunner", () => {
     );
 
     expect(
-      base.files.get(join(runnerDir, ".shipyard-last-failure.json")),
+      base.files.get(join(runnerDir, ".shipyard-v1-last-failure.json")),
     ).toContain("Docker Desktop is unavailable");
     expect(JSON.parse(base.files.get(statePath)!)).toMatchObject({
       state: "stopped",
@@ -1236,7 +1241,7 @@ describe("getRepositoryRunnerStatus", () => {
       JSON.stringify({
         schemaVersion: 1,
         pid: 321,
-        repository: "snappedly/shipyard",
+        repository: "snappedly/shipyard-v1",
         processStartedAt: "started-321",
       }),
     );
@@ -1244,9 +1249,9 @@ describe("getRepositoryRunnerStatus", () => {
       statePath,
       JSON.stringify({
         schemaVersion: 1,
-        repository: "snappedly/shipyard",
+        repository: "snappedly/shipyard-v1",
         state: "idle",
-        lastOutcome: "Shipyard completed successfully",
+        lastOutcome: "Shipyard V1 completed successfully",
         lastWake: {
           source: "signal",
           recordedAt: "2026-01-02T03:04:05.000Z",
@@ -1261,9 +1266,9 @@ describe("getRepositoryRunnerStatus", () => {
       running: true,
       pid: 321,
       github: "online",
-      repository: "snappedly/shipyard",
+      repository: "snappedly/shipyard-v1",
       state: "idle",
-      lastOutcome: "Shipyard completed successfully",
+      lastOutcome: "Shipyard V1 completed successfully",
       lastWake: {
         source: "signal",
         recordedAt: "2026-01-02T03:04:05.000Z",
@@ -1295,7 +1300,7 @@ describe("stopRepositoryRunner", () => {
       JSON.stringify({
         schemaVersion: 1,
         pid: 321,
-        repository: "snappedly/shipyard",
+        repository: "snappedly/shipyard-v1",
         processStartedAt: "started-321",
       }),
     );
@@ -1314,7 +1319,7 @@ describe("stopRepositoryRunner", () => {
       JSON.stringify({
         schemaVersion: 1,
         pid: 321,
-        repository: "snappedly/shipyard",
+        repository: "snappedly/shipyard-v1",
         processStartedAt: "old-process",
       }),
     );
@@ -1332,7 +1337,7 @@ describe("stopRepositoryRunner", () => {
       JSON.stringify({
         schemaVersion: 1,
         pid: 321,
-        repository: "snappedly/shipyard",
+        repository: "snappedly/shipyard-v1",
         processStartedAt: "old-process",
       }),
     );

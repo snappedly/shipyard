@@ -4,7 +4,7 @@ import type { AgentProvider } from "./AgentProvider.js";
  * Fail-fast validation that a resumable agent session exists on the host before
  * launching the agent. Throws a descriptive error when the session is missing.
  *
- * Shipyard transfers sessions from Docker into the host store keyed on the
+ * Shipyard V1 transfers sessions from Docker into the host store keyed on the
  * host repository directory, so the file must exist at that encoded location.
  */
 export const assertResumeSessionExists = async (params: {

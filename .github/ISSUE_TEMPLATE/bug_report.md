@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report incorrect or unexpected Shipyard behavior
+about: Report incorrect or unexpected Shipyard V1 behavior
 title: ""
 labels: bug
 assignees: ""
@@ -8,7 +8,7 @@ assignees: ""
 
 ## Expected behavior
 
-<!-- What should Shipyard do? -->
+<!-- What should Shipyard V1 do? -->
 
 ## Observed behavior
 
@@ -20,4 +20,4 @@ assignees: ""
 
 ## Environment
 
-<!-- Include Shipyard, Node.js, agent, sandbox provider, and OS versions. Remove credentials and private repository details. -->
+<!-- Include Shipyard V1, Node.js, agent, sandbox provider, and OS versions. Remove credentials and private repository details. -->

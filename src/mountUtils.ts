@@ -23,7 +23,7 @@ export type SelinuxLabel = "z" | "Z" | false;
 
 /**
  * Derive the default image name from the repo directory.
- * Returns `shipyard:<dir-name>` where dir-name is the last path segment,
+ * Returns `shipyard-v1:<dir-name>` where dir-name is the last path segment,
  * lowercased and sanitized for image tag rules.
  *
  * Handles both POSIX (`/`) and Windows (`\`) path separators.

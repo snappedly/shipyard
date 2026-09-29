@@ -8,18 +8,18 @@ import {
 } from "./RepositoryRunnerLifecycle.js";
 
 const repoDir = "/repo";
-const configDir = join(repoDir, ".shipyard");
+const configDir = join(repoDir, ".shipyard-v1");
 const runnerDir = join(configDir, "runner");
-const metadataPath = join(runnerDir, ".shipyard-install.json");
-const lockPath = join(runnerDir, ".shipyard-controller.lock");
+const metadataPath = join(runnerDir, ".shipyard-v1-install.json");
+const lockPath = join(runnerDir, ".shipyard-v1-controller.lock");
 const workPath = join(runnerDir, "_work");
 
 const metadata = {
   schemaVersion: 1 as const,
-  repository: "snappedly/shipyard",
-  repositoryUrl: "https://github.com/snappedly/shipyard",
-  name: "shipyard-shipyard-test-mac",
-  label: "shipyard",
+  repository: "snappedly/shipyard-v1",
+  repositoryUrl: "https://github.com/snappedly/shipyard-v1",
+  name: "shipyard-v1-shipyard-v1-test-mac",
+  label: "shipyard-v1",
   version: "2.331.0",
 };
 
@@ -98,7 +98,7 @@ const makeAdapters = (overrides: Partial<RunnerLifecycleAdapters> = {}) => {
       ) {
         return {
           stdout:
-            "shipyard-shipyard-test-mac\tonline\tself-hosted,macOS,shipyard\n",
+            "shipyard-v1-shipyard-v1-test-mac\tonline\tself-hosted,macOS,shipyard-v1\n",
           stderr: "",
         };
       }
@@ -143,40 +143,42 @@ describe("validateExistingRepositoryRunner", () => {
     const base = makeAdapters();
     base.files.set(
       metadataPath,
-      JSON.stringify({ ...metadata, name: "shipyard-shipyard-old-mac" }),
+      JSON.stringify({ ...metadata, name: "shipyard-v1-shipyard-v1-old-mac" }),
     );
 
     await expect(
       validateExistingRepositoryRunner(installOptions, base.adapters),
-    ).rejects.toThrow("belongs to runner shipyard-shipyard-old-mac");
+    ).rejects.toThrow("belongs to runner shipyard-v1-shipyard-v1-old-mac");
     expect(base.calls).toHaveLength(0);
   });
 
   it("refuses a matching name whose remote labels do not match", async () => {
     const base = makeAdapters({
       run: async () => ({
-        stdout: "shipyard-shipyard-test-mac\tonline\tself-hosted,macOS\n",
+        stdout: "shipyard-v1-shipyard-v1-test-mac\tonline\tself-hosted,macOS\n",
         stderr: "",
       }),
     });
 
     await expect(
       validateExistingRepositoryRunner(installOptions, base.adapters),
-    ).rejects.toThrow("does not carry the shipyard label");
+    ).rejects.toThrow("does not carry the shipyard-v1 label");
   });
 
-  it("refuses duplicate shipyard-labelled registrations even when the expected runner exists", async () => {
+  it("refuses duplicate shipyard-v1-labelled registrations even when the expected runner exists", async () => {
     const base = makeAdapters({
       run: async () => ({
         stdout:
-          "shipyard-shipyard-test-mac\tonline\tself-hosted,macOS,shipyard\nshipyard-other-mac\toffline\tself-hosted,macOS,shipyard\n",
+          "shipyard-v1-shipyard-v1-test-mac\tonline\tself-hosted,macOS,shipyard-v1\nshipyard-v1-other-mac\toffline\tself-hosted,macOS,shipyard-v1\n",
         stderr: "",
       }),
     });
 
     await expect(
       validateExistingRepositoryRunner(installOptions, base.adapters),
-    ).rejects.toThrow("Multiple repository runners carry the shipyard label");
+    ).rejects.toThrow(
+      "Multiple repository runners carry the shipyard-v1 label",
+    );
   });
 });
 
@@ -252,7 +254,7 @@ describe("recoverRepositoryRunner", () => {
       "--name",
       metadata.name,
       "--labels",
-      "shipyard",
+      "shipyard-v1",
       "--work",
       "_work",
       "--unattended",
@@ -364,7 +366,7 @@ describe("recoverRepositoryRunner", () => {
           "ps",
           "-aq",
           "--filter",
-          "label=com.snappedly.shipyard.repository-runner-owner=snappedly/shipyard",
+          "label=com.snappedly.shipyard-v1.repository-runner-owner=snappedly/shipyard-v1",
         ],
       }),
     );
@@ -384,7 +386,7 @@ describe("removeRepositoryRunner", () => {
   it("refuses a symbolic-link runner directory before reading its metadata", async () => {
     const base = makeAdapters({
       inspectDirectory: async () => ({
-        realPath: "/another-repository/.shipyard/runner",
+        realPath: "/another-repository/.shipyard-v1/runner",
         directory: true,
         symbolicLink: true,
       }),
@@ -400,7 +402,7 @@ describe("removeRepositoryRunner", () => {
   it("force-removes a symbolic-link runner directory without reading its metadata", async () => {
     const base = makeAdapters({
       inspectDirectory: async () => ({
-        realPath: "/another-repository/.shipyard/runner",
+        realPath: "/another-repository/.shipyard-v1/runner",
         directory: true,
         symbolicLink: true,
       }),
@@ -501,7 +503,7 @@ describe("removeRepositoryRunner", () => {
       removed: true,
       forced: true,
       manualCleanup:
-        "Remove runner shipyard-shipyard-test-mac from snappedly/shipyard in GitHub Settings > Actions > Runners.",
+        "Remove runner shipyard-v1-shipyard-v1-test-mac from snappedly/shipyard-v1 in GitHub Settings > Actions > Runners.",
     });
     expect(base.directories.has(runnerDir)).toBe(false);
     expect(base.files.get(join(configDir, ".env"))).toBe(

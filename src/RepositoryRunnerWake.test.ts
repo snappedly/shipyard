@@ -13,7 +13,7 @@ import {
 } from "./RepositoryRunnerWake.js";
 
 const repoDir = "/repo";
-const runnerDir = join(repoDir, ".shipyard", "runner");
+const runnerDir = join(repoDir, ".shipyard-v1", "runner");
 
 describe("repository runner wake workflow", () => {
   it("renders a valid wake-only workflow with an exact lowercase label gate", () => {
@@ -33,20 +33,20 @@ describe("repository runner wake workflow", () => {
     );
     expect(REPOSITORY_RUNNER_WORKFLOW).toContain("permissions: {}");
     expect(REPOSITORY_RUNNER_WORKFLOW).toContain(
-      '[[ "$EVENT_NAME" == "issues" && "$LABEL_NAME" == "shipyard" ]]',
+      '[[ "$EVENT_NAME" == "issues" && "$LABEL_NAME" == "shipyard-v1" ]]',
     );
     expect(REPOSITORY_RUNNER_WORKFLOW).toContain(
       '[[ "$EVENT_NAME" == "workflow_dispatch" ]]',
     );
     expect(REPOSITORY_RUNNER_WORKFLOW).toContain(
-      "runs-on: [self-hosted, macOS, shipyard]",
+      "runs-on: [self-hosted, macOS, shipyard-v1]",
     );
     expect(REPOSITORY_RUNNER_WORKFLOW).toContain(
-      '"$RUNNER_TEMP/../../shipyard-wake"',
+      '"$RUNNER_TEMP/../../shipyard-v1-wake"',
     );
     expect(REPOSITORY_RUNNER_WORKFLOW).not.toMatch(/actions\/checkout/i);
     expect(REPOSITORY_RUNNER_WORKFLOW).not.toMatch(/secrets\.|GH_TOKEN/);
-    expect(REPOSITORY_RUNNER_WORKFLOW).not.toContain("shipyard run");
+    expect(REPOSITORY_RUNNER_WORKFLOW).not.toContain("shipyard-v1 run");
     expect(REPOSITORY_RUNNER_WAKE_SCRIPT).toContain(
       'if [[ ! -r "$lock_path" ]]',
     );
@@ -72,7 +72,7 @@ describe("repository runner wake workflow", () => {
     const files = new Map<string, string>();
     const directories = new Set([
       repoDir,
-      join(repoDir, ".shipyard"),
+      join(repoDir, ".shipyard-v1"),
       runnerDir,
     ]);
     const modes = new Map<string, number>();
@@ -96,10 +96,10 @@ describe("repository runner wake workflow", () => {
     expect(files.get(join(repoDir, REPOSITORY_RUNNER_WORKFLOW_PATH))).toBe(
       REPOSITORY_RUNNER_WORKFLOW,
     );
-    expect(files.get(join(runnerDir, "shipyard-wake"))).toBe(
+    expect(files.get(join(runnerDir, "shipyard-v1-wake"))).toBe(
       REPOSITORY_RUNNER_WAKE_SCRIPT,
     );
-    expect(modes.get(join(runnerDir, "shipyard-wake"))).toBe(0o700);
+    expect(modes.get(join(runnerDir, "shipyard-v1-wake"))).toBe(0o700);
   });
 
   it("refuses to overwrite a differing workflow and shows the required content", async () => {
@@ -136,21 +136,21 @@ describe("repository runner wake workflow", () => {
     await requirePublishedRepositoryRunnerWorkflow(
       {
         repoDir,
-        repository: "snappedly/shipyard",
+        repository: "snappedly/shipyard-v1",
         environment: { GH_TOKEN: "repo-token" },
       },
       adapter,
     );
 
     expect(calls).toEqual([
-      ["api", "repos/snappedly/shipyard", "--jq", ".default_branch"],
+      ["api", "repos/snappedly/shipyard-v1", "--jq", ".default_branch"],
       [
         "api",
         "--method",
         "GET",
         "-H",
         "Accept: application/vnd.github.raw+json",
-        "repos/snappedly/shipyard/contents/.github/workflows/shipyard-wake.yml?ref=main",
+        "repos/snappedly/shipyard-v1/contents/.github/workflows/shipyard-v1-wake.yml?ref=main",
       ],
     ]);
   });
@@ -167,13 +167,13 @@ describe("repository runner wake workflow", () => {
       requirePublishedRepositoryRunnerWorkflow(
         {
           repoDir,
-          repository: "snappedly/shipyard",
+          repository: "snappedly/shipyard-v1",
           environment: {},
         },
         adapter,
       ),
     ).rejects.toThrow(
-      "Commit and push .github/workflows/shipyard-wake.yml to the default branch (main)",
+      "Commit and push .github/workflows/shipyard-v1-wake.yml to the default branch (main)",
     );
   });
 
@@ -191,7 +191,7 @@ describe("repository runner wake workflow", () => {
       requirePublishedRepositoryRunnerWorkflow(
         {
           repoDir,
-          repository: "snappedly/shipyard",
+          repository: "snappedly/shipyard-v1",
           environment: {},
         },
         adapter,

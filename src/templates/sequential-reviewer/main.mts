@@ -2,17 +2,17 @@
 // activated issue scope. Publication follows successful review.
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import * as shipyard from "@snappedly-tools/shipyard";
-import { docker } from "@snappedly-tools/shipyard/sandboxes/docker";
+import * as shipyard from "@snappedly-tools/shipyard-v1";
+import { docker } from "@snappedly-tools/shipyard-v1/sandboxes/docker";
 
-if (process.loadEnvFile && existsSync(".shipyard/.env"))
-  process.loadEnvFile(".shipyard/.env");
+if (process.loadEnvFile && existsSync(".shipyard-v1/.env"))
+  process.loadEnvFile(".shipyard-v1/.env");
 type ModelRole = "routine" | "strong";
 const CODEX_PROVIDER = true;
 const agentFactory = shipyard.codex;
 type AgentModel = Parameters<typeof agentFactory>[0];
 const readRoleModel = (role: ModelRole): string | undefined => {
-  const envName = `SHIPYARD_${role.toUpperCase()}_MODEL`;
+  const envName = `SHIPYARD_V1_${role.toUpperCase()}_MODEL`;
   const model = process.env[envName];
   if (model !== undefined && model.trim().length === 0)
     throw new Error(`${envName} must not be empty`);
@@ -27,8 +27,8 @@ type ReasoningEffort = shipyard.ReasoningEffort;
 const readRoleReasoningEffort = (
   role: ModelRole,
 ): ReasoningEffort | undefined => {
-  const envName = `SHIPYARD_${role.toUpperCase()}_REASONING_EFFORT`;
-  const legacyName = `SHIPYARD_CODEX_${role.toUpperCase()}_REASONING_EFFORT`;
+  const envName = `SHIPYARD_V1_${role.toUpperCase()}_REASONING_EFFORT`;
+  const legacyName = `SHIPYARD_V1_CODEX_${role.toUpperCase()}_REASONING_EFFORT`;
   const sharedEffort = process.env[envName]?.trim();
   const effort =
     sharedEffort ||
@@ -46,7 +46,7 @@ const roleEfforts = {
 };
 const readCodexRoleModel = (role: ModelRole, defaultModel: AgentModel) => {
   if (!CODEX_PROVIDER || typeof defaultModel === "string") return defaultModel;
-  const envName = `SHIPYARD_CODEX_${role.toUpperCase()}_MODEL`;
+  const envName = `SHIPYARD_V1_CODEX_${role.toUpperCase()}_MODEL`;
   const model = process.env[envName]?.trim();
   return model ? { ...defaultModel, model } : defaultModel;
 };
@@ -82,7 +82,7 @@ const MAX_ITERATIONS = 10;
 const hooks = {
   sandbox: {
     onSandboxReady: [
-      { command: "timeout 300 bash .shipyard/setup.sh", timeoutMs: 300_000 },
+      { command: "timeout 300 bash .shipyard-v1/setup.sh", timeoutMs: 300_000 },
     ],
   },
 };
@@ -95,9 +95,13 @@ const closeClean = async (sandbox: {
 };
 const verifyTriage = (ticketId: string, triageOutput?: string) => {
   try {
-    execFileSync("bash", [".shipyard/verify-triage.sh", ticketId, repository], {
-      encoding: "utf8",
-    });
+    execFileSync(
+      "bash",
+      [".shipyard-v1/verify-triage.sh", ticketId, repository],
+      {
+        encoding: "utf8",
+      },
+    );
   } catch (error) {
     const detail = (error as { stderr?: string | Buffer }).stderr
       ?.toString()
@@ -141,7 +145,7 @@ const blockScope = (
   execFileSync(
     "bash",
     [
-      ".shipyard/block-scope.sh",
+      ".shipyard-v1/block-scope.sh",
       scope.id,
       scope.id,
       repository,
@@ -150,12 +154,14 @@ const blockScope = (
     ],
     { input: reason, encoding: "utf8" },
   );
-  console.error(`Shipyard blocked issue #${scope.id}: ${reason}`);
+  console.error(`Shipyard V1 blocked issue #${scope.id}: ${reason}`);
 };
 
 for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
   const issues = JSON.parse(
-    execFileSync("node", [".shipyard/select-issues.mjs"], { encoding: "utf8" }),
+    execFileSync("node", [".shipyard-v1/select-issues.mjs"], {
+      encoding: "utf8",
+    }),
   ) as Array<{
     id: string;
     title: string;
@@ -183,13 +189,13 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
     execFileSync("gh", [
       "label",
       "create",
-      "shipyard:pending",
+      "shipyard-v1:pending",
       "--repo",
       repository,
       "--color",
       "1D76DB",
       "--description",
-      "Shipyard is working on this ticket",
+      "Shipyard V1 is working on this ticket",
       "--force",
     ]);
     for (const ticketId of issue.kind === "spec"
@@ -202,15 +208,15 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
         "--repo",
         repository,
         "--add-label",
-        "shipyard:pending",
+        "shipyard-v1:pending",
         "--remove-label",
-        "shipyard",
+        "shipyard-v1",
       ]);
     const sandbox = await shipyard.createSandbox({
       branch: issue.branch,
       sandbox: sandboxProvider,
       hooks,
-      copyToWorktree: [".shipyard/setup.sh"],
+      copyToWorktree: [".shipyard-v1/setup.sh"],
     });
     let evidence: string;
     try {
@@ -229,7 +235,7 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
             name: `triage #${ticketId}`,
             agent: roleAgent("routine", shipyard.CODEX_MODELS.routine),
             maxIterations: 1,
-            promptFile: "./.shipyard/triage-prompt.md",
+            promptFile: "./.shipyard-v1/triage-prompt.md",
             promptArgs: { TASK_ID: ticketId, BASE_BRANCH: targetBranch },
           });
           triageOutput = triage.stdout;
@@ -240,7 +246,7 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
         name: "implementer",
         maxIterations: 1,
         agent: roleAgent("routine", shipyard.CODEX_MODELS.routine),
-        promptFile: "./.shipyard/implement-prompt.md",
+        promptFile: "./.shipyard-v1/implement-prompt.md",
         promptArgs: {
           TASK_ID: issue.id,
           ISSUE_TITLE: issue.title,
@@ -259,7 +265,7 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
         name: "reviewer",
         maxIterations: 1,
         agent: roleAgent("strong", shipyard.CODEX_MODELS.strong),
-        promptFile: "./.shipyard/review-prompt.md",
+        promptFile: "./.shipyard-v1/review-prompt.md",
         promptArgs: {
           BRANCH: issue.branch,
           SCOPE: JSON.stringify(issue),
@@ -285,12 +291,12 @@ for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
     const publication = await shipyard.createSandbox({
       branch: issue.branch,
       sandbox: sandboxProvider,
-      copyToWorktree: [".shipyard/handoff.sh"],
+      copyToWorktree: [".shipyard-v1/handoff.sh"],
     });
     try {
       publicationUncertain = true;
       const handoff = await publication.exec(
-        `bash .shipyard/handoff.sh ${issue.id} ${issue.branch} ${targetBranch} ${repository} ${[issue.id, ...(issue.tickets ?? []).map((ticket) => ticket.id)].join(",")} ${issue.outstandingTicketIds?.join(",") || "-"} ${issue.completedTicketIds?.join(",") || "-"}`,
+        `bash .shipyard-v1/handoff.sh ${issue.id} ${issue.branch} ${targetBranch} ${repository} ${[issue.id, ...(issue.tickets ?? []).map((ticket) => ticket.id)].join(",")} ${issue.outstandingTicketIds?.join(",") || "-"} ${issue.completedTicketIds?.join(",") || "-"}`,
         { stdin: evidence },
       );
       publicationUncertain = handoff.exitCode === 75;

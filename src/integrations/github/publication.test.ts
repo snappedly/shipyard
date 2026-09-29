@@ -14,7 +14,7 @@ import {
   type GitHubWriteTransport,
 } from "./index.js";
 
-const repository = "snappedly/shipyard";
+const repository = "snappedly/shipyard-v1";
 const policy = createRepositoryPolicy({
   repository,
   revision: "policy-1",
@@ -100,7 +100,7 @@ const prepareJob = async (coordinator: WorkflowCoordinator) => {
   });
   const lease = await coordinator.acquireBranchLease({
     repository,
-    branch: "shipyard/issue-42",
+    branch: "shipyard-v1/issue-42",
     jobId: received.job!.id,
     workerId: "worker-a",
     ttlMs: 60_000,
@@ -162,7 +162,9 @@ describe("GitHubPublication", () => {
     expect(first.disposition).toBe("published");
     expect(second.disposition).toBe("already-succeeded");
     expect(created).toHaveBeenCalledOnce();
-    expect(created.mock.calls[0]?.[0].body).toContain("<!-- shipyard:comment:");
+    expect(created.mock.calls[0]?.[0].body).toContain(
+      "<!-- shipyard-v1:comment:",
+    );
   });
 
   it("encodes caller-controlled marker components", async () => {

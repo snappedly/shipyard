@@ -18,13 +18,13 @@ export interface CodexModelConfig {
 }
 
 /**
- * Default values for Shipyard's built-in Codex roles.
+ * Default values for Shipyard V1's built-in Codex roles.
  *
  * Runtime environment variables override these defaults:
- *   SHIPYARD_CODEX_ROUTINE_MODEL
- *   SHIPYARD_ROUTINE_REASONING_EFFORT
- *   SHIPYARD_CODEX_STRONG_MODEL
- *   SHIPYARD_STRONG_REASONING_EFFORT
+ *   SHIPYARD_V1_CODEX_ROUTINE_MODEL
+ *   SHIPYARD_V1_ROUTINE_REASONING_EFFORT
+ *   SHIPYARD_V1_CODEX_STRONG_MODEL
+ *   SHIPYARD_V1_STRONG_REASONING_EFFORT
  *
  * Keep the defaults here so runtime providers, generated templates, and the
  * repository workflows all use the same role definitions.
@@ -35,14 +35,14 @@ const DEFAULT_CODEX_MODELS = {
 } as const satisfies Record<string, CodexModelConfig>;
 
 const readModel = (role: keyof typeof DEFAULT_CODEX_MODELS): string =>
-  process.env[`SHIPYARD_CODEX_${role.toUpperCase()}_MODEL`]?.trim() ||
+  process.env[`SHIPYARD_V1_CODEX_${role.toUpperCase()}_MODEL`]?.trim() ||
   DEFAULT_CODEX_MODELS[role].model;
 
 const readEffort = (
   role: keyof typeof DEFAULT_CODEX_MODELS,
 ): CodexReasoningEffort => {
-  const envName = `SHIPYARD_${role.toUpperCase()}_REASONING_EFFORT`;
-  const legacyName = `SHIPYARD_CODEX_${role.toUpperCase()}_REASONING_EFFORT`;
+  const envName = `SHIPYARD_V1_${role.toUpperCase()}_REASONING_EFFORT`;
+  const legacyName = `SHIPYARD_V1_CODEX_${role.toUpperCase()}_REASONING_EFFORT`;
   const sharedValue = process.env[envName]?.trim();
   const value = sharedValue || process.env[legacyName]?.trim();
   if (!value) return DEFAULT_CODEX_MODELS[role].effort;

@@ -7,7 +7,7 @@ import type { Assignment, WorkIdentity } from "../contracts/index.js";
 import type { DispatchIntent } from "./types.js";
 
 const identity: WorkIdentity = {
-  repository: "snappedly/shipyard",
+  repository: "snappedly/shipyard-v1",
   itemId: "42",
   kind: "executable-issue",
 };
@@ -18,7 +18,7 @@ const assignment: Assignment = {
   phase: "implementation",
   attempt: 1,
   identity,
-  briefId: "snappedly/shipyard:executable-issue:42",
+  briefId: "snappedly/shipyard-v1:executable-issue:42",
   briefRevision: 1,
   briefHash: "b".repeat(64),
   policyRevision: "policy-1",
@@ -57,7 +57,7 @@ const persistDispatch = async (input: DispatchIntent) => {
     text: string,
     values?: readonly unknown[],
   ) => {
-    if (!text.startsWith("INSERT INTO shipyard_dispatches"))
+    if (!text.startsWith("INSERT INTO shipyard_v1_dispatches"))
       return { rows: [] };
     persistedAssignment = JSON.parse(String(values?.[9])) as unknown;
     return {
@@ -119,7 +119,7 @@ describe("PostgresCoordinatorStorage", () => {
     );
 
     const select = query.mock.calls.find(([text]) =>
-      text.includes("FROM shipyard_dispatches"),
+      text.includes("FROM shipyard_v1_dispatches"),
     )?.[0];
     expect(select).toContain("d.claim_expires_at IS NULL");
   });
@@ -170,12 +170,14 @@ describe("PostgresCoordinatorStorage", () => {
 
     await storage.transaction(async (transaction) => {
       expect(await transaction.getJob("missing")).toBeUndefined();
-      await transaction.lockLeaseResource("snappedly/shipyard", "main");
+      await transaction.lockLeaseResource("snappedly/shipyard-v1", "main");
     });
 
     const statements = query.mock.calls.map(([text]) => text);
     expect(statements[1]).toContain("FOR UPDATE");
     expect(statements[2]).toContain("pg_advisory_xact_lock");
-    expect(query.mock.calls[2]?.[1]).toEqual(["snappedly/shipyard\u0000main"]);
+    expect(query.mock.calls[2]?.[1]).toEqual([
+      "snappedly/shipyard-v1\u0000main",
+    ]);
   });
 });

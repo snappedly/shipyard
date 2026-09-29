@@ -44,7 +44,7 @@ describe("InitService scaffold", () => {
     await runScaffold(dir);
 
     const dockerfile = await readFile(
-      join(dir, ".shipyard", "Dockerfile"),
+      join(dir, ".shipyard-v1", "Dockerfile"),
       "utf-8",
     );
     // Template has {{ISSUE_TRACKER_TOOLS}} replaced — should contain GitHub CLI (default issue tracker)
@@ -61,7 +61,7 @@ describe("InitService scaffold", () => {
       expectedKey: "CLAUDE_CODE_OAUTH_TOKEN=",
       unexpectedKey: "OPENAI_API_KEY=",
       expectClaudeSetupTokenHint: true,
-      expectedModelExample: "SHIPYARD_ROUTINE_MODEL=sonnet",
+      expectedModelExample: "SHIPYARD_V1_ROUTINE_MODEL=sonnet",
       expectedModelCatalog: "https://code.claude.com/docs/en/model-config",
     },
     {
@@ -69,7 +69,7 @@ describe("InitService scaffold", () => {
       expectedKey: "OPENAI_API_KEY=",
       unexpectedKey: "ANTHROPIC_API_KEY=",
       expectClaudeSetupTokenHint: false,
-      expectedModelExample: "SHIPYARD_ROUTINE_MODEL=gpt-6-luna",
+      expectedModelExample: "SHIPYARD_V1_ROUTINE_MODEL=gpt-6-luna",
       expectedModelCatalog: "https://learn.chatgpt.com/docs/models",
     },
   ])(
@@ -86,35 +86,37 @@ describe("InitService scaffold", () => {
       await runScaffold(dir, { agent, model: agent.defaultModel });
 
       const envExample = await readFile(
-        join(dir, ".shipyard", ".env.example"),
+        join(dir, ".shipyard-v1", ".env.example"),
         "utf-8",
       );
       expect(envExample).toContain(expectedKey);
       expect(envExample).not.toContain(unexpectedKey);
       expect(envExample).not.toContain("issues/191");
-      expect(envExample).toContain("SHIPYARD_ROUTINE_MODEL=");
-      expect(envExample).toContain("SHIPYARD_STRONG_MODEL=");
+      expect(envExample).toContain("SHIPYARD_V1_ROUTINE_MODEL=");
+      expect(envExample).toContain("SHIPYARD_V1_STRONG_MODEL=");
       expect(envExample).toContain(expectedModelExample);
       expect(envExample).toContain(expectedModelCatalog);
       expect(envExample).toContain("Aliases can change their target over time");
       if (expectClaudeSetupTokenHint) {
         expect(envExample).toContain("claude setup-token");
-        expect(envExample).toMatch(/^# SHIPYARD_ROUTINE_MODEL=sonnet$/m);
+        expect(envExample).toMatch(/^# SHIPYARD_V1_ROUTINE_MODEL=sonnet$/m);
         expect(envExample).toMatch(
-          /^# SHIPYARD_ROUTINE_REASONING_EFFORT=high$/m,
+          /^# SHIPYARD_V1_ROUTINE_REASONING_EFFORT=high$/m,
         );
         expect(envExample).toMatch(
-          /^# SHIPYARD_STRONG_REASONING_EFFORT=high$/m,
+          /^# SHIPYARD_V1_STRONG_REASONING_EFFORT=high$/m,
         );
-        expect(envExample).not.toContain("SHIPYARD_CODEX_");
+        expect(envExample).not.toContain("SHIPYARD_V1_CODEX_");
       } else {
         expect(envExample).not.toContain("claude setup-token");
-        expect(envExample).toMatch(/^SHIPYARD_ROUTINE_MODEL=gpt-6-luna$/m);
-        expect(envExample).toMatch(/^SHIPYARD_STRONG_MODEL=gpt-6-sol$/m);
+        expect(envExample).toMatch(/^SHIPYARD_V1_ROUTINE_MODEL=gpt-6-luna$/m);
+        expect(envExample).toMatch(/^SHIPYARD_V1_STRONG_MODEL=gpt-6-sol$/m);
         expect(envExample).toMatch(
-          /^SHIPYARD_ROUTINE_REASONING_EFFORT=medium$/m,
+          /^SHIPYARD_V1_ROUTINE_REASONING_EFFORT=medium$/m,
         );
-        expect(envExample).toMatch(/^SHIPYARD_STRONG_REASONING_EFFORT=high$/m);
+        expect(envExample).toMatch(
+          /^SHIPYARD_V1_STRONG_REASONING_EFFORT=high$/m,
+        );
         expect(envExample).toContain("low, medium, high, xhigh, or max");
       }
     },
@@ -127,7 +129,7 @@ describe("InitService scaffold", () => {
     });
 
     const envExample = await readFile(
-      join(dir, ".shipyard", ".env.example"),
+      join(dir, ".shipyard-v1", ".env.example"),
       "utf-8",
     );
     expect(envExample).toContain("GH_TOKEN=");
@@ -138,7 +140,7 @@ describe("InitService scaffold", () => {
     expect(envExample).toContain("Issues");
     expect(envExample).toContain("Metadata");
     expect(envExample).toContain(
-      'GH_TOKEN="$(gh auth token)" npx shipyard run',
+      'GH_TOKEN="$(gh auth token)" npx shipyard-v1 run',
     );
   });
 
@@ -146,7 +148,7 @@ describe("InitService scaffold", () => {
     const dir = await makeDir();
     await runScaffold(dir);
 
-    const configDir = join(dir, ".shipyard");
+    const configDir = join(dir, ".shipyard-v1");
     const envExample = await readFile(join(configDir, ".env.example"), "utf-8");
     const env = await readFile(join(configDir, ".env"), "utf-8");
 
@@ -159,17 +161,17 @@ describe("InitService scaffold", () => {
 
     const { access } = await import("node:fs/promises");
     await expect(
-      access(join(dir, ".shipyard", "config.json")),
+      access(join(dir, ".shipyard-v1", "config.json")),
     ).rejects.toThrow();
   });
 
-  it("errors if .shipyard/ already exists", async () => {
+  it("errors if .shipyard-v1/ already exists", async () => {
     const dir = await makeDir();
     const { mkdir } = await import("node:fs/promises");
-    await mkdir(join(dir, ".shipyard"));
+    await mkdir(join(dir, ".shipyard-v1"));
 
     await expect(runScaffold(dir)).rejects.toThrow(
-      ".shipyard/ directory already exists",
+      ".shipyard-v1/ directory already exists",
     );
   });
 
@@ -178,7 +180,7 @@ describe("InitService scaffold", () => {
     await runScaffold(dir);
 
     const gitignore = await readFile(
-      join(dir, ".shipyard", ".gitignore"),
+      join(dir, ".shipyard-v1", ".gitignore"),
       "utf-8",
     );
     expect(gitignore).toContain(".env");
@@ -192,7 +194,7 @@ describe("InitService scaffold", () => {
     await runScaffold(dir);
 
     const dockerfile = await readFile(
-      join(dir, ".shipyard", "Dockerfile"),
+      join(dir, ".shipyard-v1", "Dockerfile"),
       "utf-8",
     );
     expect(dockerfile).toContain(SANDBOX_REPO_DIR);
@@ -205,7 +207,7 @@ describe("InitService scaffold", () => {
       await runScaffold(dir, { agent, model: agent.defaultModel });
 
       const dockerfile = await readFile(
-        join(dir, ".shipyard", "Dockerfile"),
+        join(dir, ".shipyard-v1", "Dockerfile"),
         "utf-8",
       );
       expect(dockerfile).toContain("groupmod -o -g $AGENT_GID node");
@@ -220,7 +222,7 @@ describe("InitService scaffold", () => {
     await runScaffold(dir);
 
     const dockerfile = await readFile(
-      join(dir, ".shipyard", "Dockerfile"),
+      join(dir, ".shipyard-v1", "Dockerfile"),
       "utf-8",
     );
     expect(dockerfile).not.toContain("corepack");
@@ -231,7 +233,10 @@ describe("InitService scaffold", () => {
     const dir = await makeDir();
     await runScaffold(dir);
 
-    const prompt = await readFile(join(dir, ".shipyard", "prompt.md"), "utf-8");
+    const prompt = await readFile(
+      join(dir, ".shipyard-v1", "prompt.md"),
+      "utf-8",
+    );
     expect(prompt).toContain("# Assigned issue scope");
     expect(prompt).toContain("<promise>COMPLETE</promise>");
   });
@@ -243,11 +248,11 @@ describe("InitService scaffold", () => {
     await runScaffold(dir2, { templateName: "simple-loop" });
 
     const prompt1 = await readFile(
-      join(dir1, ".shipyard", "prompt.md"),
+      join(dir1, ".shipyard-v1", "prompt.md"),
       "utf-8",
     );
     const prompt2 = await readFile(
-      join(dir2, ".shipyard", "prompt.md"),
+      join(dir2, ".shipyard-v1", "prompt.md"),
       "utf-8",
     );
     expect(prompt1).toBe(prompt2);
@@ -268,7 +273,10 @@ describe("InitService scaffold", () => {
     const dir = await makeDir();
     await runScaffold(dir, { model: "claude-sonnet-4-6" });
 
-    const mainTs = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
+    const mainTs = await readFile(
+      join(dir, ".shipyard-v1", "main.mts"),
+      "utf-8",
+    );
     expect(mainTs).toContain('roleAgent("routine", "claude-sonnet-4-6")');
     expect(mainTs).toContain("const agentFactory = shipyard.claudeCode;");
     expect(mainTs).toContain("const CODEX_PROVIDER = false;");
@@ -279,7 +287,10 @@ describe("InitService scaffold", () => {
     const dir = await makeDir();
     await runScaffold(dir);
 
-    const mainTs = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
+    const mainTs = await readFile(
+      join(dir, ".shipyard-v1", "main.mts"),
+      "utf-8",
+    );
     expect(mainTs).toContain('roleAgent("routine", "claude-opus-4-8")');
   });
 
@@ -292,7 +303,10 @@ describe("InitService scaffold", () => {
       templateName: "sequential-reviewer",
     });
 
-    const mainTs = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
+    const mainTs = await readFile(
+      join(dir, ".shipyard-v1", "main.mts"),
+      "utf-8",
+    );
     expect(mainTs).toContain('roleAgent("routine", "unlisted-model")');
     expect(mainTs).toContain('roleAgent("strong", "unlisted-model")');
     expect(mainTs).toContain("const CODEX_PROVIDER = true;");
@@ -307,19 +321,22 @@ describe("InitService scaffold", () => {
     const dir = await makeDir();
     await runScaffold(dir, { templateName: "simple-loop" });
 
-    const configDir = join(dir, ".shipyard");
+    const configDir = join(dir, ".shipyard-v1");
     const { access } = await import("node:fs/promises");
 
     await expect(access(join(configDir, "main.mts"))).resolves.toBeUndefined();
     await expect(access(join(configDir, "prompt.md"))).resolves.toBeUndefined();
   });
 
-  it("simple-loop main.mts imports from @snappedly-tools/shipyard", async () => {
+  it("simple-loop main.mts imports from @snappedly-tools/shipyard-v1", async () => {
     const dir = await makeDir();
     await runScaffold(dir, { templateName: "simple-loop" });
 
-    const mainTs = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
-    expect(mainTs).toContain('"@snappedly-tools/shipyard"');
+    const mainTs = await readFile(
+      join(dir, ".shipyard-v1", "main.mts"),
+      "utf-8",
+    );
+    expect(mainTs).toContain('"@snappedly-tools/shipyard-v1"');
   });
 
   describe("sequential-reviewer template", () => {
@@ -327,7 +344,7 @@ describe("InitService scaffold", () => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "sequential-reviewer" });
 
-      const configDir = join(dir, ".shipyard");
+      const configDir = join(dir, ".shipyard-v1");
       const { access } = await import("node:fs/promises");
 
       await expect(
@@ -346,7 +363,7 @@ describe("InitService scaffold", () => {
       await runScaffold(dir, { templateName: "sequential-reviewer" });
 
       const prompt = await readFile(
-        join(dir, ".shipyard", "review-prompt.md"),
+        join(dir, ".shipyard-v1", "review-prompt.md"),
         "utf-8",
       );
       expect(prompt).toContain("{{BRANCH}}");
@@ -364,7 +381,7 @@ describe("InitService scaffold", () => {
       await runScaffold(dir, { templateName: "sequential-reviewer" });
 
       const standards = await readFile(
-        join(dir, ".shipyard", "CODING_STANDARDS.md"),
+        join(dir, ".shipyard-v1", "CODING_STANDARDS.md"),
         "utf-8",
       );
       expect(standards).toContain("# Coding Standards");
@@ -377,7 +394,7 @@ describe("InitService scaffold", () => {
       await runScaffold(dir, { templateName: "sequential-reviewer" });
 
       const mainTs = await readFile(
-        join(dir, ".shipyard", "main.mts"),
+        join(dir, ".shipyard-v1", "main.mts"),
         "utf-8",
       );
       const implementerSection = mainTs.slice(
@@ -394,7 +411,7 @@ describe("InitService scaffold", () => {
     await runScaffold(dir, { templateName: "simple-loop" });
 
     const { readdir } = await import("node:fs/promises");
-    const files = await readdir(join(dir, ".shipyard"));
+    const files = await readdir(join(dir, ".shipyard-v1"));
     const compiledFiles = files.filter(
       (f) =>
         f.endsWith(".js") ||
@@ -409,11 +426,11 @@ describe("InitService scaffold", () => {
     it("shows environment setup, subscription login, and runner start", () => {
       expect(getNextStepsLines()).toEqual([
         "Next steps:",
-        "1. Fill in the values you need in `.shipyard/.env`.",
+        "1. Fill in the values you need in `.shipyard-v1/.env`.",
         "2. If using a model subscription, sign in. For Codex:",
         `   codex --config 'cli_auth_credentials_store="file"' login`,
         "   test -f ~/.codex/auth.json",
-        "3. Start the repository runner with `npx shipyard runner start`.",
+        "3. Start the repository runner with `npx shipyard-v1 runner start`.",
       ]);
     });
   });
@@ -426,7 +443,7 @@ describe("InitService scaffold", () => {
     });
 
     const dockerfile = await readFile(
-      join(dir, ".shipyard", "Dockerfile"),
+      join(dir, ".shipyard-v1", "Dockerfile"),
       "utf-8",
     );
     expect(dockerfile).toContain("FROM node:22-bookworm");
@@ -441,7 +458,10 @@ describe("InitService scaffold", () => {
       model: CODEX_MODELS.routine.model,
     });
 
-    const mainTs = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
+    const mainTs = await readFile(
+      join(dir, ".shipyard-v1", "main.mts"),
+      "utf-8",
+    );
     expect(mainTs).toContain("const agentFactory = shipyard.codex;");
     expect(mainTs).toContain(
       'roleAgent("routine", shipyard.CODEX_MODELS.routine)',
@@ -458,13 +478,16 @@ describe("InitService scaffold", () => {
       codexAuth: "chatgpt",
     });
 
-    const mainTs = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
+    const mainTs = await readFile(
+      join(dir, ".shipyard-v1", "main.mts"),
+      "utf-8",
+    );
     expect(mainTs).toContain('hostPath: "~/.codex/auth.json"');
     expect(mainTs).toContain('sandboxPath: "~/.codex/auth.json"');
     expect(mainTs).toContain("readonly: true");
 
     const envExample = await readFile(
-      join(dir, ".shipyard", ".env.example"),
+      join(dir, ".shipyard-v1", ".env.example"),
       "utf-8",
     );
     expect(envExample).toContain("codex login");
@@ -472,24 +495,24 @@ describe("InitService scaffold", () => {
     expect(envExample.trimEnd())
       .toBe(`# Codex ChatGPT subscription authentication
 # On the host, run \`codex login\` and make sure \`~/.codex/auth.json\` exists.
-# Shipyard mounts that file read-only into the sandbox.
+# Shipyard V1 mounts that file read-only into the sandbox.
 # Do not add OPENAI_API_KEY here: that selects API-key billing instead.
-# Optional model choices for Shipyard workflows.
+# Optional model choices for Shipyard V1 workflows.
 # Choose models available to your Codex CLI account: https://learn.chatgpt.com/docs/models
 # The provider must support each value. Aliases can change their target over time.
-SHIPYARD_ROUTINE_MODEL=gpt-6-luna
-SHIPYARD_STRONG_MODEL=gpt-6-sol
+SHIPYARD_V1_ROUTINE_MODEL=gpt-6-luna
+SHIPYARD_V1_STRONG_MODEL=gpt-6-sol
 # Optional reasoning effort per role: low, medium, high, xhigh, or max.
 # Leave unset to use the provider's default effort.
-SHIPYARD_ROUTINE_REASONING_EFFORT=medium
-SHIPYARD_STRONG_REASONING_EFFORT=high
+SHIPYARD_V1_ROUTINE_REASONING_EFFORT=medium
+SHIPYARD_V1_STRONG_REASONING_EFFORT=high
 # GitHub personal access token — the agent uses it to read and manage GitHub Issues
 # Runner installation/start uses the host \`gh\` login for repository administration.
 # Create a fine-grained token: https://github.com/settings/personal-access-tokens/new
 # Required repository permissions: Contents, Issues, and Pull requests (Read and write); Metadata (Read)
-# Or leave blank and run: GH_TOKEN="$(gh auth token)" npx shipyard run
+# Or leave blank and run: GH_TOKEN="$(gh auth token)" npx shipyard-v1 run
 GH_TOKEN=`);
-    expect(await readFile(join(dir, ".shipyard", ".env"), "utf-8")).toBe(
+    expect(await readFile(join(dir, ".shipyard-v1", ".env"), "utf-8")).toBe(
       envExample,
     );
   });
@@ -502,7 +525,10 @@ GH_TOKEN=`);
       templateName: "parallel-planner",
     });
 
-    const mainTs = await readFile(join(dir, ".shipyard", "main.mts"), "utf-8");
+    const mainTs = await readFile(
+      join(dir, ".shipyard-v1", "main.mts"),
+      "utf-8",
+    );
     expect(mainTs).toContain("shipyard.CODEX_MODELS.routine");
     expect(mainTs).toContain("shipyard.CODEX_MODELS.strong");
     expect(mainTs).not.toMatch(/gpt-5\.6/);
@@ -518,7 +544,7 @@ GH_TOKEN=`);
     async (templateName) => {
       const dir = await makeDir();
       await runScaffold(dir, { templateName });
-      const configDir = join(dir, ".shipyard");
+      const configDir = join(dir, ".shipyard-v1");
       const main = await readFile(join(configDir, "main.mts"), "utf-8");
       const selector = await readFile(
         join(configDir, "select-issues.mjs"),
@@ -547,23 +573,23 @@ GH_TOKEN=`);
       for (const [, options] of sandboxCalls) {
         expect(options).toMatch(/copyToWorktree:\s*\[/);
         if (options?.includes("hooks,")) {
-          expect(options).toContain('".shipyard/setup.sh"');
+          expect(options).toContain('".shipyard-v1/setup.sh"');
         } else {
-          expect(options).toContain('".shipyard/handoff.sh"');
+          expect(options).toContain('".shipyard-v1/handoff.sh"');
         }
       }
       expect(main).toContain("triage-prompt.md");
       expect(main).toContain("verify-triage.sh");
       const triageCalls = [
         ...main.matchAll(
-          /promptFile: "\.\/\.shipyard\/triage-prompt\.md",\s*promptArgs: \{([^}]*)\}/g,
+          /promptFile: "\.\/\.shipyard-v1\/triage-prompt\.md",\s*promptArgs: \{([^}]*)\}/g,
         ),
       ];
       expect(triageCalls.length).toBeGreaterThan(0);
       for (const [, args] of triageCalls) {
         expect(args).toContain("BASE_BRANCH: targetBranch");
       }
-      expect(selector).toMatch(/"--label",\s*"shipyard"/);
+      expect(selector).toMatch(/"--label",\s*"shipyard-v1"/);
       expect(setup).toContain("snappedly/skills.git");
       expect(setup).toContain("for skill in triage implement");
       expect(triage).toContain("Follow `/triage`");
@@ -578,12 +604,14 @@ GH_TOKEN=`);
       expect(triageGate).toContain("ready-for-agent");
       expect(handoff).toContain("gh pr create");
       expect(handoff).not.toContain("gh pr merge");
-      expect(blocked).toContain("shipyard:blocked");
+      expect(blocked).toContain("shipyard-v1:blocked");
       if (templateName.startsWith("parallel-")) {
         const plannerRun = main.match(
           /const plan = await shipyard\.run\(\{([\s\S]*?)\}\)/,
         )?.[1];
-        expect(plannerRun).toContain('copyToWorktree: [".shipyard/setup.sh"]');
+        expect(plannerRun).toContain(
+          'copyToWorktree: [".shipyard-v1/setup.sh"]',
+        );
         expect(
           await readFile(join(configDir, "conflict-prompt.md"), "utf-8"),
         ).toContain("cherry-pick conflict");
@@ -604,7 +632,7 @@ GH_TOKEN=`);
       const dir = await makeDir();
       await runScaffold(dir, { templateName });
 
-      const configDir = join(dir, ".shipyard");
+      const configDir = join(dir, ".shipyard-v1");
       const main = await readFile(join(configDir, "main.mts"), "utf-8");
       const helper = await readFile(
         join(configDir, "planner-branch.mts"),
@@ -622,22 +650,22 @@ GH_TOKEN=`);
     {
       templateName: "parallel-planner",
       agent: claudeCodeAgent,
-      expectedModelExample: "SHIPYARD_ROUTINE_MODEL=sonnet",
+      expectedModelExample: "SHIPYARD_V1_ROUTINE_MODEL=sonnet",
     },
     {
       templateName: "parallel-planner",
       agent: codexAgent,
-      expectedModelExample: "SHIPYARD_ROUTINE_MODEL=gpt-6-luna",
+      expectedModelExample: "SHIPYARD_V1_ROUTINE_MODEL=gpt-6-luna",
     },
     {
       templateName: "parallel-planner-with-review",
       agent: claudeCodeAgent,
-      expectedModelExample: "SHIPYARD_ROUTINE_MODEL=sonnet",
+      expectedModelExample: "SHIPYARD_V1_ROUTINE_MODEL=sonnet",
     },
     {
       templateName: "parallel-planner-with-review",
       agent: codexAgent,
-      expectedModelExample: "SHIPYARD_ROUTINE_MODEL=gpt-6-luna",
+      expectedModelExample: "SHIPYARD_V1_ROUTINE_MODEL=gpt-6-luna",
     },
   ])(
     "$templateName generates model role settings for $agent.name",
@@ -650,11 +678,11 @@ GH_TOKEN=`);
       });
 
       const envExample = await readFile(
-        join(dir, ".shipyard", ".env.example"),
+        join(dir, ".shipyard-v1", ".env.example"),
         "utf-8",
       );
-      expect(envExample).toContain("SHIPYARD_ROUTINE_MODEL=");
-      expect(envExample).toContain("SHIPYARD_STRONG_MODEL=");
+      expect(envExample).toContain("SHIPYARD_V1_ROUTINE_MODEL=");
+      expect(envExample).toContain("SHIPYARD_V1_STRONG_MODEL=");
       expect(envExample).toContain(expectedModelExample);
     },
   );
@@ -664,7 +692,7 @@ GH_TOKEN=`);
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "parallel-planner" });
 
-      const configDir = join(dir, ".shipyard");
+      const configDir = join(dir, ".shipyard-v1");
       const { access } = await import("node:fs/promises");
 
       await expect(
@@ -686,7 +714,7 @@ GH_TOKEN=`);
       await runScaffold(dir, { templateName: "parallel-planner" });
 
       const mainTs = await readFile(
-        join(dir, ".shipyard", "main.mts"),
+        join(dir, ".shipyard-v1", "main.mts"),
         "utf-8",
       );
       // All factory calls should use the specified model (default: claude-opus-4-8)
@@ -698,7 +726,7 @@ GH_TOKEN=`);
       await runScaffold(dir, { templateName: "parallel-planner" });
 
       const prompt = await readFile(
-        join(dir, ".shipyard", "implement-prompt.md"),
+        join(dir, ".shipyard-v1", "implement-prompt.md"),
         "utf-8",
       );
       expect(prompt).toContain("{{TASK_ID}}");
@@ -710,7 +738,7 @@ GH_TOKEN=`);
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "parallel-planner" });
 
-      const configDir = join(dir, ".shipyard");
+      const configDir = join(dir, ".shipyard-v1");
       const dockerfile = await readFile(join(configDir, "Dockerfile"), "utf-8");
       expect(dockerfile).toContain("FROM node:22-bookworm");
       expect(dockerfile).not.toContain("{{ISSUE_TRACKER_TOOLS}}");
@@ -730,7 +758,7 @@ GH_TOKEN=`);
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "parallel-planner-with-review" });
 
-      const configDir = join(dir, ".shipyard");
+      const configDir = join(dir, ".shipyard-v1");
       const { access } = await import("node:fs/promises");
 
       await expect(
@@ -755,7 +783,7 @@ GH_TOKEN=`);
       await runScaffold(dir, { templateName: "parallel-planner-with-review" });
 
       const mainTs = await readFile(
-        join(dir, ".shipyard", "main.mts"),
+        join(dir, ".shipyard-v1", "main.mts"),
         "utf-8",
       );
       // Check planner maxIterations: 1 (near "planner" name)
@@ -792,7 +820,7 @@ GH_TOKEN=`);
       await runScaffold(dir, { templateName: "parallel-planner-with-review" });
 
       const prompt = await readFile(
-        join(dir, ".shipyard", "implement-prompt.md"),
+        join(dir, ".shipyard-v1", "implement-prompt.md"),
         "utf-8",
       );
       expect(prompt).toContain("{{TASK_ID}}");
@@ -805,7 +833,7 @@ GH_TOKEN=`);
       await runScaffold(dir, { templateName: "parallel-planner-with-review" });
 
       const prompt = await readFile(
-        join(dir, ".shipyard", "review-prompt.md"),
+        join(dir, ".shipyard-v1", "review-prompt.md"),
         "utf-8",
       );
       expect(prompt).toContain("{{BRANCH}}");
@@ -822,7 +850,7 @@ GH_TOKEN=`);
       const dir = await makeDir();
       await runScaffold(dir, { templateName: "parallel-planner-with-review" });
 
-      const configDir = join(dir, ".shipyard");
+      const configDir = join(dir, ".shipyard-v1");
       const dockerfile = await readFile(join(configDir, "Dockerfile"), "utf-8");
       expect(dockerfile).toContain("FROM node:22-bookworm");
       expect(dockerfile).not.toContain("{{ISSUE_TRACKER_TOOLS}}");
@@ -841,7 +869,7 @@ GH_TOKEN=`);
       await runScaffold(dir, { templateName: "parallel-planner-with-review" });
 
       const mainTs = await readFile(
-        join(dir, ".shipyard", "main.mts"),
+        join(dir, ".shipyard-v1", "main.mts"),
         "utf-8",
       );
       expect(mainTs).toContain("claude-opus-4-8");
@@ -852,7 +880,7 @@ GH_TOKEN=`);
       await runScaffold(dir, { templateName: "parallel-planner-with-review" });
 
       const standards = await readFile(
-        join(dir, ".shipyard", "CODING_STANDARDS.md"),
+        join(dir, ".shipyard-v1", "CODING_STANDARDS.md"),
         "utf-8",
       );
       expect(standards).toContain("# Coding Standards");
@@ -879,10 +907,10 @@ GH_TOKEN=`);
         "gh issue list",
       );
       expect(manager!.templateArgs.LIST_TASKS_COMMAND).toContain(
-        "--state open --label shipyard",
+        "--state open --label shipyard-v1",
       );
       expect(manager!.templateArgs.LIST_TASKS_COMMAND).not.toContain(
-        "--label Shipyard",
+        "--label Shipyard V1",
       );
       expect(manager!.templateArgs.LIST_TASKS_COMMAND).toContain("labels");
       expect(manager!.templateArgs.LIST_TASKS_COMMAND).toContain("comments");
@@ -911,7 +939,7 @@ GH_TOKEN=`);
       });
 
       const prompt = await readFile(
-        join(dir, ".shipyard", "implement-prompt.md"),
+        join(dir, ".shipyard-v1", "implement-prompt.md"),
         "utf-8",
       );
       expect(prompt).toContain("gh issue view");
@@ -923,7 +951,7 @@ GH_TOKEN=`);
       await runScaffold(dir, { templateName: "parallel-planner" });
 
       const prompt = await readFile(
-        join(dir, ".shipyard", "implement-prompt.md"),
+        join(dir, ".shipyard-v1", "implement-prompt.md"),
         "utf-8",
       );
       expect(prompt).not.toContain("close the issue when done");
@@ -937,7 +965,7 @@ GH_TOKEN=`);
       });
 
       const prompt = await readFile(
-        join(dir, ".shipyard", "implement-prompt.md"),
+        join(dir, ".shipyard-v1", "implement-prompt.md"),
         "utf-8",
       );
       expect(prompt).not.toContain("close the issue when done");
@@ -952,7 +980,7 @@ GH_TOKEN=`);
       });
 
       const prompt = await readFile(
-        join(dir, ".shipyard", "implement-prompt.md"),
+        join(dir, ".shipyard-v1", "implement-prompt.md"),
         "utf-8",
       );
       expect(prompt).toContain("gh issue view");
@@ -968,7 +996,7 @@ GH_TOKEN=`);
       });
 
       const dockerfile = await readFile(
-        join(dir, ".shipyard", "Dockerfile"),
+        join(dir, ".shipyard-v1", "Dockerfile"),
         "utf-8",
       );
       expect(dockerfile).toContain("GitHub CLI");
@@ -987,7 +1015,7 @@ GH_TOKEN=`);
       expect(result.mainFilename).toBe("main.mts");
       const { access } = await import("node:fs/promises");
       await expect(
-        access(join(dir, ".shipyard", "main.mts")),
+        access(join(dir, ".shipyard-v1", "main.mts")),
       ).resolves.toBeUndefined();
     });
 
@@ -1001,10 +1029,10 @@ GH_TOKEN=`);
 
       expect(result.mainFilename).toBe("main.mts");
       const mainContent = await readFile(
-        join(dir, ".shipyard", "main.mts"),
+        join(dir, ".shipyard-v1", "main.mts"),
         "utf-8",
       );
-      expect(mainContent).toContain("@snappedly-tools/shipyard");
+      expect(mainContent).toContain("@snappedly-tools/shipyard-v1");
     });
 
     it("scaffolds main.mts when package.json has type: commonjs", async () => {
@@ -1029,11 +1057,11 @@ GH_TOKEN=`);
       expect(result.mainFilename).toBe("main.ts");
       const { access } = await import("node:fs/promises");
       await expect(
-        access(join(dir, ".shipyard", "main.ts")),
+        access(join(dir, ".shipyard-v1", "main.ts")),
       ).resolves.toBeUndefined();
       // main.mts should NOT exist
       await expect(
-        access(join(dir, ".shipyard", "main.mts")),
+        access(join(dir, ".shipyard-v1", "main.mts")),
       ).rejects.toThrow();
     });
 
@@ -1046,10 +1074,10 @@ GH_TOKEN=`);
       await runScaffold(dir);
 
       const mainContent = await readFile(
-        join(dir, ".shipyard", "main.ts"),
+        join(dir, ".shipyard-v1", "main.ts"),
         "utf-8",
       );
-      expect(mainContent).toContain("@snappedly-tools/shipyard");
+      expect(mainContent).toContain("@snappedly-tools/shipyard-v1");
       expect(mainContent).toContain('roleAgent("routine", "claude-opus-4-8")');
     });
 
@@ -1065,7 +1093,7 @@ GH_TOKEN=`);
       });
 
       const mainContent = await readFile(
-        join(dir, ".shipyard", "main.ts"),
+        join(dir, ".shipyard-v1", "main.ts"),
         "utf-8",
       );
       expect(mainContent).toContain(
@@ -1090,12 +1118,12 @@ GH_TOKEN=`);
   describe("sandbox provider", () => {
     const dockerProvider = getSandboxProvider("docker")!;
 
-    it("selecting docker writes Dockerfile to .shipyard/", async () => {
+    it("selecting docker writes Dockerfile to .shipyard-v1/", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { sandboxProvider: dockerProvider });
 
       const dockerfile = await readFile(
-        join(dir, ".shipyard", "Dockerfile"),
+        join(dir, ".shipyard-v1", "Dockerfile"),
         "utf-8",
       );
       expect(dockerfile).toContain("FROM node:22-bookworm");
@@ -1108,7 +1136,7 @@ GH_TOKEN=`);
 
       const { access } = await import("node:fs/promises");
       await expect(
-        access(join(dir, ".shipyard", "Containerfile")),
+        access(join(dir, ".shipyard-v1", "Containerfile")),
       ).rejects.toThrow();
     });
 
@@ -1117,14 +1145,14 @@ GH_TOKEN=`);
       await runScaffold(dir, { sandboxProvider: dockerProvider });
 
       const mainTs = await readFile(
-        join(dir, ".shipyard", "main.mts"),
+        join(dir, ".shipyard-v1", "main.mts"),
         "utf-8",
       );
       expect(mainTs).toContain(
-        'import * as shipyard from "@snappedly-tools/shipyard"',
+        'import * as shipyard from "@snappedly-tools/shipyard-v1"',
       );
       expect(mainTs).toContain(
-        'import { docker } from "@snappedly-tools/shipyard/sandboxes/docker"',
+        'import { docker } from "@snappedly-tools/shipyard-v1/sandboxes/docker"',
       );
       expect(mainTs).toContain("const sandboxAuthOptions = {};");
       expect(mainTs).toContain("env: { GH_REPO: repository }");

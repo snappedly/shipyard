@@ -1,8 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
-import * as shipyard from "@snappedly-tools/shipyard";
-import { docker } from "@snappedly-tools/shipyard/sandboxes/docker";
+import * as shipyard from "@snappedly-tools/shipyard-v1";
+import { docker } from "@snappedly-tools/shipyard-v1/sandboxes/docker";
 import {
   asRecord,
   asString,

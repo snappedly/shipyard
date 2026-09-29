@@ -24,7 +24,7 @@ import {
 } from "./index.js";
 
 const identity: WorkIdentity = {
-  repository: "snappedly/shipyard",
+  repository: "snappedly/shipyard-v1",
   itemId: "10",
   kind: "executable-issue",
 };
@@ -97,7 +97,7 @@ const assignment: Assignment = createAssignment({
   brief,
   policy,
   attempt: 1,
-  head: { branch: "shipyard/issue-10", sha: "b".repeat(40) },
+  head: { branch: "shipyard-v1/issue-10", sha: "b".repeat(40) },
   createdAt: "2026-09-17T12:00:00.000Z",
 });
 
@@ -129,7 +129,7 @@ const completedResponse = (): PhaseEngineResponse => ({
   completionSignal: "<promise>COMPLETE</promise>",
   structuredOutput: completedOutput,
   commits: ["c".repeat(40)],
-  branch: "shipyard/issue-10",
+  branch: "shipyard-v1/issue-10",
   headSha: "c".repeat(40),
   report: completedReport,
 });
@@ -234,7 +234,7 @@ describe("workflow execution", () => {
       brief,
       policy,
       attempt: 1,
-      head: { branch: "shipyard/issue-10", sha: "c".repeat(40) },
+      head: { branch: "shipyard-v1/issue-10", sha: "c".repeat(40) },
       createdAt: "2026-09-17T12:00:00.000Z",
     });
     const fake = createFakePhaseEngineAdapter({
@@ -468,7 +468,7 @@ describe("workflow execution", () => {
       response: {
         ...completedResponse(),
         stderr: "warning from the provider",
-        preservedWorktreePath: "/tmp/shipyard-preserved-worktree",
+        preservedWorktreePath: "/tmp/shipyard-v1-preserved-worktree",
         artifacts: [
           { name: "diff", kind: "patch", content: "diff --git a/file b/file" },
         ],
@@ -523,7 +523,7 @@ describe("workflow execution", () => {
       brief,
       policy,
       attempt: 1,
-      head: { branch: "shipyard/issue-10", sha: "d".repeat(40) },
+      head: { branch: "shipyard-v1/issue-10", sha: "d".repeat(40) },
       createdAt: "2026-09-17T12:00:00.000Z",
     });
     let readonly = false;
@@ -574,7 +574,7 @@ describe("workflow execution", () => {
           stdout: "run output",
           completionSignal: "<promise>COMPLETE</promise>",
           commits: [{ sha: "e".repeat(40) }],
-          branch: "shipyard/issue-10",
+          branch: "shipyard-v1/issue-10",
           iterations: [],
         };
       },
@@ -595,7 +595,7 @@ describe("workflow execution", () => {
     expect(runResult.status).toBe("failed-verification");
     expect(runOptions?.branchStrategy).toEqual({
       type: "branch",
-      branch: "shipyard/issue-10",
+      branch: "shipyard-v1/issue-10",
       baseBranch: "a".repeat(40),
     });
 
@@ -605,7 +605,7 @@ describe("workflow execution", () => {
       brief,
       policy,
       attempt: 1,
-      head: { branch: "shipyard/issue-10", sha: "d".repeat(40) },
+      head: { branch: "shipyard-v1/issue-10", sha: "d".repeat(40) },
       createdAt: "2026-09-17T12:00:00.000Z",
     });
     await executePhase(
@@ -617,14 +617,14 @@ describe("workflow execution", () => {
     );
     expect(runOptions?.branchStrategy).toEqual({
       type: "branch",
-      branch: "shipyard/review/review-assignment-10",
+      branch: "shipyard-v1/review/review-assignment-10",
       baseBranch: "d".repeat(40),
     });
 
     let createOptions: Record<string, unknown> | undefined;
     let closed = false;
     const sandbox: Sandbox = {
-      branch: "shipyard/issue-10",
+      branch: "shipyard-v1/issue-10",
       worktreePath: "/tmp/worktree",
       run: async () => ({
         stdout: `<phase-result>${JSON.stringify(completedOutput)}</phase-result>\n<promise>COMPLETE</promise>`,
@@ -663,7 +663,7 @@ describe("workflow execution", () => {
     );
 
     expect(createResult.status).toBe("completed");
-    expect(createOptions?.branch).toBe("shipyard/issue-10");
+    expect(createOptions?.branch).toBe("shipyard-v1/issue-10");
     expect(closed).toBe(true);
   });
 
@@ -704,7 +704,7 @@ describe("workflow execution", () => {
         attempt: 1,
         head:
           phase === "review" || phase === "checking"
-            ? { branch: "shipyard/issue-10", sha: "d".repeat(40) }
+            ? { branch: "shipyard-v1/issue-10", sha: "d".repeat(40) }
             : undefined,
         createdAt: "2026-09-17T12:00:00.000Z",
       });
@@ -742,7 +742,7 @@ describe("workflow execution", () => {
             stdout: "",
             completionSignal: "<promise>COMPLETE</promise>",
             commits: phase === "review" ? [] : [{ sha: "e".repeat(40) }],
-            branch: "shipyard/issue-10",
+            branch: "shipyard-v1/issue-10",
             iterations: [],
           };
         }),
@@ -788,7 +788,7 @@ describe("workflow execution", () => {
       hash: undefined,
     });
     const candidateHead = {
-      branch: "shipyard/issue-10",
+      branch: "shipyard-v1/issue-10",
       sha: "d".repeat(40),
     };
     const roleAssignment = createAssignment({
@@ -889,7 +889,7 @@ describe("workflow execution", () => {
       brief: roleBrief,
       policy: rolePolicy,
       attempt: 1,
-      head: { branch: "shipyard/issue-10", sha: "d".repeat(40) },
+      head: { branch: "shipyard-v1/issue-10", sha: "d".repeat(40) },
       createdAt: "2026-09-17T12:00:00.000Z",
     });
     const selected: AgentSelection[] = [];

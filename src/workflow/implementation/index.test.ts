@@ -27,7 +27,7 @@ import {
   runAuthorizedImplementation,
 } from "./index.js";
 
-const repository = "snappedly/shipyard";
+const repository = "snappedly/shipyard-v1";
 const baseSha = "a".repeat(40);
 const headSha = "b".repeat(40);
 
@@ -96,7 +96,7 @@ const response = (
   stdout: '<phase-result>{"outcome":"completed"}</phase-result>',
   completionSignal: "completed",
   commits: [headSha],
-  branch: "shipyard/42-executable-issue",
+  branch: "shipyard-v1/42-executable-issue",
   headSha,
   report: {
     summary: "Implemented the change.",
@@ -212,7 +212,7 @@ describe("authorized implementation", () => {
       brief: brief(),
       policy,
       base: { branch: "main", sha: baseSha },
-      head: { branch: "shipyard/42-executable-issue", sha: headSha },
+      head: { branch: "shipyard-v1/42-executable-issue", sha: headSha },
       checks: [],
     });
     expect(blockedReview.status).toBe("blocked");
@@ -220,7 +220,7 @@ describe("authorized implementation", () => {
       brief: brief(),
       policy,
       base: { branch: "main", sha: baseSha },
-      head: { branch: "shipyard/42-executable-issue", sha: headSha },
+      head: { branch: "shipyard-v1/42-executable-issue", sha: headSha },
       checks: response().report.checks,
     });
     expect(readyReview.status).toBe("ready");

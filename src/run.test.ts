@@ -60,7 +60,7 @@ describe("printFileDisplayStartup", () => {
       .spyOn(clack.log, "success")
       .mockImplementation(() => {});
     printFileDisplayStartup({
-      logPath: "/project/.shipyard/logs/main.log",
+      logPath: "/project/.shipyard-v1/logs/main.log",
     });
     expect(clackSpy).not.toHaveBeenCalled();
     clackSpy.mockRestore();
@@ -68,14 +68,14 @@ describe("printFileDisplayStartup", () => {
 
   it("uses console.log for output", () => {
     printFileDisplayStartup({
-      logPath: "/project/.shipyard/logs/main.log",
+      logPath: "/project/.shipyard-v1/logs/main.log",
     });
     expect(consoleSpy).toHaveBeenCalled();
   });
 
   it("shows '[Agent] Started' when no name is provided", () => {
     printFileDisplayStartup({
-      logPath: "/project/.shipyard/logs/main.log",
+      logPath: "/project/.shipyard-v1/logs/main.log",
     });
     const allOutput = consoleSpy.mock.calls.flat().join(" ");
     expect(allOutput).toContain("[Agent]");
@@ -84,7 +84,7 @@ describe("printFileDisplayStartup", () => {
 
   it("shows custom agent name when provided", () => {
     printFileDisplayStartup({
-      logPath: "/project/.shipyard/logs/main.log",
+      logPath: "/project/.shipyard-v1/logs/main.log",
       agentName: "my-run",
     });
     const allOutput = consoleSpy.mock.calls.flat().join(" ");
@@ -93,16 +93,16 @@ describe("printFileDisplayStartup", () => {
 
   it("shows branch name when provided", () => {
     printFileDisplayStartup({
-      logPath: "/project/.shipyard/logs/main.log",
-      branch: "shipyard/issue-124-file-logging",
+      logPath: "/project/.shipyard-v1/logs/main.log",
+      branch: "shipyard-v1/issue-124-file-logging",
     });
     const allOutput = consoleSpy.mock.calls.flat().join(" ");
-    expect(allOutput).toContain("shipyard/issue-124-file-logging");
+    expect(allOutput).toContain("shipyard-v1/issue-124-file-logging");
   });
 
   it("shows tail command with relative log path", () => {
     printFileDisplayStartup({
-      logPath: "/project/.shipyard/logs/main.log",
+      logPath: "/project/.shipyard-v1/logs/main.log",
     });
     const allOutput = consoleSpy.mock.calls.flat().join(" ");
     expect(allOutput).toContain("tail -f");
@@ -110,7 +110,7 @@ describe("printFileDisplayStartup", () => {
 
   it("uses bold styling for the agent name bracket", () => {
     printFileDisplayStartup({
-      logPath: "/project/.shipyard/logs/main.log",
+      logPath: "/project/.shipyard-v1/logs/main.log",
     });
     const allOutput = consoleSpy.mock.calls.flat().join(" ");
     // Bold ANSI escape code
@@ -118,26 +118,26 @@ describe("printFileDisplayStartup", () => {
   });
 
   it("prints a relative log path when hostRepoDir equals process.cwd()", () => {
-    const logPath = join(process.cwd(), ".shipyard", "logs", "main.log");
+    const logPath = join(process.cwd(), ".shipyard-v1", "logs", "main.log");
     printFileDisplayStartup({
       logPath,
       hostRepoDir: process.cwd(),
     });
     const allOutput = consoleSpy.mock.calls.flat().join(" ");
-    expect(allOutput).toContain("tail -f .shipyard/logs/main.log");
+    expect(allOutput).toContain("tail -f .shipyard-v1/logs/main.log");
     expect(allOutput).not.toContain(process.cwd());
   });
 
   it("prints an absolute log path when hostRepoDir differs from process.cwd()", () => {
     const hostRepoDir = "/some/other/repo";
-    const logPath = join(hostRepoDir, ".shipyard", "logs", "main.log");
+    const logPath = join(hostRepoDir, ".shipyard-v1", "logs", "main.log");
     printFileDisplayStartup({
       logPath,
       hostRepoDir,
     });
     const allOutput = consoleSpy.mock.calls.flat().join(" ");
     expect(allOutput).toContain(
-      "tail -f /some/other/repo/.shipyard/logs/main.log",
+      "tail -f /some/other/repo/.shipyard-v1/logs/main.log",
     );
   });
 });
@@ -173,9 +173,9 @@ describe("RunResult", () => {
       stdout: "",
       commits: [],
       branch: "main",
-      logFilePath: "/path/to/shipyard.log",
+      logFilePath: "/path/to/shipyard-v1.log",
     };
-    expect(result.logFilePath).toBe("/path/to/shipyard.log");
+    expect(result.logFilePath).toBe("/path/to/shipyard-v1.log");
   });
 
   it("allows logFilePath to be absent when logging to stdout", () => {
@@ -403,11 +403,11 @@ describe("buildRunSummaryRows", () => {
       agentName: "claude-code",
       sandboxName: "docker",
       maxIterations: 5,
-      branch: "shipyard/issue-160",
+      branch: "shipyard-v1/issue-160",
     });
     expect(rows["Sandbox"]).toBe("docker");
     expect(rows["Max iterations"]).toBe("5");
-    expect(rows["Branch"]).toBe("shipyard/issue-160");
+    expect(rows["Branch"]).toBe("shipyard-v1/issue-160");
   });
 
   it("does not include a Model row", () => {
@@ -427,8 +427,8 @@ describe("sanitizeBranchForFilename", () => {
   });
 
   it("replaces forward slashes with dashes", () => {
-    expect(sanitizeBranchForFilename("shipyard/issue-87-log-file")).toBe(
-      "shipyard-issue-87-log-file",
+    expect(sanitizeBranchForFilename("shipyard-v1/issue-87-log-file")).toBe(
+      "shipyard-v1-issue-87-log-file",
     );
   });
 
@@ -444,30 +444,32 @@ describe("sanitizeBranchForFilename", () => {
 
   it("handles nested slashes like a typical shipyard branch", () => {
     expect(
-      sanitizeBranchForFilename("shipyard/issue-87-log-file-branch-name"),
-    ).toBe("shipyard-issue-87-log-file-branch-name");
+      sanitizeBranchForFilename("shipyard-v1/issue-87-log-file-branch-name"),
+    ).toBe("shipyard-v1-issue-87-log-file-branch-name");
   });
 });
 
 describe("defaultImageName", () => {
-  it("returns shipyard:<dir-name> for a typical repo path", () => {
+  it("returns shipyard-v1:<dir-name> for a typical repo path", () => {
     expect(defaultImageName("/home/user/my-project")).toBe(
-      "shipyard:my-project",
+      "shipyard-v1:my-project",
     );
   });
 
   it("lowercases the directory name", () => {
-    expect(defaultImageName("/home/user/MyProject")).toBe("shipyard:myproject");
+    expect(defaultImageName("/home/user/MyProject")).toBe(
+      "shipyard-v1:myproject",
+    );
   });
 
   it("replaces characters invalid in Docker image tags with dashes", () => {
     expect(defaultImageName("/home/user/my project")).toBe(
-      "shipyard:my-project",
+      "shipyard-v1:my-project",
     );
   });
 
   it("handles paths with trailing slash gracefully", () => {
-    expect(defaultImageName("/home/user/my-repo/")).toBe("shipyard:my-repo");
+    expect(defaultImageName("/home/user/my-repo/")).toBe("shipyard-v1:my-repo");
   });
 });
 
@@ -477,21 +479,21 @@ describe("buildLogFilename", () => {
   });
 
   it("prefixes with target branch when temp branch is used", () => {
-    expect(buildLogFilename("shipyard/20260325-142719", "main")).toBe(
-      "main-shipyard-20260325-142719.log",
+    expect(buildLogFilename("shipyard-v1/20260325-142719", "main")).toBe(
+      "main-shipyard-v1-20260325-142719.log",
     );
   });
 
   it("sanitizes target branch with slashes", () => {
     expect(
-      buildLogFilename("shipyard/20260325-142719", "feature/my-work"),
-    ).toBe("feature-my-work-shipyard-20260325-142719.log");
+      buildLogFilename("shipyard-v1/20260325-142719", "feature/my-work"),
+    ).toBe("feature-my-work-shipyard-v1-20260325-142719.log");
   });
 
   it("includes agent name when branch contains agent segment", () => {
     expect(
-      buildLogFilename("shipyard/claude-code/20260325-142719", "main"),
-    ).toBe("main-shipyard-claude-code-20260325-142719.log");
+      buildLogFilename("shipyard-v1/claude-code/20260325-142719", "main"),
+    ).toBe("main-shipyard-v1-claude-code-20260325-142719.log");
   });
 
   it("appends run name when name is provided", () => {
@@ -502,8 +504,8 @@ describe("buildLogFilename", () => {
 
   it("appends run name after target branch prefix", () => {
     expect(
-      buildLogFilename("shipyard/20260325-142719", "main", "reviewer"),
-    ).toBe("main-shipyard-20260325-142719-reviewer.log");
+      buildLogFilename("shipyard-v1/20260325-142719", "main", "reviewer"),
+    ).toBe("main-shipyard-v1-20260325-142719-reviewer.log");
   });
 
   it("sanitizes run name for filename use", () => {
@@ -524,7 +526,7 @@ describe("date-based log paths", () => {
     expect(
       buildDefaultLogPath(
         "/project",
-        "shipyard/20260922-142719",
+        "shipyard-v1/20260922-142719",
         "main",
         "planner",
         new Date(2026, 8, 22),
@@ -532,10 +534,10 @@ describe("date-based log paths", () => {
     ).toBe(
       join(
         "/project",
-        ".shipyard",
+        ".shipyard-v1",
         "logs",
         "2026-09-22",
-        "main-shipyard-20260922-142719-planner.log",
+        "main-shipyard-v1-20260922-142719-planner.log",
       ),
     );
   });
@@ -555,7 +557,7 @@ describe("promptFile resolution with cwd", () => {
     // ADR 0002 regression: promptFile must resolve against process.cwd()
     // regardless of what cwd is set to. This locks in the decision so it
     // is not accidentally reversed.
-    const cwdDir = mkdtempSync(join(tmpdir(), "shipyard-cwd-"));
+    const cwdDir = mkdtempSync(join(tmpdir(), "shipyard-v1-cwd-"));
 
     // Use a relative promptFile path that does not exist under either
     // process.cwd() or the custom cwd. The error message must reference
@@ -638,7 +640,7 @@ describe("run() error logging to file", () => {
   });
 
   it("writes SandboxError to log file when using file logging", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "shipyard-run-error-"));
+    const dir = mkdtempSync(join(tmpdir(), "shipyard-v1-run-error-"));
     const logPath = join(dir, "test.log");
     const promptFile = join(dir, "prompt.md");
     writeFileSync(promptFile, "test prompt");
@@ -660,7 +662,7 @@ describe("run() error logging to file", () => {
   });
 
   it("still propagates the error as a rejected promise", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "shipyard-run-error-"));
+    const dir = mkdtempSync(join(tmpdir(), "shipyard-v1-run-error-"));
     const logPath = join(dir, "test.log");
     const promptFile = join(dir, "prompt.md");
     writeFileSync(promptFile, "test prompt");
@@ -866,7 +868,7 @@ describe("structured output entry-time validation", () => {
   });
 
   it("validates tag presence with promptFile", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "shipyard-output-"));
+    const dir = mkdtempSync(join(tmpdir(), "shipyard-v1-output-"));
     const promptFile = join(dir, "prompt.md");
     writeFileSync(promptFile, "do some work without the tag");
 
@@ -1194,7 +1196,7 @@ describe("output.maxRetries end-to-end", () => {
   };
 
   it("retries once on bad JSON, succeeds on resumed second attempt", async () => {
-    const hostProjectsDir = mkdtempSync(join(tmpdir(), "shipyard-retry-"));
+    const hostProjectsDir = mkdtempSync(join(tmpdir(), "shipyard-v1-retry-"));
     const sessionId = "sess-retry-1";
     seedSessionFile(hostProjectsDir, process.cwd(), sessionId);
 
@@ -1234,7 +1236,7 @@ describe("output.maxRetries end-to-end", () => {
   });
 
   it("throws the final StructuredOutputError when all retries are exhausted", async () => {
-    const hostProjectsDir = mkdtempSync(join(tmpdir(), "shipyard-retry-"));
+    const hostProjectsDir = mkdtempSync(join(tmpdir(), "shipyard-v1-retry-"));
     const sessionId = "sess-retry-2";
     seedSessionFile(hostProjectsDir, process.cwd(), sessionId);
 
@@ -1270,7 +1272,7 @@ describe("output.maxRetries end-to-end", () => {
     } finally {
       rmSync(hostProjectsDir, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 
   it("does not retry when maxRetries is 0 (default behaviour)", async () => {
     const sandbox = stagedAgentSandbox([

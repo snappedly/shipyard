@@ -232,7 +232,7 @@ const readSandboxFile = async (
   tag: string,
 ): Promise<string> => {
   const tempDir = await mkdtemp(
-    join(tmpdir(), `shipyard-${tag.replace(/[^A-Za-z0-9_-]/g, "-")}-`),
+    join(tmpdir(), `shipyard-v1-${tag.replace(/[^A-Za-z0-9_-]/g, "-")}-`),
   );
   const tmpPath = join(tempDir, "session.jsonl");
   try {
@@ -260,7 +260,7 @@ const writeSandboxFile = async (
   tag: string,
 ): Promise<void> => {
   const tempDir = await mkdtemp(
-    join(tmpdir(), `shipyard-${tag.replace(/[^A-Za-z0-9_-]/g, "-")}-`),
+    join(tmpdir(), `shipyard-v1-${tag.replace(/[^A-Za-z0-9_-]/g, "-")}-`),
   );
   const tmpPath = join(tempDir, "session.jsonl");
   try {
@@ -363,7 +363,7 @@ const makeClaudeSessionStorage = (
           });
         } catch (err) {
           console.error(
-            `shipyard: failed to capture Claude subagent transcript ${sandboxSubagentPath}: ${
+            `shipyard-v1: failed to capture Claude subagent transcript ${sandboxSubagentPath}: ${
               err instanceof Error ? err.message : String(err)
             }`,
           );
@@ -556,7 +556,7 @@ export const codex = (
           ? CONFIGURED_CODEX_MODEL_EFFORTS.get(modelId)
           : model.effort));
 
-  // Configured Shipyard Codex model roles carry their own reasoning setting;
+  // Configured Shipyard V1 Codex model roles carry their own reasoning setting;
   // callers can still override it through CodexOptions.
   return {
     name: "codex",
@@ -574,7 +574,7 @@ export const codex = (
         : "";
       // auto_review only fires on interactive approvals, so the bypass flag is
       // dropped in favour of `-a on-request`. `-s danger-full-access` disables
-      // Codex's own filesystem sandbox — Shipyard owns that boundary, and
+      // Codex's own filesystem sandbox — Shipyard V1 owns that boundary, and
       // here the reviewer agent owns the per-action approval boundary.
       const approvalsFlags =
         options?.approvalsReviewer === "auto_review"
@@ -631,7 +631,7 @@ export interface ClaudeCodeOptions {
   };
   /**
    * Maps directly to Claude's `--permission-mode` flag. When set, replaces the
-   * default `--dangerously-skip-permissions` Shipyard passes on AFK runs —
+   * default `--dangerously-skip-permissions` Shipyard V1 passes on AFK runs —
    * the two flags are mutually exclusive on Claude's CLI. Use `"auto"` for
    * AI-mediated per-tool approve/deny on unsandboxed host runs.
    */
@@ -661,7 +661,7 @@ export const claudeCode = (
   }: AgentCommandOptions): PrintCommand {
     // permissionMode and --dangerously-skip-permissions are mutually exclusive
     // on Claude's CLI; an explicit mode on the provider takes precedence over
-    // Shipyard's default bypass.
+    // Shipyard V1's default bypass.
     const permissionFlag = options?.permissionMode
       ? ` --permission-mode ${options.permissionMode}`
       : dangerouslySkipPermissions

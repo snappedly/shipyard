@@ -44,14 +44,14 @@ jobs:
       - name: Build publishable artifact
         run: |
           PACKAGE_FILE=$(npm pack --silent | tail -n 1)
-          mv "$PACKAGE_FILE" shipyard-staging.tgz
-          sha256sum shipyard-staging.tgz > shipyard-staging.tgz.sha256
+          mv "$PACKAGE_FILE" shipyard-v1-staging.tgz
+          sha256sum shipyard-v1-staging.tgz > shipyard-v1-staging.tgz.sha256
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: npm-staging-package-${{ github.sha }}
           path: |
-            shipyard-staging.tgz
-            shipyard-staging.tgz.sha256
+            shipyard-v1-staging.tgz
+            shipyard-v1-staging.tgz.sha256
           if-no-files-found: error
           retention-days: 7
 
@@ -76,7 +76,7 @@ jobs:
           node-version: 20.18.1
           package-manager-cache: false
       - name: Smoke exact staging package
-        run: node scripts/smoke-packed-package.mjs shipyard-staging.tgz
+        run: node scripts/smoke-packed-package.mjs shipyard-v1-staging.tgz
 
   publish:
     name: Publish staging package
@@ -87,7 +87,7 @@ jobs:
     timeout-minutes: 15
     environment:
       name: staging
-      url: https://www.npmjs.com/package/@snappedly-tools/shipyard?activeTab=versions
+      url: https://www.npmjs.com/package/@snappedly-tools/shipyard-v1?activeTab=versions
     permissions:
       contents: read
       id-token: write
@@ -110,11 +110,11 @@ jobs:
         env:
           CANDIDATE_SHA: ${{ github.sha }}
         run: |
-          sha256sum --check shipyard-staging.tgz.sha256
+          sha256sum --check shipyard-v1-staging.tgz.sha256
           git fetch origin staging
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           test "$(git rev-parse origin/staging)" = "$CANDIDATE_SHA"
-          PACKAGE_VERSION=$(tar -xOf shipyard-staging.tgz package/package.json | node --input-type=module --eval "let input=''; process.stdin.on('data', chunk => input += chunk); process.stdin.on('end', () => console.log(JSON.parse(input).version))")
+          PACKAGE_VERSION=$(tar -xOf shipyard-v1-staging.tgz package/package.json | node --input-type=module --eval "let input=''; process.stdin.on('data', chunk => input += chunk); process.stdin.on('end', () => console.log(JSON.parse(input).version))")
           case "$PACKAGE_VERSION" in
             *-staging.*) ;;
             *)
@@ -123,4 +123,4 @@ jobs:
               ;;
           esac
       - name: Publish
-        run: npm publish shipyard-staging.tgz --access public --tag staging --provenance
+        run: npm publish shipyard-v1-staging.tgz --access public --tag staging --provenance

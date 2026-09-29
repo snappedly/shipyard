@@ -17,7 +17,7 @@ export const buildRecoveryMessage = (input: RecoveryInput): string => {
   const { patchDir, failedStep, hasCommits, hasDiff, hasUntracked, branch } =
     input;
 
-  // When --branch is set, commands run inside .shipyard/worktree,
+  // When --branch is set, commands run inside .shipyard-v1/worktree,
   // so patch paths need ../../ prefix to reach repo root
   const cmdPatchDir = branch ? `../../${patchDir}` : patchDir;
 
@@ -45,8 +45,8 @@ export const buildRecoveryMessage = (input: RecoveryInput): string => {
     lines.push("Set up worktree, then resolve:");
     lines.push(
       formatCommandBlock([
-        `git worktree add .shipyard/worktree ${branch}`,
-        `cd .shipyard/worktree`,
+        `git worktree add .shipyard-v1/worktree ${branch}`,
+        `cd .shipyard-v1/worktree`,
       ]),
     );
     lines.push("");

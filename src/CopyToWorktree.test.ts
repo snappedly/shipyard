@@ -112,18 +112,18 @@ describe("copyToWorktree", () => {
   });
 
   it.each([
-    ".shipyard",
-    ".shipyard/runner",
-    ".shipyard/runner/.credentials",
-    ".SHIPYARD/RUNNER/.credentials",
+    ".shipyard-v1",
+    ".shipyard-v1/runner",
+    ".shipyard-v1/runner/.credentials",
+    ".SHIPYARD-V1/RUNNER/.credentials",
   ])(
     "rejects copying the protected repository runner through %s",
     async (copyPath) => {
       const hostDir = await mkdtemp(join(tmpdir(), "cw-test-"));
       const worktreeDir = await mkdtemp(join(tmpdir(), "cw-wt-"));
-      await mkdir(join(hostDir, ".shipyard", "runner"), { recursive: true });
+      await mkdir(join(hostDir, ".shipyard-v1", "runner"), { recursive: true });
       await writeFile(
-        join(hostDir, ".shipyard", "runner", ".credentials"),
+        join(hostDir, ".shipyard-v1", "runner", ".credentials"),
         "secret",
       );
 

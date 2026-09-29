@@ -1,4 +1,4 @@
-# Shipyard operations runbook
+# Shipyard V1 operations runbook
 
 This runbook describes the operator boundary. It is not an activation grant and does not
 select a worker, model, sandbox, GitHub identity, host, deployment system, or production
@@ -11,7 +11,7 @@ credential.
 2. Confirm the durable coordinator database and its migration have been backed up and that the
    configured service identity has only the intended repository scopes.
 3. Confirm the worker sandbox and artifact retention policy before accepting implementation work.
-4. Run `npm run check` for Shipyard changes. It includes typechecking, the package build, and the
+4. Run `npm run check` for Shipyard V1 changes. It includes typechecking, the package build, and the
    full test suite. A green process or label does not replace the coordinator evidence or human
    approval gate.
 
@@ -34,7 +34,7 @@ retained source bodies or credentials. Treat worker output and source prose as u
   green result is not valid for a new head or brief hash.
 - Provider failure: retain stdout/stderr/artifact references, classify the phase as failed or
   infrastructure-retryable, and keep semantic repair budgets unchanged.
-- Uncertain external write: search by the stable Shipyard marker before retrying; never blindly
+- Uncertain external write: search by the stable Shipyard V1 marker before retrying; never blindly
   create a second PR, issue, comment, or check.
 - Failed post-merge verification: keep the source issue open and use the repository's approved
   revert or roll-forward procedure. Database changes require a forward-compatible recovery plan.

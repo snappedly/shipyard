@@ -13,7 +13,7 @@ const repository =
   process.env.GH_REPO ||
   gh("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner");
 const pendingDir = resolve(
-  execFileSync("git", ["rev-parse", "--git-path", "shipyard-pending"], {
+  execFileSync("git", ["rev-parse", "--git-path", "shipyard-v1-pending"], {
     encoding: "utf8",
   }).trim(),
 );
@@ -59,7 +59,8 @@ if (existsSync(pendingDir)) {
           { encoding: "utf8" },
         ).split(/\r?\n/);
         return (
-          labels.includes("shipyard") && !labels.includes("shipyard:blocked")
+          labels.includes("shipyard-v1") &&
+          !labels.includes("shipyard-v1:blocked")
         );
       });
     if (reactivated) {
@@ -184,8 +185,8 @@ const specPRs = () => {
   }
   return specPRCatalog.filter(
     (pr) =>
-      /^shipyard\/spec-\d+$/.test(pr.headRefName ?? "") &&
-      pr.body?.includes("<!-- shipyard:verified-handoff -->"),
+      /^shipyard-v1\/spec-\d+$/.test(pr.headRefName ?? "") &&
+      pr.body?.includes("<!-- shipyard-v1:verified-handoff -->"),
   );
 };
 const sourceIds = (body) =>
@@ -196,16 +197,16 @@ const sourceIds = (body) =>
 const prParentLink = (id) => {
   const roots = specPRs()
     .filter((pr) => sourceIds(pr.body).includes(id))
-    .map((pr) => number(pr.headRefName.slice("shipyard/spec-".length)))
+    .map((pr) => number(pr.headRefName.slice("shipyard-v1/spec-".length)))
     .filter((root) => root !== id);
   if (new Set(roots).size > 1)
-    invalid(`Ticket #${id} is linked to multiple Shipyard spec PRs`, id);
+    invalid(`Ticket #${id} is linked to multiple Shipyard V1 spec PRs`, id);
   return roots[0];
 };
 const prChildren = (rootId) => {
   const ids = new Set(
     specPRs()
-      .filter((pr) => pr.headRefName === `shipyard/spec-${rootId}`)
+      .filter((pr) => pr.headRefName === `shipyard-v1/spec-${rootId}`)
       .flatMap((pr) => sourceIds(pr.body))
       .filter((id) => id !== rootId),
   );
@@ -226,22 +227,22 @@ const fullIssue = (id) =>
     "number,title,body,state,labels",
   );
 const statusLabels = [
-  "shipyard:blocked",
-  "shipyard:complete",
-  "shipyard:outstanding-tasks",
+  "shipyard-v1:blocked",
+  "shipyard-v1:complete",
+  "shipyard-v1:outstanding-tasks",
 ];
 const statusFor = (tickets) =>
   tickets.some(
     (ticket) =>
-      ticket.labels.some((label) => label.name === "shipyard:blocked") &&
-      !ticket.labels.some((label) => label.name === "shipyard:complete"),
+      ticket.labels.some((label) => label.name === "shipyard-v1:blocked") &&
+      !ticket.labels.some((label) => label.name === "shipyard-v1:complete"),
   )
-    ? "shipyard:blocked"
+    ? "shipyard-v1:blocked"
     : tickets.every((ticket) =>
-          ticket.labels.some((label) => label.name === "shipyard:complete"),
+          ticket.labels.some((label) => label.name === "shipyard-v1:complete"),
         )
-      ? "shipyard:complete"
-      : "shipyard:outstanding-tasks";
+      ? "shipyard-v1:complete"
+      : "shipyard-v1:outstanding-tasks";
 const syncStatus = (root, tickets, pr) => {
   const status = statusFor(tickets);
   let synced = true;
@@ -279,16 +280,16 @@ const syncStatus = (root, tickets, pr) => {
     "--repo",
     repository,
     "--color",
-    status === "shipyard:blocked"
+    status === "shipyard-v1:blocked"
       ? "B60205"
-      : status === "shipyard:complete"
+      : status === "shipyard-v1:complete"
         ? "0E8A16"
         : "FBCA04",
     "--description",
-    status === "shipyard:blocked"
-      ? "Shipyard work needs intervention"
-      : status === "shipyard:complete"
-        ? "Shipyard work ready for human review"
+    status === "shipyard-v1:blocked"
+      ? "Shipyard V1 work needs intervention"
+      : status === "shipyard-v1:complete"
+        ? "Shipyard V1 work ready for human review"
         : "Spec has uncompleted tickets",
     "--force",
   );
@@ -343,7 +344,7 @@ const activated = json(
   "--state",
   "open",
   "--label",
-  "shipyard",
+  "shipyard-v1",
   "--limit",
   "100",
   "--json",
@@ -392,12 +393,14 @@ for (const candidate of activated) {
       invalid(`Parent #${rootId} is not a planning spec`, id);
     if (isSpec && linked.length === 0)
       invalid(`Planning spec #${rootId} has no linked executable tickets`, id);
-    const branch = isSpec ? `shipyard/spec-${rootId}` : `shipyard/issue-${id}`;
+    const branch = isSpec
+      ? `shipyard-v1/spec-${rootId}`
+      : `shipyard-v1/issue-${id}`;
     if (processedBranches.has(branch)) continue;
     processedBranches.add(branch);
     if (
       !isSpec &&
-      candidate.labels?.some((label) => label.name === "shipyard:complete")
+      candidate.labels?.some((label) => label.name === "shipyard-v1:complete")
     ) {
       const existing = json(
         "pr",
@@ -412,7 +415,9 @@ for (const candidate of activated) {
         "number,isDraft,labels,body",
       );
       const synced = syncStatus(candidate, [candidate], existing[0]);
-      if (candidate.labels.some((label) => label.name === "shipyard:pending"))
+      if (
+        candidate.labels.some((label) => label.name === "shipyard-v1:pending")
+      )
         gh(
           "issue",
           "edit",
@@ -420,7 +425,7 @@ for (const candidate of activated) {
           "--repo",
           repository,
           "--remove-label",
-          "shipyard:pending",
+          "shipyard-v1:pending",
         );
       if (synced)
         gh(
@@ -430,13 +435,13 @@ for (const candidate of activated) {
           "--repo",
           repository,
           "--remove-label",
-          "shipyard",
+          "shipyard-v1",
         );
       continue;
     }
     if (
       !isSpec &&
-      candidate.labels?.some((label) => label.name === "shipyard:blocked")
+      candidate.labels?.some((label) => label.name === "shipyard-v1:blocked")
     ) {
       gh(
         "issue",
@@ -445,7 +450,7 @@ for (const candidate of activated) {
         "--repo",
         repository,
         "--remove-label",
-        "shipyard",
+        "shipyard-v1",
       );
       continue;
     }
@@ -461,13 +466,13 @@ for (const candidate of activated) {
     const blockedActiveIds = [];
     for (const ticket of linkedTickets) {
       if (
-        ticket.labels.some((label) => label.name === "shipyard:blocked") &&
-        ticket.labels.some((label) => label.name === "shipyard")
+        ticket.labels.some((label) => label.name === "shipyard-v1:blocked") &&
+        ticket.labels.some((label) => label.name === "shipyard-v1")
       )
         blockedActiveIds.push(ticket.id);
       if (
-        ticket.labels.some((label) => label.name === "shipyard:complete") &&
-        ticket.labels.some((label) => label.name === "shipyard:pending")
+        ticket.labels.some((label) => label.name === "shipyard-v1:complete") &&
+        ticket.labels.some((label) => label.name === "shipyard-v1:pending")
       )
         gh(
           "issue",
@@ -476,14 +481,14 @@ for (const candidate of activated) {
           "--repo",
           repository,
           "--remove-label",
-          "shipyard:pending",
+          "shipyard-v1:pending",
         );
     }
     const selectableTickets = linkedTickets.filter(
       (ticket) =>
-        ticket.labels.some((label) => label.name === "shipyard") &&
+        ticket.labels.some((label) => label.name === "shipyard-v1") &&
         !ticket.labels.some((label) =>
-          ["shipyard:complete", "shipyard:blocked"].includes(label.name),
+          ["shipyard-v1:complete", "shipyard-v1:blocked"].includes(label.name),
         ),
     );
     selectedTicketIds = new Set(selectableTickets.map((ticket) => ticket.id));
@@ -494,7 +499,7 @@ for (const candidate of activated) {
     }));
     const completedTicketIds = linkedTickets
       .filter((ticket) =>
-        ticket.labels.some((label) => label.name === "shipyard:complete"),
+        ticket.labels.some((label) => label.name === "shipyard-v1:complete"),
       )
       .map((ticket) => ticket.id);
     const outstandingTicketIds = linkedTickets
@@ -541,7 +546,8 @@ for (const candidate of activated) {
     );
     const ready = existing.find(
       (pr) =>
-        !pr.isDraft && pr.body?.includes("<!-- shipyard:verified-handoff -->"),
+        !pr.isDraft &&
+        pr.body?.includes("<!-- shipyard-v1:verified-handoff -->"),
     );
     const statusSynced = isSpec
       ? syncStatus(root, linkedTickets, existing[0])
@@ -555,7 +561,7 @@ for (const candidate of activated) {
           "--repo",
           repository,
           "--remove-label",
-          "shipyard",
+          "shipyard-v1",
         );
     }
     if (ready) {
@@ -595,12 +601,12 @@ for (const candidate of activated) {
             "--repo",
             repository,
             "--add-label",
-            "shipyard:complete",
+            "shipyard-v1:complete",
           );
           if (
             linkedTickets
               .find((item) => item.id === ticket.id)
-              ?.labels.some((label) => label.name === "shipyard:blocked")
+              ?.labels.some((label) => label.name === "shipyard-v1:blocked")
           )
             gh(
               "issue",
@@ -609,12 +615,12 @@ for (const candidate of activated) {
               "--repo",
               repository,
               "--remove-label",
-              "shipyard:blocked",
+              "shipyard-v1:blocked",
             );
           if (
             linkedTickets
               .find((item) => item.id === ticket.id)
-              ?.labels.some((label) => label.name === "shipyard:pending")
+              ?.labels.some((label) => label.name === "shipyard-v1:pending")
           )
             gh(
               "issue",
@@ -623,13 +629,15 @@ for (const candidate of activated) {
               "--repo",
               repository,
               "--remove-label",
-              "shipyard:pending",
+              "shipyard-v1:pending",
             );
         }
         for (const ticket of linkedTickets) {
           if (
-            ticket.labels.some((label) => label.name === "shipyard:complete") &&
-            ticket.labels.some((label) => label.name === "shipyard:blocked")
+            ticket.labels.some(
+              (label) => label.name === "shipyard-v1:complete",
+            ) &&
+            ticket.labels.some((label) => label.name === "shipyard-v1:blocked")
           )
             gh(
               "issue",
@@ -638,7 +646,7 @@ for (const candidate of activated) {
               "--repo",
               repository,
               "--remove-label",
-              "shipyard:blocked",
+              "shipyard-v1:blocked",
             );
         }
         let completedStatusSynced = statusSynced;
@@ -647,7 +655,7 @@ for (const candidate of activated) {
             root,
             linkedTickets.map((ticket) =>
               selectedTicketIds.has(ticket.id)
-                ? { ...ticket, labels: [{ name: "shipyard:complete" }] }
+                ? { ...ticket, labels: [{ name: "shipyard-v1:complete" }] }
                 : ticket,
             ),
             ready,
@@ -660,9 +668,11 @@ for (const candidate of activated) {
             "--repo",
             repository,
             "--add-label",
-            "shipyard:complete",
+            "shipyard-v1:complete",
           );
-          if (root.labels?.some((label) => label.name === "shipyard:pending"))
+          if (
+            root.labels?.some((label) => label.name === "shipyard-v1:pending")
+          )
             gh(
               "issue",
               "edit",
@@ -670,7 +680,7 @@ for (const candidate of activated) {
               "--repo",
               repository,
               "--remove-label",
-              "shipyard:pending",
+              "shipyard-v1:pending",
             );
           gh(
             "pr",
@@ -679,7 +689,7 @@ for (const candidate of activated) {
             "--repo",
             repository,
             "--add-label",
-            "shipyard:complete",
+            "shipyard-v1:complete",
           );
         }
         const activatedIds = [
@@ -696,7 +706,7 @@ for (const candidate of activated) {
               "--repo",
               repository,
               "--remove-label",
-              "shipyard",
+              "shipyard-v1",
             );
         continue;
       }
@@ -751,7 +761,7 @@ for (const candidate of activated) {
             "--repo",
             repository,
             "--remove-label",
-            "shipyard",
+            "shipyard-v1",
           );
       continue;
     }
@@ -794,13 +804,13 @@ for (const candidate of activated) {
         repository,
         specChild ? `${blockRoot},${affectedId}` : affectedId,
         specChild
-          ? `shipyard/spec-${blockRoot}`
-          : `shipyard/issue-${affectedId}`,
+          ? `shipyard-v1/spec-${blockRoot}`
+          : `shipyard-v1/issue-${affectedId}`,
       ],
       { input: error.message, encoding: "utf8" },
     );
     blockedIds.add(affectedId);
-    console.error(`Shipyard blocked issue #${affectedId}: ${error.message}`);
+    console.error(`Shipyard V1 blocked issue #${affectedId}: ${error.message}`);
   }
 }
 process.stdout.write(`${JSON.stringify([...scopes.values()])}\n`);

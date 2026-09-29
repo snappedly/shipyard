@@ -19,7 +19,7 @@ inside the sandbox.
 Codex supports two authentication modes:
 
 - `--codex-auth api-key`: the generated scaffold declares `OPENAI_API_KEY`.
-  Init creates `.shipyard/.env` from the generated example; fill it in. API
+  Init creates `.shipyard-v1/.env` from the generated example; fill it in. API
   usage is billed through the OpenAI API Platform.
 - `--codex-auth chatgpt`: run `codex login` on the host and ensure
   `~/.codex/auth.json` exists. Interactive init starts that login flow when
@@ -47,38 +47,38 @@ Required environment variables (one of):
 ## Choose models for generated workflows
 
 Generated `simple-loop`, `sequential-reviewer`, `parallel-planner`, and
-`parallel-planner-with-review` workflows use `SHIPYARD_ROUTINE_MODEL` for
+`parallel-planner-with-review` workflows use `SHIPYARD_V1_ROUTINE_MODEL` for
 factual triage and implementation. `simple-loop` has no strong role.
-`sequential-reviewer` uses `SHIPYARD_STRONG_MODEL` for issue reviews. Parallel
+`sequential-reviewer` uses `SHIPYARD_V1_STRONG_MODEL` for issue reviews. Parallel
 planner workflows use the strong model for planning, conflict resolution, and
 dependency-wave integration. `parallel-planner-with-review` also uses it for
 ticket reviews and the final review of the integrated specification. The
 selected provider handles both roles.
 
-Set the role values in `.shipyard/.env`. A host environment value overrides
-the same entry in that file. Shipyard does not load the repository-root `.env`.
-`shipyard init --model <model>` supplies each role that has no
-`SHIPYARD_ROUTINE_MODEL` or `SHIPYARD_STRONG_MODEL` value.
+Set the role values in `.shipyard-v1/.env`. A host environment value overrides
+the same entry in that file. Shipyard V1 does not load the repository-root `.env`.
+`shipyard-v1 init --model <model>` supplies each role that has no
+`SHIPYARD_V1_ROUTINE_MODEL` or `SHIPYARD_V1_STRONG_MODEL` value.
 
 Choose a value supported by the selected provider and its authentication route.
 For Codex, see the [Codex model picker](https://learn.chatgpt.com/docs/models).
 For Claude Code, see [available models and aliases](https://code.claude.com/docs/en/model-config).
 The generated Codex `.env.example` sets `gpt-6-luna` for routine work and
 `gpt-6-sol` for strong work. The Claude Code model choices stay commented out.
-Shipyard passes each nonempty value to the provider unchanged. The provider
+Shipyard V1 passes each nonempty value to the provider unchanged. The provider
 reports unavailable models. Aliases can change their target over time. Use a
 versioned model ID when you need a fixed target.
 
 For Codex and Claude Code workflows, set per-role reasoning effort in
-`.shipyard/.env` with `SHIPYARD_ROUTINE_REASONING_EFFORT` and
-`SHIPYARD_STRONG_REASONING_EFFORT`. The generated Codex `.env.example` sets
+`.shipyard-v1/.env` with `SHIPYARD_V1_ROUTINE_REASONING_EFFORT` and
+`SHIPYARD_V1_STRONG_REASONING_EFFORT`. The generated Codex `.env.example` sets
 routine effort to `medium` and strong effort to `high`. The Claude Code example
 leaves both settings commented out. Init copies the example into `.env`.
 Remove either entry to use the provider's default effort. Valid values are
 `low`, `medium`, `high`, `xhigh`, and `max`; invalid values stop the workflow
 with a configuration error. The older Codex-prefixed effort variables remain
 Codex-only fallbacks when a shared effort value is unset. The existing
-`SHIPYARD_CODEX_ROUTINE_MODEL` and `SHIPYARD_CODEX_STRONG_MODEL` variables
+`SHIPYARD_V1_CODEX_ROUTINE_MODEL` and `SHIPYARD_V1_CODEX_STRONG_MODEL` variables
 remain available for Codex-specific model overrides.
 
 Direct library calls such as `codex(CODEX_MODELS.routine)` and

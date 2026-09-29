@@ -55,7 +55,7 @@ import { VERSION } from "./version.js";
 import {
   inspectShipyardConfigDirectory,
   removeShipyardRepositoryFiles,
-  SHIPYARD_PACKAGE_NAME,
+  SHIPYARD_V1_PACKAGE_NAME,
 } from "./UninstallService.js";
 import { REPOSITORY_RUNNER_WORKFLOW_PATH } from "./RepositoryRunnerWake.js";
 
@@ -134,7 +134,7 @@ const skipBuildOption = Options.boolean("skip-build").pipe(
 
 const entrypointOption = Options.text("entrypoint").pipe(
   Options.withDescription(
-    "TypeScript entrypoint (defaults to .shipyard/main.ts or main.mts)",
+    "TypeScript entrypoint (defaults to .shipyard-v1/main.ts or main.mts)",
   ),
   Options.optional,
 );
@@ -160,7 +160,7 @@ const resolveRunEntrypoint = (
 
   return new InitError({
     message:
-      "No Shipyard entrypoint found. Expected .shipyard/main.ts or .shipyard/main.mts; run `shipyard init` first or pass `--entrypoint <path>.",
+      "No Shipyard V1 entrypoint found. Expected .shipyard-v1/main.ts or .shipyard-v1/main.mts; run `shipyard-v1 init` first or pass `--entrypoint <path>.",
   });
 };
 
@@ -172,7 +172,7 @@ const resolveRunSandbox = (
     const filename = "Dockerfile";
     if (!existsSync(join(configDir, filename))) {
       return new InitError({
-        message: `No .shipyard/${filename} found for the selected ${sandbox.value} sandbox provider.`,
+        message: `No .shipyard-v1/${filename} found for the selected ${sandbox.value} sandbox provider.`,
       });
     }
     return sandbox.value;
@@ -182,7 +182,7 @@ const resolveRunSandbox = (
   if (hasDockerfile) return "docker";
   return new InitError({
     message:
-      "No .shipyard/Dockerfile found. Run `shipyard init` first, or pass `--skip-build` for a programmatically configured sandbox.",
+      "No .shipyard-v1/Dockerfile found. Run `shipyard-v1 init` first, or pass `--skip-build` for a programmatically configured sandbox.",
   });
 };
 
@@ -277,7 +277,7 @@ const runCommand = Command.make(
       }
 
       yield* d.status(
-        `Running ${entrypoint._tag === "Some" ? entrypoint.value : ".shipyard/" + resolvedEntrypoint.split(/[\\/]/).pop()}.`,
+        `Running ${entrypoint._tag === "Some" ? entrypoint.value : ".shipyard-v1/" + resolvedEntrypoint.split(/[\\/]/).pop()}.`,
         "info",
       );
       yield* executeEntrypoint(cwd, resolvedEntrypoint);
@@ -336,7 +336,7 @@ const installTemplateDepsOption = Options.choice("install-template-deps", [
 const commitSetupOption = Options.choice("commit-setup", ["true", "false"])
   .pipe(
     Options.withDescription(
-      "Whether to commit and push .shipyard/ and any generated runner workflow",
+      "Whether to commit and push .shipyard-v1/ and any generated runner workflow",
     ),
   )
   .pipe(Options.optional);
@@ -415,7 +415,7 @@ const initCommand = Command.make(
         }
       }
 
-      yield* d.progress("Initializing Shipyard", (report) =>
+      yield* d.progress("Initializing Shipyard V1", (report) =>
         Effect.gen(function* () {
           const progressAt = (current: number, message: string) =>
             report({ current, total: 100, message });
@@ -656,19 +656,23 @@ const initCommand = Command.make(
             ["ready-for-agent", "Ready for agent implementation", "0E8A16"],
             ["ready-for-human", "Requires human implementation", "1D76DB"],
             ["wontfix", "Will not be actioned", "FFFFFF"],
-            ["shipyard:blocked", "Shipyard work needs intervention", "B60205"],
             [
-              "shipyard:pending",
-              "Shipyard is working on this ticket",
+              "shipyard-v1:blocked",
+              "Shipyard V1 work needs intervention",
+              "B60205",
+            ],
+            [
+              "shipyard-v1:pending",
+              "Shipyard V1 is working on this ticket",
               "1D76DB",
             ],
             [
-              "shipyard:complete",
-              "Shipyard work ready for human review",
+              "shipyard-v1:complete",
+              "Shipyard V1 work ready for human review",
               "0E8A16",
             ],
             [
-              "shipyard:outstanding-tasks",
+              "shipyard-v1:outstanding-tasks",
               "Spec has uncompleted tickets",
               "FBCA04",
             ],
@@ -735,7 +739,7 @@ const initCommand = Command.make(
                 }),
             ),
           );
-          progressAt(56, "Shipyard configuration generated");
+          progressAt(56, "Shipyard V1 configuration generated");
 
           // Detect the host package manager so the zod offer below and the next
           // steps below both use the right install command.
@@ -745,7 +749,7 @@ const initCommand = Command.make(
           // If the chosen template imports zod on the host (the planner templates
           // build their <plan> output schema with it) and the host doesn't already
           // declare it, offer to install it. Without this, the very first
-          // `npx tsx .shipyard/main.ts` crashes with ERR_MODULE_NOT_FOUND.
+          // `npx tsx .shipyard-v1/main.ts` crashes with ERR_MODULE_NOT_FOUND.
           if (getTemplateDependencies(selectedTemplate).includes("zod")) {
             const alreadyInstalled = yield* hostHasDependency(cwd, "zod");
             if (!alreadyInstalled) {
@@ -837,7 +841,7 @@ const initCommand = Command.make(
               whilePrompt(() =>
                 clack.confirm({
                   message:
-                    "Commit .shipyard/, any generated runner workflow, and package.json/package-lock.json when present, then push this branch to origin? Sandboxes need the setup committed. The push also sends any local commits not already on origin.",
+                    "Commit .shipyard-v1/, any generated runner workflow, and package.json/package-lock.json when present, then push this branch to origin? Sandboxes need the setup committed. The push also sends any local commits not already on origin.",
                   initialValue: true,
                 }),
               ),
@@ -845,7 +849,7 @@ const initCommand = Command.make(
             if (clack.isCancel(confirmed)) {
               yield* Effect.fail(
                 new InitError({
-                  message: "Shipyard setup commit cancelled.",
+                  message: "Shipyard V1 setup commit cancelled.",
                 }),
               );
             }
@@ -854,7 +858,7 @@ const initCommand = Command.make(
           progressAt(
             96,
             shouldCommitSetup
-              ? "Committing and pushing Shipyard setup"
+              ? "Committing and pushing Shipyard V1 setup"
               : "Setup commit skipped",
           );
 
@@ -873,14 +877,14 @@ const initCommand = Command.make(
                 };
               }
             });
-            progressAt(99, "Shipyard setup commit finished");
+            progressAt(99, "Shipyard V1 setup commit finished");
             if (publishResult.status === "failed") {
               yield* statusWithProgress(
-                `Could not commit the Shipyard setup: ${publishResult.message}`,
+                `Could not commit the Shipyard V1 setup: ${publishResult.message}`,
                 "warn",
               );
               yield* statusWithProgress(
-                `Commit \`${CONFIG_DIR}/\` before running Shipyard.`,
+                `Commit \`${CONFIG_DIR}/\` before running Shipyard V1.`,
                 "warn",
               );
             } else if (publishResult.result.pushError) {
@@ -900,7 +904,7 @@ const initCommand = Command.make(
             }
           } else {
             yield* statusWithProgress(
-              `Commit \`${CONFIG_DIR}/\` before running Shipyard. Sandboxes do not receive uncommitted setup files.`,
+              `Commit \`${CONFIG_DIR}/\` before running Shipyard V1. Sandboxes do not receive uncommitted setup files.`,
               "warn",
             );
             yield* statusWithProgress(
@@ -935,7 +939,7 @@ const uninstallCommand = Command.make(
         try: () => inspectShipyardConfigDirectory(repoDir),
         catch: (error) =>
           new InitError({
-            message: `Could not inspect Shipyard configuration: ${error instanceof Error ? error.message : String(error)}`,
+            message: `Could not inspect Shipyard V1 configuration: ${error instanceof Error ? error.message : String(error)}`,
           }),
       });
       const runnerDir = join(repoDir, CONFIG_DIR, RUNNER_DIR);
@@ -945,7 +949,7 @@ const uninstallCommand = Command.make(
       );
       const packageInstalled = yield* hostHasDependency(
         repoDir,
-        SHIPYARD_PACKAGE_NAME,
+        SHIPYARD_V1_PACKAGE_NAME,
       );
 
       if (
@@ -955,7 +959,7 @@ const uninstallCommand = Command.make(
         !packageInstalled
       ) {
         yield* d.status(
-          "No Shipyard installation found in this repository.",
+          "No Shipyard V1 installation found in this repository.",
           "info",
         );
         return;
@@ -965,7 +969,7 @@ const uninstallCommand = Command.make(
         return yield* Effect.fail(
           new InitError({
             message:
-              "Shipyard uninstall needs confirmation. Run it in a terminal or pass --yes.",
+              "Shipyard V1 uninstall needs confirmation. Run it in a terminal or pass --yes.",
           }),
         );
       }
@@ -980,22 +984,22 @@ const uninstallCommand = Command.make(
             : null,
           workflowExists ? "remove the generated runner wake workflow" : null,
           packageInstalled
-            ? `remove ${SHIPYARD_PACKAGE_NAME} from package.json`
+            ? `remove ${SHIPYARD_V1_PACKAGE_NAME} from package.json`
             : null,
         ].filter((action): action is string => action !== null);
         const confirmation = yield* Effect.tryPromise({
           try: () =>
             clack.confirm({
-              message: `Uninstall Shipyard from ${repoDir}? This will ${actions.join(", ")}. It leaves GitHub issues and labels unchanged.`,
+              message: `Uninstall Shipyard V1 from ${repoDir}? This will ${actions.join(", ")}. It leaves GitHub issues and labels unchanged.`,
               initialValue: false,
             }),
           catch: (error) =>
             new InitError({
-              message: `Could not confirm Shipyard uninstall: ${error instanceof Error ? error.message : String(error)}`,
+              message: `Could not confirm Shipyard V1 uninstall: ${error instanceof Error ? error.message : String(error)}`,
             }),
         });
         if (clack.isCancel(confirmation) || confirmation !== true) {
-          yield* d.status("Shipyard uninstall cancelled.", "info");
+          yield* d.status("Shipyard V1 uninstall cancelled.", "info");
           return;
         }
       }
@@ -1020,7 +1024,7 @@ const uninstallCommand = Command.make(
         try: () => removeShipyardRepositoryFiles({ repoDir }),
         catch: (error) =>
           new InitError({
-            message: `Could not remove Shipyard repository files: ${error instanceof Error ? error.message : String(error)}`,
+            message: `Could not remove Shipyard V1 repository files: ${error instanceof Error ? error.message : String(error)}`,
           }),
       });
       if (files.configDirectoryRemoved) {
@@ -1045,22 +1049,25 @@ const uninstallCommand = Command.make(
         const packageManager = yield* detectPackageManager(repoDir);
         const command = removeDependencyCommand(
           packageManager,
-          SHIPYARD_PACKAGE_NAME,
+          SHIPYARD_V1_PACKAGE_NAME,
         );
         yield* Effect.try({
           try: () => execSync(command, { cwd: repoDir, stdio: "inherit" }),
           catch: (error) =>
             new InitError({
-              message: `Could not remove ${SHIPYARD_PACKAGE_NAME}. Rerun the uninstall after resolving the package-manager error: ${error instanceof Error ? error.message : String(error)}`,
+              message: `Could not remove ${SHIPYARD_V1_PACKAGE_NAME}. Rerun the uninstall after resolving the package-manager error: ${error instanceof Error ? error.message : String(error)}`,
             }),
         });
         yield* d.status(
-          `Removed ${SHIPYARD_PACKAGE_NAME} with ${packageManager}.`,
+          `Removed ${SHIPYARD_V1_PACKAGE_NAME} with ${packageManager}.`,
           "success",
         );
       }
 
-      yield* d.status("Shipyard uninstalled from this repository.", "success");
+      yield* d.status(
+        "Shipyard V1 uninstalled from this repository.",
+        "success",
+      );
     }),
 );
 

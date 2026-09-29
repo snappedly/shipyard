@@ -47,7 +47,7 @@ describe("WorktreeDockerSandboxFactory — baseBranch (real git)", () => {
   });
 
   it("forks new branch from baseBranch when run() goes through SandboxFactory", async () => {
-    const hostRepoDir = await mkdtemp(join(tmpdir(), "shipyard-bb-test-"));
+    const hostRepoDir = await mkdtemp(join(tmpdir(), "shipyard-v1-bb-test-"));
     tempDirs.push(hostRepoDir);
     await initRepo(hostRepoDir);
     await commitFile(hostRepoDir, "init.txt", "init", "initial commit");
@@ -57,7 +57,7 @@ describe("WorktreeDockerSandboxFactory — baseBranch (real git)", () => {
     });
     await commitFile(hostRepoDir, "second.txt", "second", "second commit");
 
-    const childBranch = "shipyard/child-from-base";
+    const childBranch = "shipyard-v1/child-from-base";
     const layer = Layer.provide(
       WorktreeDockerSandboxFactory.layer,
       Layer.mergeAll(

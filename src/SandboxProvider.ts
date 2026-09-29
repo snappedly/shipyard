@@ -111,7 +111,7 @@ export interface IsolatedSandboxProvider {
   ) => Promise<IsolatedSandboxHandle>;
 }
 
-/** Provider accepted by Shipyard's Docker execution path. */
+/** Provider accepted by Shipyard V1's Docker execution path. */
 export type SandboxProvider = IsolatedSandboxProvider;
 
 /** Create a temporary branch and merge its commits back to host HEAD. */

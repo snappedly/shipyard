@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 const MAX_BUFFER = 10 * 1024 * 1024;
 
 /**
- * Git configuration that can execute programs while Shipyard processes files
+ * Git configuration that can execute programs while Shipyard V1 processes files
  * authored inside a sandbox. Command-line configuration has the highest
  * priority, so these values override repository and user configuration.
  */

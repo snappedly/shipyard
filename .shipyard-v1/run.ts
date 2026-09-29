@@ -1,5 +1,5 @@
-import * as shipyard from "@snappedly-tools/shipyard";
-import { docker } from "@snappedly-tools/shipyard/sandboxes/docker";
+import * as shipyard from "@snappedly-tools/shipyard-v1";
+import { docker } from "@snappedly-tools/shipyard-v1/sandboxes/docker";
 
 const MAX_ITERATIONS = 10;
 const MAX_PARALLEL = 4;
@@ -12,7 +12,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
     sandbox: docker(),
     name: "Planner",
     agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
-    promptFile: "./.shipyard/plan-prompt.md",
+    promptFile: "./.shipyard-v1/plan-prompt.md",
   });
 
   const planMatch = plan.stdout.match(/<plan>([\s\S]*?)<\/plan>/);
@@ -72,7 +72,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
         const result = await sandbox.run({
           name: "Implementer #" + issue.number,
           agent: shipyard.codex(shipyard.CODEX_MODELS.routine),
-          promptFile: "./.shipyard/implement-prompt.md",
+          promptFile: "./.shipyard-v1/implement-prompt.md",
           promptArgs: {
             TASK_ID: String(issue.number),
             ISSUE_TITLE: issue.title,
@@ -87,7 +87,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
           await sandbox.run({
             name: "Reviewer #" + issue.number,
             agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
-            promptFile: "./.shipyard/review-prompt.md",
+            promptFile: "./.shipyard-v1/review-prompt.md",
             promptArgs: {
               TASK_ID: String(issue.number),
               ISSUE_TITLE: issue.title,
@@ -148,7 +148,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
     name: "Merger",
     maxIterations: 10,
     agent: shipyard.codex(shipyard.CODEX_MODELS.strong),
-    promptFile: "./.shipyard/merge-prompt.md",
+    promptFile: "./.shipyard-v1/merge-prompt.md",
     promptArgs: {
       BRANCHES: completedBranches.map((b) => `- ${b}`).join("\n"),
       ISSUES: completedIssues

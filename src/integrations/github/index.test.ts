@@ -23,7 +23,7 @@ import {
 const sign = (body: string, secret: string): string =>
   `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`;
 
-const repository = "snappedly/shipyard";
+const repository = "snappedly/shipyard-v1";
 const secret = "test-secret";
 
 const policy = (): RepositoryPolicy =>
@@ -317,7 +317,7 @@ describe("GitHub webhook intake", () => {
       pullRequestNumber: 99,
       jobId: issue.ingest!.job!.id,
       itemId: "42",
-      branch: "shipyard/issue-42",
+      branch: "shipyard-v1/issue-42",
       headSha: "b".repeat(40),
       marker: "pull-request:tracked",
       brief: issue.ingest!.job!.brief,
@@ -335,7 +335,7 @@ describe("GitHub webhook intake", () => {
           body: "candidate",
           state: "open",
           updated_at: "2026-09-17T12:00:04.000Z",
-          head: { ref: "shipyard/issue-42", sha: "d".repeat(40) },
+          head: { ref: "shipyard-v1/issue-42", sha: "d".repeat(40) },
         },
       }),
     );
@@ -352,7 +352,7 @@ describe("GitHub webhook intake", () => {
           number: 99,
           state: "open",
           updated_at: "2026-09-17T12:00:05.000Z",
-          head: { ref: "shipyard/issue-42", sha: "d".repeat(40) },
+          head: { ref: "shipyard-v1/issue-42", sha: "d".repeat(40) },
         },
         review: {
           id: 7,
@@ -375,7 +375,7 @@ describe("GitHub webhook intake", () => {
     expect(requestRepair).toHaveBeenCalledWith({
       candidate: {
         base: issue.ingest!.job!.brief.base,
-        head: { branch: "shipyard/issue-42", sha: "e".repeat(40) },
+        head: { branch: "shipyard-v1/issue-42", sha: "e".repeat(40) },
         briefHash: issue.ingest!.job!.brief.hash,
       },
       pullRequestNumber: 99,
@@ -391,7 +391,7 @@ describe("GitHub webhook intake", () => {
           number: 99,
           state: "open",
           updated_at: "2026-09-17T12:00:06.000Z",
-          head: { ref: "shipyard/issue-42", sha: "d".repeat(40) },
+          head: { ref: "shipyard-v1/issue-42", sha: "d".repeat(40) },
         },
         review: {
           id: 9,
@@ -418,7 +418,7 @@ describe("GitHub webhook intake", () => {
       pullRequestNumber: 99,
       jobId: issue.ingest!.job!.id,
       itemId: "42",
-      branch: "shipyard/issue-42",
+      branch: "shipyard-v1/issue-42",
       headSha: "b".repeat(40),
       marker: "pull-request:tracked",
       brief: issue.ingest!.job!.brief,
@@ -434,7 +434,7 @@ describe("GitHub webhook intake", () => {
           number: 99,
           state: "open",
           updated_at: "2026-09-17T12:00:05.000Z",
-          head: { ref: "shipyard/issue-42", sha: "d".repeat(40) },
+          head: { ref: "shipyard-v1/issue-42", sha: "d".repeat(40) },
         },
         review: {
           id: 8,
@@ -461,7 +461,7 @@ describe("GitHub webhook intake", () => {
       pullRequestNumber: 99,
       jobId: issue.ingest!.job!.id,
       itemId: "42",
-      branch: "shipyard/issue-42",
+      branch: "shipyard-v1/issue-42",
       headSha: "b".repeat(40),
       marker: "pull-request:tracked",
       brief: issue.ingest!.job!.brief,
@@ -478,7 +478,7 @@ describe("GitHub webhook intake", () => {
           number: 99,
           state: "open",
           updated_at: "2026-09-17T12:00:05.000Z",
-          head: { ref: "shipyard/issue-42", sha: "d".repeat(40) },
+          head: { ref: "shipyard-v1/issue-42", sha: "d".repeat(40) },
         },
       }),
     );

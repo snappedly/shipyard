@@ -70,7 +70,7 @@ const isMissingCodexCli = (error: unknown): boolean =>
   "code" in error &&
   (error as { code?: unknown }).code === "ENOENT";
 
-// Shipyard mounts auth.json into the sandbox, so make this login use the file
+// Shipyard V1 mounts auth.json into the sandbox, so make this login use the file
 // store without changing the user's permanent Codex configuration.
 const codexLoginArgs = [
   "--config",
@@ -83,7 +83,7 @@ const runCodexLogin = (cwd: string): void => {
     execFileSync("codex", codexLoginArgs, { cwd, stdio: "inherit" });
   } catch (error) {
     if (!isMissingCodexCli(error)) throw error;
-    // Shipyard already requires npm. Use npx as a no-global-install fallback
+    // Shipyard V1 already requires npm. Use npx as a no-global-install fallback
     // when the user has not installed the Codex CLI on the host yet.
     execFileSync(
       process.platform === "win32" ? "npx.cmd" : "npx",
@@ -107,7 +107,7 @@ export const ensureCodexChatGptAuth = (
   if (!options.interactive) {
     throw new InitError({
       message:
-        "Codex ChatGPT authentication is not ready: ~/.codex/auth.json was not found. Run `codex login` in an interactive terminal, then rerun `shipyard init --codex-auth chatgpt` (non-interactive mode cannot open the login flow).",
+        "Codex ChatGPT authentication is not ready: ~/.codex/auth.json was not found. Run `codex login` in an interactive terminal, then rerun `shipyard-v1 init --codex-auth chatgpt` (non-interactive mode cannot open the login flow).",
     });
   }
 
@@ -118,19 +118,19 @@ export const ensureCodexChatGptAuth = (
     if (isMissingCodexCli(error)) {
       throw new InitError({
         message:
-          "The Codex CLI is not installed. Install it with `npm install --global @openai/codex`, run `codex login`, and rerun Shipyard init.",
+          "The Codex CLI is not installed. Install it with `npm install --global @openai/codex`, run `codex login`, and rerun Shipyard V1 init.",
       });
     }
     throw new InitError({
       message:
-        "Codex login failed. Complete `codex login` successfully, then rerun Shipyard init.",
+        "Codex login failed. Complete `codex login` successfully, then rerun Shipyard V1 init.",
     });
   }
 
   if (!isRegularFile(authFile)) {
     throw new InitError({
       message:
-        'Codex login finished, but ~/.codex/auth.json was not created. Codex may be using an OS keyring or a managed configuration. Set `cli_auth_credentials_store = "file"` in `~/.codex/config.toml`, run `codex login` again, and rerun Shipyard init.',
+        'Codex login finished, but ~/.codex/auth.json was not created. Codex may be using an OS keyring or a managed configuration. Set `cli_auth_credentials_store = "file"` in `~/.codex/config.toml`, run `codex login` again, and rerun Shipyard V1 init.',
     });
   }
 };

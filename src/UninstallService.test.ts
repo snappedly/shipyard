@@ -19,7 +19,7 @@ import {
 const withTempRepository = async (
   operation: (repoDir: string) => Promise<void>,
 ): Promise<void> => {
-  const repoDir = await mkdtemp(join(tmpdir(), "shipyard-uninstall-"));
+  const repoDir = await mkdtemp(join(tmpdir(), "shipyard-v1-uninstall-"));
   try {
     await operation(repoDir);
   } finally {
@@ -29,10 +29,10 @@ const withTempRepository = async (
 
 describe("removeShipyardRepositoryFiles", () => {
   it.each(["empty", "code-only"] as const)(
-    "removes a %s Shipyard configuration directory",
+    "removes a %s Shipyard V1 configuration directory",
     async (configuration) => {
       await withTempRepository(async (repoDir) => {
-        const configDir = join(repoDir, ".shipyard");
+        const configDir = join(repoDir, ".shipyard-v1");
         await mkdir(configDir);
         if (configuration === "code-only") {
           await writeFile(join(configDir, "main.ts"), "export {};\n");
@@ -50,9 +50,9 @@ describe("removeShipyardRepositoryFiles", () => {
     },
   );
 
-  it("removes the entire Shipyard directory and generated wake workflow", async () => {
+  it("removes the entire Shipyard V1 directory and generated wake workflow", async () => {
     await withTempRepository(async (repoDir) => {
-      const configDir = join(repoDir, ".shipyard");
+      const configDir = join(repoDir, ".shipyard-v1");
       const logsDir = join(configDir, "logs");
       const worktreeDir = join(configDir, "worktrees", "active-task");
       const patchesDir = join(configDir, "patches");
@@ -108,7 +108,7 @@ describe("removeShipyardRepositoryFiles", () => {
   it("leaves the workflow in place until an installed runner is removed", async () => {
     await withTempRepository(async (repoDir) => {
       const workflowPath = join(repoDir, REPOSITORY_RUNNER_WORKFLOW_PATH);
-      await mkdir(join(repoDir, ".shipyard", "runner"), { recursive: true });
+      await mkdir(join(repoDir, ".shipyard-v1", "runner"), { recursive: true });
       await mkdir(join(repoDir, ".github", "workflows"), { recursive: true });
       await writeFile(workflowPath, REPOSITORY_RUNNER_WORKFLOW);
 
@@ -126,7 +126,7 @@ describe("removeShipyardRepositoryFiles", () => {
     async () => {
       await withTempRepository(async (repoDir) => {
         const externalConfig = join(repoDir, "external-config");
-        const configPath = join(repoDir, ".shipyard");
+        const configPath = join(repoDir, ".shipyard-v1");
         const workflowPath = join(repoDir, REPOSITORY_RUNNER_WORKFLOW_PATH);
         await mkdir(externalConfig);
         await mkdir(join(repoDir, ".github", "workflows"), {

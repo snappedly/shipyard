@@ -1,17 +1,17 @@
-# Snappedly Shipyard: development automation proposal
+# Snappedly Shipyard V1: development automation proposal
 
 Status: independent source ownership approved; workflow design remains a proposal. Researched 17
-September 2026. The integrated Shipyard baseline is 1509e69. Target-repository inspection and
+September 2026. The integrated Shipyard V1 baseline is 1509e69. Target-repository inspection and
 activation remain repository-specific; no target credentials, infrastructure, secrets, labels,
 workflows, or deployments are managed by this repository.
 
 ## Recommendation
 
-Build **Snappedly Shipyard**, maintained in `snappedly/shipyard`, as an independently developed project. Keep the existing Snappedly skills as the engineering process. Start with standalone issues in a configured target repository; extend to always-on intake, integration with its existing releases, then Slack.
+Build **Snappedly Shipyard V1**, maintained in `snappedly/shipyard-v1`, as an independently developed project. Keep the existing Snappedly skills as the engineering process. Start with standalone issues in a configured target repository; extend to always-on intake, integration with its existing releases, then Slack.
 
-Own and modify the execution engine and workflow code in Shipyard. Keep the existing Shipyard Git history and review implementation changes through the repository's normal standards and review process.
+Own and modify the execution engine and workflow code in Shipyard V1. Keep the existing Shipyard V1 Git history and review implementation changes through the repository's normal standards and review process.
 
-“Shipyard” is the working name; trademark availability has not been checked. Package: `@snappedly-tools/shipyard`; CLI: `shipyard`.
+“Shipyard V1” is the working name; trademark availability has not been checked. Package: `@snappedly-tools/shipyard-v1`; CLI: `shipyard-v1`.
 
 ## What the execution foundation supplies
 
@@ -23,7 +23,7 @@ There are three useful layers:
 2. **Scaffolded workflows.** The templates demonstrate selecting work, implementing it, verifying it, committing it, and handing it off for review. They are examples to adapt, particularly for closure points and review ownership.
 3. **Workflow integration seams.** The package exposes boundaries for intake, coordination, execution, review, repair, handoff, and release recording. These boundaries are deliberately separate so each phase can be authorized and verified independently.
 
-| Upstream behavior observed                                                                                                              | Shipyard adaptation proposed                                                                                       |
+| Upstream behavior observed                                                                                                              | Shipyard V1 adaptation proposed                                                                                    |
 | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | `agent:explore` runs a read-only assessment and posts a comment                                                                         | Trigger triage on intake; classify, verify, deduplicate, and produce a durable brief or questions                  |
 | `agent:implement` handles standalone issues, refuses parent/child issue shapes, creates a draft PR, and requests review through a label | Schedule a specific authorized brief; make parent/spec handling an explicit later feature                          |
@@ -31,7 +31,7 @@ There are three useful layers:
 | PR implementation handles existing review context                                                                                       | Route a bounded repair assignment back to the existing PR                                                          |
 | Branch-update workflow exists                                                                                                           | Refresh against the target branch and invalidate affected evidence before readiness                                |
 
-Shipyard's local branch strategies include work on HEAD, merge back to HEAD, and an explicit branch. Choose an explicit task branch: a local merge is not a reviewed GitHub merge. Its supported execution environments are Docker for local or self-hosted isolation, Vercel Sandbox for cloud isolation, and an explicit no-sandbox mode for trusted host execution; environment choice requires a representative trial. Shipyard also supports structured results, but a completion signal or valid JSON is not evidence that requirements are satisfied.
+Shipyard V1's local branch strategies include work on HEAD, merge back to HEAD, and an explicit branch. Choose an explicit task branch: a local merge is not a reviewed GitHub merge. Its supported execution environments are Docker for local or self-hosted isolation, Vercel Sandbox for cloud isolation, and an explicit no-sandbox mode for trusted host execution; environment choice requires a representative trial. Shipyard V1 also supports structured results, but a completion signal or valid JSON is not evidence that requirements are satisfied.
 
 ## Fit with existing Snappedly practice
 
@@ -44,10 +44,10 @@ Reuse these contracts rather than introducing a separate engineering methodology
 - Use the existing behavioral agent brief as the execution contract. Retain original reporter content and add a versioned brief with provenance, acceptance criteria, scope exclusions, verification expectations, and unresolved questions. Track the brief revision/hash in the run record.
 - Map clear standalone work to `implement`; map substantial features to the clarification → spec → tickets process. Do not treat a planning issue as an executable ticket. Whole-spec orchestration comes later.
 - Follow risk-proportional verification: focused tests for changed behavior, visual checks for presentation, broader checks when required by project policy or risk.
-- Shipyard owns PR delivery and state transitions. Implementation workers return commits and evidence. Reviewers return findings and never recursively start implementers.
-- The requested separate automated PR review becomes an explicit Shipyard workflow requirement. Review depth still varies by risk.
+- Shipyard V1 owns PR delivery and state transitions. Implementation workers return commits and evidence. Reviewers return findings and never recursively start implementers.
+- The requested separate automated PR review becomes an explicit Shipyard V1 workflow requirement. Review depth still varies by risk.
 - Existing whole-spec guidance allows one normal fix batch and one follow-up before coordinator disposition. Start with that same bounded convergence rule.
-- The current Shipyard package workflow publishes the exact production candidate without a human approval gate. A target repository may choose a separate gate for service deployments; that is not required for npm package publication.
+- The current Shipyard V1 package workflow publishes the exact production candidate without a human approval gate. A target repository may choose a separate gate for service deployments; that is not required for npm package publication.
 
 ## Proposed lifecycle
 
@@ -76,7 +76,7 @@ These are coordinator run states. GitHub labels are a useful projection, not the
 
 Automatically investigate new issues, relevant edits, and replies to outstanding questions. Check duplicates and prior decisions; inspect relevant code; reproduce bugs where possible; separate observed facts from hypotheses. Never invent acceptance criteria that require a product decision. Ask specific questions once, preserve established facts, and resume when answers arrive.
 
-Default activation policy: a `shipyard` ticket without a ready state receives triage before implementation. A ticket already carrying only `ready-for-agent` skips agent triage. Implementation requires both `shipyard` (or its in-progress `shipyard:pending` state) and an unconflicted `ready-for-agent` state, checked against the live issue before implementation. Other triage states block the attempt and remove activation. After evidence from an initial representative trial, permit automatic implementation of clearly defined, low-risk classes. Auth, billing, migrations, destructive operations, and workflow/security-policy changes receive explicit owner involvement. External intake must not grant the reporter control over credentials, tools, or execution policy.
+Default activation policy: a `shipyard-v1` ticket without a ready state receives triage before implementation. A ticket already carrying only `ready-for-agent` skips agent triage. Implementation requires both `shipyard-v1` (or its in-progress `shipyard-v1:pending` state) and an unconflicted `ready-for-agent` state, checked against the live issue before implementation. Other triage states block the attempt and remove activation. After evidence from an initial representative trial, permit automatic implementation of clearly defined, low-risk classes. Auth, billing, migrations, destructive operations, and workflow/security-policy changes receive explicit owner involvement. External intake must not grant the reporter control over credentials, tools, or execution policy.
 
 Classifying a request and deciding to build it are distinct decisions. A well-written feature request can still be outside the roadmap. Keep rejection/closure decisions with maintainers initially. Route potential security reports to an established security reporting process.
 
@@ -100,7 +100,7 @@ Mark the PR ready for a person only after required checks and finding dispositio
 
 Distinguish Git branches from deployment environments. If a project already uses `staging` → `main`, integrate with that flow and validate the resulting merge candidate. For a new project, consider one protected integration branch and promotion of the same immutable build from staging to production; a staging environment does not inherently need a staging branch. Production evidence must identify the actual candidate/artifact, including any release merge, rather than assuming the PR head is unchanged.
 
-For a separate service deployment, start with a production approval after staging validation and configure an environment gate or equivalent deployment-system control. The Shipyard npm package release is an explicit exception: its exact candidate and immutable artifact checks run automatically, while the `production` environment remains unprotected for npm trusted publishing. [Deployment environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments).
+For a separate service deployment, start with a production approval after staging validation and configure an environment gate or equivalent deployment-system control. The Shipyard V1 npm package release is an explicit exception: its exact candidate and immutable artifact checks run automatically, while the `production` environment remains unprotected for npm trusted publishing. [Deployment environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments).
 
 Release completion includes smoke/health checks and a recorded result. Failure stops promotion and follows the project's recovery procedure. Database changes may require roll-forward; never assume that redeploying the previous app artifact reverses a migration.
 
@@ -120,7 +120,7 @@ Proposed components:
 
 For the hosted phase, prefer one TypeScript service with PostgreSQL-backed run/job records and a worker pool. A database-backed queue is sufficient initially; do not add a separate message broker or workflow platform before operational needs justify it. Actions can continue running project CI/deployments. An initial integration can use manually dispatched Actions while the reusable task runner is proven.
 
-Store code in the independent `snappedly/shipyard` repository, locally under `tools/shipyard`, beside the skills checkout. The parent `tools` directory is a plain local grouping folder. The skills Git metadata now lives in `tools/skills/.git`; all nine linked worktrees were repaired and verified unchanged during the migration. Publish a versioned package through the organization's chosen registry and optionally reusable Actions pinned to immutable revisions. A future `shipyard init` should validate prerequisites and generate a small project config referencing existing workflow documents. Consumer projects use a versioned Shipyard release; its owned engine source stays in this repository. Installing the CLI alone does not create an always-on service: hosted intake, credentials, and workers need separate provisioning.
+Store code in the independent `snappedly/shipyard-v1` repository, locally under `tools/shipyard-v1`, beside the skills checkout. The parent `tools` directory is a plain local grouping folder. The skills Git metadata now lives in `tools/skills/.git`; all nine linked worktrees were repaired and verified unchanged during the migration. Publish a versioned package through the organization's chosen registry and optionally reusable Actions pinned to immutable revisions. A future `shipyard-v1 init` should validate prerequisites and generate a small project config referencing existing workflow documents. Consumer projects use a versioned Shipyard V1 release; its owned engine source stays in this repository. Installing the CLI alone does not create an always-on service: hosted intake, credentials, and workers need separate provisioning.
 
 Keep project policy in `docs/agents/workflow.md` and related existing contracts. Machine-readable configuration should reference those contracts and encode enforcement fields without duplicating long prose. Pin both engine and skill versions for reproducibility; updates arrive as reviewable changes.
 
@@ -172,4 +172,4 @@ Next implementation scope after these decisions: the manually triggered, single-
 
 ## Repository decision update
 
-Shipyard owns its execution source and independent history, and will develop and release it independently. Target repositories supply their own policy, deployment integration, and activation evidence. The initial package uses Shipyard naming throughout and keeps workflow concerns behind explicit package boundaries.
+Shipyard V1 owns its execution source and independent history, and will develop and release it independently. Target repositories supply their own policy, deployment integration, and activation evidence. The initial package uses Shipyard V1 naming throughout and keeps workflow concerns behind explicit package boundaries.

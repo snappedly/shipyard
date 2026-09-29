@@ -51,7 +51,7 @@ export class AgentError extends Data.TaggedError("AgentError")<{
   readonly preservedWorktreePath?: string;
 }> {}
 
-/** Shipyard config directory is missing or requires explicit migration. */
+/** Shipyard V1 config directory is missing or requires explicit migration. */
 export class ConfigDirError extends Data.TaggedError("ConfigDirError")<{
   readonly message: string;
 }> {}
